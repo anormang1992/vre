@@ -1,3 +1,5 @@
+<img width="800" height="800" alt="vre_logo" src="https://github.com/user-attachments/assets/b5431335-c4a7-4a85-a251-601c5b11627f" />
+
 # VRE — Volute Reasoning Engine
 
 **Epistemic enforcement for autonomous agents.**
@@ -30,6 +32,8 @@ is blocked and the gap is surfaced explicitly. The agent does not guess. It does
 It is structurally incapable of executing an action that it does not understand with respect to its epistemic model, 
 and perhaps more importantly, it surfaces what it does not know. Absence of knowledge is treated as a first-class
 object.
+
+<img width="3168" height="710" alt="image" src="https://github.com/user-attachments/assets/4fedf455-a5d2-4443-acb5-ba85ac99f15c" />
 
 ---
 
@@ -313,6 +317,8 @@ VRE Epistemic Check
 
 Green dots (`●`) represent grounded depth levels. A red `✗` at a depth level indicates a gap. Relata flagged with `✗` indicate relational gaps where the target does not meet the required depth.
 
+<img width="2786" height="1462" alt="image" src="https://github.com/user-attachments/assets/91d2ba34-716a-4d70-8c15-148a11e6c2b7" />
+
 ### `on_policy`
 
 Called when a policy gate returns `PENDING` — meaning a policy on an `APPLIES_TO` relatum fired and requires human confirmation. Receives the policy's confirmation message. Returns `True` to allow execution, `False` to block.
@@ -332,6 +338,10 @@ def on_policy(message: str) -> bool:
 ```
 
 If `on_policy` is not provided and a policy requires confirmation, the guard returns `PolicyResult(action="BLOCK", reason="Confirmation required, no handler")` and the function does not execute.
+
+<img width="1968" height="1592" alt="image" src="https://github.com/user-attachments/assets/81257f0f-4273-4235-85ca-dcb50c21439b" />
+
+<img width="1392" height="714" alt="image" src="https://github.com/user-attachments/assets/8b701635-d4ca-4511-98e3-cda82a5dde38" />
 
 ---
 
