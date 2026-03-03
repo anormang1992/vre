@@ -503,3 +503,22 @@ demo/
 > **The agent must never act as if it knows more than it can justify.**
 
 VRE exists to enforce that rule — not as a policy, but as a structural property of the system.
+
+## Contributing
+Contributions are welcome! Please open an issue or submit a pull request with your proposed changes. For major changes, 
+please discuss them in an issue first to ensure alignment with the project's goals and architecture. 
+
+Aside from the expected bug fixes and optimizations, here are some areas where contributions would be 
+particularly valuable:
+
+- Additional seed scripts for more complex domains (e.g. networking, databases, cloud infrastructure)
+- Integration examples with other python agent frameworks (e.g. AutoGPT, BabyAGI) or tool libraries
+  - Any integration submissions should also include a demo that exercises the integration in a meaningful way and 
+  demonstrates that the epistemic resolution behavior works as intended.
+- VRE integration into other language environments (Node.js, Go, etc.)
+
+This is a project that I am passionate about and is the culmination of almost 10 years of philosophical thought. 
+I hope to connect with other like-minded community members who prioritize safety and epistemic integrity in 
+autonomous agentic systems. 
+
+I look forward to seeing how this evolves!
