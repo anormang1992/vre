@@ -448,6 +448,10 @@ Structured conversation about the agent's epistemic state: asking why a concept 
 
 An `ActionPrimitive` subclass carrying a `required_policy_scope` field, allowing read-only or exploratory operations (list, read) to pass with lighter grounding requirements than write or delete operations, without weakening the D3 constraint for execution.
 
+### VRE Networks
+
+An agentic network of agents that share grounded knowledge across different epistemic graphs while applying the same enforcement mechanisms. Agents in the network expose and consume epistemic subgraphs from peer VRE instances, preserving grounding guarantees across trust boundaries. A concept grounded at D3 in one agent's graph carries its epistemic justification with it — the network does not collapse knowledge into a shared mutable store, but federates it while keeping each agent's epistemic contract intact.
+
 ---
 
 ## Tech Stack
