@@ -440,6 +440,11 @@ A future meta-epistemic layer will treat execution failures as candidates for gr
 
 Provenance will travel with each piece of learned knowledge — `authored`, `learned`, or `conversational` — so the audit trail lives inside the epistemic structure itself rather than in a separate log.
 
+The learning through failure paradigm is already emerging naturally, it just needs to be codified. The below image was taken as I was conducting tests for this README. Without being prompted, the demo agent continued to try and execute an ungrounded command with missing graph Primitives and eventually ceded, but not before proposing a solution for the knowledge gaps it was encountering.
+
+<img width="3210" height="1522" alt="image" src="https://github.com/user-attachments/assets/c9d0ea91-d0e9-471a-9f5e-e05fdcea60a9" />
+
+
 ### Meta-epistemic discussion mode
 
 Structured conversation about the agent's epistemic state: asking why a concept is unknown, providing domain knowledge to populate a depth, or refining relata through dialogue. User input in this mode becomes a source for graph population rather than a trigger for action.
