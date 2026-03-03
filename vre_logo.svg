@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <defs>
+    <!-- Gradient for the volute spiral - deep to light representing depth layers -->
+    <linearGradient id="spiralGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0A1628"/>
+      <stop offset="35%" style="stop-color:#1B3A5C"/>
+      <stop offset="65%" style="stop-color:#2E6B8A"/>
+      <stop offset="100%" style="stop-color:#4ECDC4"/>
+    </linearGradient>
+    
+    <!-- Glow effect for the inner core - representing grounded truth -->
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#4ECDC4;stop-opacity:0.9"/>
+      <stop offset="60%" style="stop-color:#4ECDC4;stop-opacity:0.3"/>
+      <stop offset="100%" style="stop-color:#4ECDC4;stop-opacity:0"/>
+    </radialGradient>
+
+    <!-- Depth ring gradients -->
+    <linearGradient id="d3Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4ECDC4"/>
+      <stop offset="100%" style="stop-color:#2E6B8A"/>
+    </linearGradient>
+    <linearGradient id="d2Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2E6B8A"/>
+      <stop offset="100%" style="stop-color:#1B3A5C"/>
+    </linearGradient>
+    <linearGradient id="d1Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1B3A5C"/>
+      <stop offset="100%" style="stop-color:#0F2440"/>
+    </linearGradient>
+    
+    <!-- Subtle noise texture -->
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feBlend in="SourceGraphic" mode="multiply" result="noisy"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.08"/>
+      </feComponentTransfer>
+      <feBlend in="SourceGraphic" mode="normal"/>
+    </filter>
+
+    <!-- Shadow for depth -->
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="800" height="800" fill="#060D18" rx="40"/>
+  
+  <!-- Subtle grid pattern suggesting graph structure -->
+  <g opacity="0.06" stroke="#4ECDC4" stroke-width="0.5">
+    <line x1="200" y1="0" x2="200" y2="800"/>
+    <line x1="300" y1="0" x2="300" y2="800"/>
+    <line x1="400" y1="0" x2="400" y2="800"/>
+    <line x1="500" y1="0" x2="500" y2="800"/>
+    <line x1="600" y1="0" x2="600" y2="800"/>
+    <line x1="0" y1="200" x2="800" y2="200"/>
+    <line x1="0" y1="300" x2="800" y2="300"/>
+    <line x1="0" y1="400" x2="800" y2="400"/>
+    <line x1="0" y1="500" x2="800" y2="500"/>
+    <line x1="0" y1="600" x2="800" y2="600"/>
+  </g>
+  
+  <!-- Outer ambient glow -->
+  <circle cx="400" cy="370" r="200" fill="url(#coreGlow)" opacity="0.15"/>
+  
+  <!-- VOLUTE SPIRAL - The main logo mark -->
+  <!-- Built as concentric depth rings that spiral inward -->
+  <g transform="translate(400, 370)" filter="url(#shadow)">
+    
+    <!-- D1 - Outermost ring - Existence -->
+    <path d="M 0,-180 
+             A 180,180 0 1,1 -0.01,-180
+             M 0,-180
+             A 180,180 0 0,1 150,-100
+             " 
+          fill="none" stroke="url(#d1Grad)" stroke-width="18" stroke-linecap="round" opacity="0.7">
+    </path>
+    
+    <!-- Spiral arm connecting D1 to D2 -->
+    <path d="M 150,-100 
+             C 170,-60 165,0 140,40
+             C 115,80 80,110 30,120"
+          fill="none" stroke="#1B3A5C" stroke-width="14" stroke-linecap="round" opacity="0.8"/>
+    
+    <!-- D2 - Middle ring - Composition -->
+    <path d="M 30,120 
+             A 120,120 0 1,0 32,120"
+          fill="none" stroke="url(#d2Grad)" stroke-width="18" stroke-linecap="round" opacity="0.8">
+    </path>
+    
+    <!-- Spiral arm connecting D2 to D3 -->
+    <path d="M 30,120 
+             C 70,100 100,60 100,20
+             C 100,-20 75,-55 40,-70"
+          fill="none" stroke="#2E6B8A" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    
+    <!-- D3 - Inner ring - Operational -->
+    <path d="M 40,-70 
+             A 70,70 0 1,0 42,-70"
+          fill="none" stroke="url(#d3Grad)" stroke-width="16" stroke-linecap="round" opacity="0.9">
+    </path>
+    
+    <!-- Spiral arm to core -->
+    <path d="M 40,-70 
+             C 20,-55 -5,-35 -15,-15
+             C -25,5 -20,20 -5,25"
+          fill="none" stroke="#3BA8A0" stroke-width="12" stroke-linecap="round" opacity="0.9"/>
+    
+    <!-- Core - Grounded truth / q' -->
+    <circle cx="0" cy="0" r="22" fill="#4ECDC4" opacity="0.9"/>
+    <circle cx="0" cy="0" r="14" fill="#060D18"/>
+    <circle cx="0" cy="0" r="8" fill="#4ECDC4"/>
+    
+    <!-- Small relata nodes on the rings -->
+    <!-- D1 nodes -->
+    <circle cx="-170" cy="30" r="5" fill="#1B3A5C" opacity="0.7"/>
+    <circle cx="-120" cy="-130" r="5" fill="#1B3A5C" opacity="0.7"/>
+    <circle cx="80" cy="-160" r="5" fill="#1B3A5C" opacity="0.7"/>
+    
+    <!-- D2 nodes -->
+    <circle cx="-110" cy="50" r="5" fill="#2E6B8A" opacity="0.8"/>
+    <circle cx="70" cy="95" r="5" fill="#2E6B8A" opacity="0.8"/>
+    <circle cx="-50" cy="-110" r="5" fill="#2E6B8A" opacity="0.8"/>
+    
+    <!-- D3 nodes -->
+    <circle cx="55" cy="-40" r="5" fill="#4ECDC4" opacity="0.9"/>
+    <circle cx="-60" cy="25" r="5" fill="#4ECDC4" opacity="0.9"/>
+    <circle cx="10" cy="65" r="5" fill="#4ECDC4" opacity="0.9"/>
+    
+    <!-- Relata connections (subtle lines between nodes) -->
+    <g stroke="#4ECDC4" stroke-width="1" opacity="0.2">
+      <line x1="-110" y1="50" x2="-60" y2="25"/>
+      <line x1="70" y1="95" x2="10" y2="65"/>
+      <line x1="-50" y1="-110" x2="55" y2="-40"/>
+      <line x1="-170" y1="30" x2="-110" y2="50"/>
+      <line x1="80" y1="-160" x2="-50" y2="-110"/>
+      <line x1="-120" y1="-130" x2="-60" y2="25"/>
+    </g>
+  </g>
+  
+  <!-- VOLI wordmark -->
+  <g transform="translate(400, 620)">
+    <!-- Main wordmark -->
+    <text x="0" y="0" 
+          font-family="'SF Pro Display', 'Helvetica Neue', sans-serif" 
+          font-size="88" 
+          font-weight="200" 
+          fill="#E8F0F2" 
+          text-anchor="middle" 
+          letter-spacing="28">VRE</text>
+    
+    <!-- Subtle underline accent -->
+    <line x1="-80" y1="18" x2="90" y2="18" stroke="#4ECDC4" stroke-width="1.5" opacity="0.6"/>
+    
+    <!-- Tagline -->
+    <text x="0" y="52" 
+          font-family="'SF Pro Text', 'Helvetica Neue', sans-serif" 
+          font-size="14" 
+          font-weight="300" 
+          fill="#4ECDC4" 
+          text-anchor="middle" 
+          letter-spacing="6"
+          opacity="0.7">STRUCTURAL EPISTEMIC ENFORCEMENT</text>
+  </g>
+  
+  <!-- Depth labels (subtle, technical) -->
+  <g font-family="'SF Mono', 'Fira Code', monospace" font-size="11" fill="#4ECDC4" opacity="0.3">
+    <text x="605" y="220">D1</text>
+    <text x="555" y="280">D2</text>
+    <text x="505" y="335">D3</text>
+  </g>
+</svg>
