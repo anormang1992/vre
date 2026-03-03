@@ -26,7 +26,7 @@ contained the rule. In each case, the agent acted confidently on knowledge it co
 constraints were linguistic — instructions that could be forgotten, overridden, or reasoned around. 
 VRE's constraints are structural.
 
-VRE addresses this directly. It imposes a contract: before an action execute the agent must demonstrate that the 
+VRE addresses this directly. It imposes a contract: before an action executes the agent must demonstrate that the 
 relevant concepts are grounded in the knowledge graph at the depth required for execution. If they are not, the action 
 is blocked and the gap is surfaced explicitly. The agent does not guess. It does not proceed on partial knowledge. 
 It is structurally incapable of executing an action that it does not understand with respect to its epistemic model, 
@@ -103,21 +103,6 @@ VRE governs only the first layer, by design. It does not replace sandboxing. It 
 **VRE is not a replacement for human oversight.** Its policy gates are a mechanism for human oversight — surfacing decisions that require consent and blocking until consent is given.
 
 ---
-
-## Installation
-
-**Requirements:** Python 3.12+, Neo4j 5+, spaCy
-
-```bash
-# Install VRE
-pip install vre
-
-# Install the spaCy language model (required for concept resolution)
-python -m spacy download en_core_web_sm
-
-# Install demo dependencies (Rich, LangChain, Ollama)
-pip install 'vre[demo]'
-```
 
 **Infrastructure:**
 
