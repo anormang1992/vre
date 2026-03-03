@@ -129,7 +129,7 @@ VRE ships with several seed scripts that populates the graph with select testing
 including a fully grounded graph and a graph with missing depth and relational requirements.
 
 ```bash
-poetry run python scripts/seed_all.py --neo4j-uri <uri> --neo4j-user <user> --neo4j-password <password>
+python -m scripts.seed_all --neo4j-uri <uri> --neo4j-user <user> --neo4j-password <password>
 ```
 
 This creates primitives for: `operating_system`, `filesystem`, `file`, `directory`, `path`, `permission`, `user`, `group`, `create`, `read`, `write`, `delete`, `list`, `move`, `copy`.
