@@ -428,6 +428,11 @@ When Claude Code invokes a Bash command:
 
 The hook fails open: if no VRE concepts are recognized in the command, or if the VRE config file is absent, the command is allowed through. Unknown commands are never silently blocked.
 
+<img width="1638" height="788" alt="Screenshot 2026-03-04 at 10 34 15 AM" src="https://github.com/user-attachments/assets/d8bbf86e-fe71-4fa5-b6a2-c4865aedf291" />
+
+<img width="1627" height="780" alt="Screenshot 2026-03-04 at 10 55 10 AM" src="https://github.com/user-attachments/assets/a8c6f466-8fe2-4831-8c88-9e4d463e1f13" />
+
+
 ### Remove the hook
 
 ```python
