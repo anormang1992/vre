@@ -393,6 +393,57 @@ operation, the guard evaluates this policy and, if it applies, surfaces the conf
 
 ---
 
+## Claude Code Integration
+
+VRE ships with a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) that intercepts every Bash tool call before 
+execution and gates it through VRE grounding and policy evaluation. Commands whose concepts are not grounded at 
+D3 are blocked and knowledge gaps are surfaced directly to the model. Commands that trigger a policy gate 
+surface a confirmation prompt via Claude Code's TUI approval dialog — human consent, not model consent.
+
+### Install the hook
+
+```python
+from vre.integrations.claude_code import install
+
+install("neo4j://localhost:7687", "neo4j", "password")
+```
+
+This does two things:
+
+1. Writes your Neo4j connection details to `~/.vre/config.json`
+2. Injects a `PreToolUse` hook entry into `~/.claude/settings.json` that matches all `Bash` tool calls
+
+The hook command uses the absolute path of the current Python interpreter, so it runs in the same virtualenv where VRE is installed. Safe to call multiple times — existing VRE hook entries are replaced, not duplicated.
+
+### How the hook works
+
+When Claude Code invokes a Bash command:
+
+1. The hook reads the command from stdin and maps it to VRE concepts via `parse_bash_primitives` (`rm foo.txt` → `["delete", "file"]`)
+2. Those concepts are grounded against the graph at D3
+3. **If not grounded** — the hook exits with code 2 and writes the full grounding trace to stderr, which Claude Code feeds back to the model as context. The command does not execute.
+4. **If a policy fires (`PENDING`)** — the hook returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval prompt. The user sees the policy's confirmation message and decides directly.
+5. **If a policy blocks (`BLOCK`)** — the hook exits with code 2 and the policy result is fed to the model.
+6. **If grounded with no policy** — the hook exits with code 0 and `permissionDecision: "allow"`. The command proceeds.
+
+The hook fails open: if no VRE concepts are recognized in the command, or if the VRE config file is absent, the command is allowed through. Unknown commands are never silently blocked.
+
+### Remove the hook
+
+```python
+from vre.integrations.claude_code import uninstall
+
+uninstall()
+```
+
+This removes the VRE hook entry from `~/.claude/settings.json` and leaves `~/.vre/config.json` in place.
+
+### Notes
+- The current hook is designed for Bash commands. It can be extended to other tool types by adding additional hook 
+entries with different concept parsers, but for the sake of simplicity and demonstration, it only targets Bash for now.
+
+---
+
 ## Knowledge Gaps
 
 When a grounding check fails, VRE returns structured gap objects rather than a generic error. There are four gap types:
@@ -478,6 +529,8 @@ src/vre/
       wizard.py            # Interactive policy attachment CLI
   builtins/
     shell.py               # SHELL_ALIASES + parse_bash_primitives()
+  integrations/
+    claude_code.py         # Claude Code PreToolUse hook — install/uninstall/run
 
 scripts/
   seed.py                  # Seed the graph with core epistemic primitives
