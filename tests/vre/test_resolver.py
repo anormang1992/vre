@@ -123,7 +123,7 @@ def test_resolver_lookup_returns_none_for_unknown():
     """
     repo = _stub_repo(["file"])
     resolver = ConceptResolver(repo)
-    name_map = resolver._build_name_map()
+    name_map = resolver.build_name_map()
     assert resolver.lookup("unknownxyz123", name_map) is None
 
 
@@ -133,7 +133,7 @@ def test_resolver_lookup_returns_canonical():
     """
     repo = _stub_repo(["file"])
     resolver = ConceptResolver(repo)
-    name_map = resolver._build_name_map()
+    name_map = resolver.build_name_map()
     assert resolver.lookup("file", name_map) == "file"
 
 
@@ -141,7 +141,7 @@ def test_resolver_build_name_map_lowercases_keys():
     """_build_name_map keys are always lowercase."""
     repo = _stub_repo(["File", "Write"])
     resolver = ConceptResolver(repo)
-    name_map = resolver._build_name_map()
+    name_map = resolver.build_name_map()
     assert "file" in name_map
     assert "write" in name_map
 
