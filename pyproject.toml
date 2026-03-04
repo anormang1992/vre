@@ -5,7 +5,7 @@ description = "Volute Reasoning Engine — decorator-based epistemic enforcement
 authors = [
     {name = "Andrew Greene",email = "anormang@gmail.com"}
 ]
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "pydantic>=2.0",
