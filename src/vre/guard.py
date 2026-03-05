@@ -16,7 +16,7 @@ Behaviour
 ---------
 Each call runs grounding → policy → execution in a single pass:
 
-1. VRE grounding is checked at D3.
+1. VRE grounding is checked (depth derived from graph structure).
 2. `on_trace` is fired (if provided) with the `GroundingResult`.
 3. If grounding fails, returns `GroundingResult` immediately — the function
    is *not* called.

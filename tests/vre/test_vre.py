@@ -189,10 +189,7 @@ class TestVRECheck:
         assert depth_gaps[0].required_depth == DepthLevel.IMPLICATIONS
 
     def test_check_policy_returns_policy_result(self):
-        """
-        VRE.check_policy returns a PolicyResult with action PASS, PENDING, or BLOCK.
-        :return:
-        """
+        """VRE.check_policy returns a PolicyResult with action PASS, PENDING, or BLOCK."""
         file_p = _make_fully_grounded("file")
         vre = _make_vre_with_stub([file_p])
         result = vre.check_policy(["file"])

@@ -27,8 +27,9 @@ class VRE:
     """
     Volute Reasoning Engine — public interface.
 
-    Wraps ConceptResolver and GroundingEngine. All checks are evaluated
-    at DepthLevel.CONSTRAINTS (D3).
+    Wraps ConceptResolver and GroundingEngine. Depth requirements are
+    derived from graph structure; an optional min_depth override lets
+    integrators enforce a stricter floor.
     """
 
     def __init__(self, repository: PrimitiveRepository) -> None:

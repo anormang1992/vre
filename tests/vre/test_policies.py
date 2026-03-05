@@ -130,20 +130,7 @@ def test_policy_trigger_cardinality_none_always_fires():
     assert PolicyGate().evaluate(response, Cardinality.MULTIPLE).action == "PENDING"
 
 
-def test_policy_callback_suppresses_violation():
-    """A policy with no callback fires the violation → PENDING."""
-    policy = Policy(
-        name="Suppressed",
-        callback=None,
-        confirmation_message="Should appear.",
-    )
-    primitive = _make_primitive_with_applies_to("create", [policy])
-    response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == "PENDING"
-
-
-def test_policy_callback_confirms_violation():
+def test_no_callback_fires_violation():
     """A policy with no callback fires the violation → PENDING."""
     policy = Policy(
         name="NoCallback",
