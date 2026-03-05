@@ -5,9 +5,13 @@
 Grounding engine for the Volute Reasoning Engine.
 
 Provides GroundingEngine — the single entry point for structured epistemic
-queries. Always checks at DepthLevel.CONSTRAINTS (D3). The agent submits
-concept names; the engine delegates recursive traversal to the repository
-(Cypher), then applies depth gating, gap detection, and closure filtering.
+queries. Depth requirements are derived from graph structure: edges carry
+source_depth indicating the depth level they live at on the source node.
+The engine partitions edges into visible (source grounded deeply enough)
+and gated (source too shallow), producing DepthGaps for the latter.
+
+An optional min_depth parameter provides integrators a secondary safety
+lever to enforce a stricter floor than the graph alone would require.
 """
 
 from __future__ import annotations
@@ -31,9 +35,6 @@ from vre.core.models import (
     RelationalGap,
 )
 
-_REQUIRED_DEPTH = DepthLevel.CONSTRAINTS
-
-
 def _empty_response() -> EpistemicResponse:
     """
     Helper for the empty query case — returns a valid but empty response with no
@@ -47,11 +48,11 @@ def _empty_response() -> EpistemicResponse:
 
 class GroundingEngine:
     """
-    Structured epistemic query resolution at D3 (CONSTRAINTS).
+    Structured epistemic query resolution with graph-derived depth gating.
 
     Stateless between calls. Accepts concept names, delegates graph
-    traversal to the repository, and returns a fully closed epistemic
-    response.
+    traversal to the repository, partitions edges by source depth
+    visibility, and returns a fully closed epistemic response.
     """
 
     def __init__(self, repository: PrimitiveRepository) -> None:
@@ -101,11 +102,38 @@ class GroundingEngine:
         return result
 
     @staticmethod
+    def _partition_edges_by_source_depth(
+        edges: list[EpistemicStep],
+        id_to_prim: dict[UUID, Primitive],
+    ) -> tuple[list[EpistemicStep], list[EpistemicStep]]:
+        """
+        Split edges into visible and gated based on source node grounding.
+
+        An edge is visible when the source node's contiguous max depth >= the
+        edge's source_depth. Otherwise, the edge is gated — the source isn't
+        grounded deeply enough to see the relationship.
+        """
+        visible: list[EpistemicStep] = []
+        gated: list[EpistemicStep] = []
+        for edge in edges:
+            src = id_to_prim.get(edge.source_id)
+            if src is None:
+                continue
+            src_contiguous = GroundingEngine._contiguous_max_depth(src)
+            if src_contiguous is not None and src_contiguous >= edge.source_depth:
+                visible.append(edge)
+            else:
+                gated.append(edge)
+        return visible, gated
+
+    @staticmethod
     def _detect_gaps(
         all_nodes: list[Primitive],
-        edges: list[EpistemicStep],
+        visible_edges: list[EpistemicStep],
+        gated_edges: list[EpistemicStep],
         root_ids: set[UUID],
         transient_ids: set[UUID],
+        min_depth: DepthLevel | None = None,
     ) -> list[DepthGap | ExistenceGap | RelationalGap]:
         """
         Detect existence, depth, and relational gaps across the resolved subgraph.
@@ -118,21 +146,45 @@ class GroundingEngine:
             if node.id in transient_ids:
                 gaps.append(ExistenceGap(primitive=node))
 
-        # Phase 2 — Depth gaps (roots only, always checked at D3)
-        for node in all_nodes:
-            if node.id in transient_ids or node.id not in root_ids:
+        # Phase 2 — Depth gaps from two sources:
+        #   (a) gated edges: source can't see the edge
+        #   (b) min_depth override: integrator safety lever
+        # Deduplicate per-primitive, keeping the higher required_depth.
+        depth_gap_map: dict[UUID, tuple[DepthLevel, DepthLevel | None]] = {}
+
+        # (a) Gated edges → DepthGap on source primitive
+        for edge in gated_edges:
+            src = id_to_prim.get(edge.source_id)
+            if src is None or src.id in transient_ids:
                 continue
-            contiguous = GroundingEngine._contiguous_max_depth(node)
-            if contiguous is None or contiguous < _REQUIRED_DEPTH:
+            src_contiguous = GroundingEngine._contiguous_max_depth(src)
+            existing = depth_gap_map.get(src.id)
+            if existing is None or edge.source_depth > existing[0]:
+                depth_gap_map[src.id] = (edge.source_depth, src_contiguous)
+
+        # (b) min_depth override on roots
+        if min_depth is not None:
+            for node in all_nodes:
+                if node.id in transient_ids or node.id not in root_ids:
+                    continue
+                contiguous = GroundingEngine._contiguous_max_depth(node)
+                if contiguous is None or contiguous < min_depth:
+                    existing = depth_gap_map.get(node.id)
+                    if existing is None or min_depth > existing[0]:
+                        depth_gap_map[node.id] = (min_depth, contiguous)
+
+        for nid, (req, curr) in depth_gap_map.items():
+            prim = id_to_prim.get(nid)
+            if prim is not None:
                 gaps.append(DepthGap(
-                    primitive=node,
-                    required_depth=_REQUIRED_DEPTH,
-                    current_depth=contiguous,
+                    primitive=prim,
+                    required_depth=req,
+                    current_depth=curr,
                 ))
 
-        # Phase 3 — Relatum-depth relational gaps
+        # Phase 3 — Relatum-depth relational gaps (visible edges only)
         relatum_depth_pairs: dict[tuple[UUID, UUID], DepthLevel] = {}
-        for edge in edges:
+        for edge in visible_edges:
             if edge.target_id in transient_ids:
                 continue
             tgt_prim = id_to_prim.get(edge.target_id)
@@ -193,13 +245,27 @@ class GroundingEngine:
             for p in all_nodes
         ]
 
-    def query(self, concepts: list[str]) -> EpistemicResponse:
+    def query(
+        self,
+        concepts: list[str],
+        min_depth: DepthLevel | None = None,
+    ) -> EpistemicResponse:
         """
-        Flat-concept epistemic query at D3 (CONSTRAINTS).
+        Flat-concept epistemic query with graph-derived depth gating.
 
         All submitted concepts are treated symmetrically. Resolves the
-        subgraph for all concepts, then checks that every non-transient
-        concept is in the same connected component (undirected BFS).
+        subgraph for all concepts, partitions edges by source depth
+        visibility, then checks that every non-transient concept is in
+        the same connected component (undirected BFS over visible edges).
+
+        Parameters
+        ----------
+        concepts:
+            Canonical concept names to query.
+        min_depth:
+            Optional integrator override — enforces a minimum depth floor
+            on all root primitives. Can only raise the floor, never lower
+            it below what the graph structure requires.
         """
         if not concepts:
             return _empty_response()
@@ -211,15 +277,22 @@ class GroundingEngine:
         root_ids = {r.id for r in roots}
         all_nodes = list(subgraph.nodes) + transients
 
+        id_to_prim = {n.id: n for n in all_nodes}
+        visible_edges, gated_edges = self._partition_edges_by_source_depth(
+            subgraph.edges, id_to_prim,
+        )
+
         gaps: list = self._detect_gaps(
-            all_nodes, subgraph.edges, root_ids, transient_ids,
+            all_nodes, visible_edges, gated_edges, root_ids, transient_ids,
+            min_depth=min_depth,
         )
 
         # Undirected connectivity check across all non-transient roots
+        # using only visible edges
         non_transient_roots = [r for r in roots if r.id not in transient_ids]
         if len(non_transient_roots) > 1:
             neighbors: dict[UUID, set[UUID]] = {}
-            for edge in subgraph.edges:
+            for edge in visible_edges:
                 neighbors.setdefault(edge.source_id, set()).add(edge.target_id)
                 neighbors.setdefault(edge.target_id, set()).add(edge.source_id)
             anchor = non_transient_roots[0]
@@ -232,13 +305,14 @@ class GroundingEngine:
 
         return EpistemicResponse(
             query=EpistemicQuery(concept_ids=[r.id for r in roots]),
-            result=EpistemicResult(primitives=filtered, gaps=gaps, pathway=subgraph.edges),
+            result=EpistemicResult(primitives=filtered, gaps=gaps, pathway=visible_edges),
         )
 
     def ground(
         self,
         concepts: list[str],
         resolver: ConceptResolver,
+        min_depth: DepthLevel | None = None,
     ) -> GroundingResult:
         """
         Resolve and ground concepts in one step.
@@ -246,7 +320,7 @@ class GroundingEngine:
         Each concept is resolved to its canonical name where possible;
         unknown concepts pass through as-is and become ExistenceGaps in the
         query result. Returns a GroundingResult with grounded=True only when
-        all concepts are grounded at D3 with no gaps.
+        all concepts are grounded with no gaps.
         """
         if not concepts:
             return GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
@@ -259,7 +333,7 @@ class GroundingEngine:
             for c in concepts
         ]
 
-        response = self.query(canonical)
+        response = self.query(canonical, min_depth=min_depth)
         grounded = len(response.result.gaps) == 0
         return GroundingResult(
             grounded=grounded,

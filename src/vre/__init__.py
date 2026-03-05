@@ -17,6 +17,7 @@ Usage::
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
+from vre.core.models import DepthLevel
 from vre.core.policy import Cardinality, PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
@@ -43,14 +44,24 @@ class VRE:
         """
         return self._resolver.resolve(concepts)
 
-    def check(self, concepts: list[str]) -> GroundingResult:
+    def check(
+        self,
+        concepts: list[str],
+        min_depth: DepthLevel | None = None,
+    ) -> GroundingResult:
         """
-        Ground concepts at D3 (CONSTRAINTS).
+        Ground concepts with graph-derived depth gating.
 
         Returns a GroundingResult with grounded=True only when all resolved
         concepts are fully grounded with no gaps.
+
+        Parameters
+        ----------
+        min_depth:
+            Optional integrator override — enforces a minimum depth floor
+            on all root primitives. Can only raise the floor, never lower it.
         """
-        return self._engine.ground(concepts, self._resolver)
+        return self._engine.ground(concepts, self._resolver, min_depth=min_depth)
 
     def check_policy(
         self,

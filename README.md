@@ -53,8 +53,11 @@ Each primitive is grounded across a hierarchy of **depth levels**:
 | D3    | CONSTRAINTS | Under what conditions does that hold? |
 | D4+   | IMPLICATIONS | What follows if it happens? |
 
-Depth is **monotonic**: D3 grounding implies D0–D2 are also grounded. Execution of any tool requires D3. 
-An agent cannot claim to understand file deletion if it only has an identity-level model of what a file is.
+Depth is **monotonic**: D3 grounding implies D0–D2 are also grounded. Depth requirements are derived from the graph 
+structure itself — edges carry a source depth that determines when they become visible and a target depth that 
+determines when they resolve. An integrator can also enforce a minimum depth floor (e.g. D3 for execution) as a 
+secondary safety lever. An agent cannot claim to understand file deletion if it only has an identity-level model 
+of what a file is.
 
 ### Relata
 
@@ -125,14 +128,15 @@ ollama pull qwen3:8b
 
 ## Seeding the Graph
 
-VRE ships with several seed scripts that populates the graph with select testing scenarios,
-including a fully grounded graph and a graph with missing depth and relational requirements.
+VRE ships with seed scripts that populate the graph with select testing scenarios. Each script clears the graph before seeding to ensure a clean slate. See `scripts/README.md` for full details.
 
 ```bash
+# Fully grounded graph — 16 primitives, all at D3 with complete relata
 python -m scripts.seed_all --neo4j-uri <uri> --neo4j-user <user> --neo4j-password <password>
-```
 
-This creates primitives for: `operating_system`, `filesystem`, `file`, `directory`, `path`, `permission`, `user`, `group`, `create`, `read`, `write`, `delete`, `list`, `move`, `copy`.
+# Gap demonstration graph — 10 primitives, deliberately shaped to produce each gap type
+python -m scripts.seed_gaps --neo4j-uri <uri> --neo4j-user <user> --neo4j-password <password>
+```
 
 ---
 
@@ -163,7 +167,10 @@ print(result.gaps)       # [] or list of KnowledgeGap instances
 print(result)            # Full formatted epistemic trace
 ```
 
-`vre.check()` always evaluates at D3 (CONSTRAINTS). If any concept is unknown, lacks the required depth, has an unmet relational dependency, or is disconnected from the other submitted concepts, `grounded` is `False` and the corresponding gaps are surfaced.
+`vre.check()` derives depth requirements from graph structure — edges that live at higher source depths are only 
+visible when the source primitive is grounded to that depth. An optional `min_depth` parameter lets integrators enforce 
+a stricter floor (e.g. D3 for execution). If any concept is unknown, lacks the required depth, has an unmet relational 
+dependency, or is disconnected from the other submitted concepts, `grounded` is `False` and the corresponding gaps are surfaced.
 
 ### Using the Trace as Agent Context
 
@@ -219,7 +226,7 @@ def write_file(path: str, content: str) -> str:
 Each call runs the following sequence:
 
 1. **Resolve concepts** — map names to canonical primitives via the graph
-2. **Ground at D3** — verify the full subgraph meets CONSTRAINTS depth
+2. **Ground** — verify the subgraph meets depth requirements (graph-derived + optional `min_depth` floor)
 3. **Fire `on_trace`** — surface the epistemic result to the caller
 4. **If not grounded** — return the `GroundingResult` immediately; the function does not execute
 5. **Evaluate policies** — check all `APPLIES_TO` relata for applicable policy gates
@@ -283,7 +290,7 @@ def on_trace(grounding: GroundingResult) -> None:
 ```
 
 `GroundingResult` carries:
-- `grounded: bool` — whether all concepts cleared D3 with no gaps
+- `grounded: bool` — whether all concepts are grounded with no gaps
 - `resolved: list[str]` — canonical primitive names (or original if unresolvable)
 - `gaps: list[KnowledgeGap]` — structured gap descriptions (`ExistenceGap`, `DepthGap`, `RelationalGap`, `ReachabilityGap`)
 - `trace: EpistemicResponse | None` — the full subgraph with all primitives, depths, relata, and pathway
@@ -396,8 +403,7 @@ operation, the guard evaluates this policy and, if it applies, surfaces the conf
 ## Claude Code Integration
 
 VRE ships with a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) that intercepts every Bash tool call before 
-execution and gates it through VRE grounding and policy evaluation. Commands whose concepts are not grounded at 
-D3 are blocked and knowledge gaps are surfaced directly to the model. Commands that trigger a policy gate 
+execution and gates it through VRE grounding and policy evaluation. Commands whose concepts are not grounded are blocked and knowledge gaps are surfaced directly to the model. Commands that trigger a policy gate
 surface a confirmation prompt via Claude Code's TUI approval dialog — human consent, not model consent.
 
 ### Install the hook
@@ -420,7 +426,7 @@ The hook command uses the absolute path of the current Python interpreter, so it
 When Claude Code invokes a Bash command:
 
 1. The hook reads the command from stdin and maps it to VRE concepts via `parse_bash_primitives` (`rm foo.txt` → `["delete", "file"]`)
-2. Those concepts are grounded against the graph at D3
+2. Those concepts are grounded against the graph
 3. **If not grounded** — the hook exits with code 2 and writes the full grounding trace to stderr, which Claude Code feeds back to the model as context. The command does not execute.
 4. **If a policy fires (`PENDING`)** — the hook returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval prompt. The user sees the policy's confirmation message and decides directly.
 5. **If a policy blocks (`BLOCK`)** — the hook exits with code 2 and the policy result is fed to the model.
@@ -465,7 +471,7 @@ epistemic model of networking — not that the request was malformed. The agent 
 
 ### The gate holds at any graph depth
 
-VRE does not require a complete or richly-detailed graph to be useful. The enforcement mechanism is structural — if a concept is not grounded at D3, the action is blocked, regardless of how much or how little else the graph contains. A minimal graph with a single primitive grounded to D3 enforces the contract correctly.
+VRE does not require a complete or richly-detailed graph to be useful. The enforcement mechanism is structural — depth requirements are derived from the graph itself (edge placement gates visibility) and optionally raised by the integrator via `min_depth`. A minimal graph with a single primitive and its edges enforces the contract correctly.
 
 What a detailed graph adds is not stronger enforcement, but better context. More primitives, more relata, and deeper property descriptions give the agent richer epistemic material to reason from. The guard stays honest either way; a richer graph makes the agent more capable within those honest bounds.
 
@@ -489,10 +495,6 @@ The learning through failure paradigm is already emerging naturally, it just nee
 ### Meta-epistemic discussion mode
 
 Structured conversation about the agent's epistemic state: asking why a concept is unknown, providing domain knowledge to populate a depth, or refining relata through dialogue. User input in this mode becomes a source for graph population rather than a trigger for action.
-
-### Scoped policy gates for non-destructive actions
-
-An `ActionPrimitive` subclass carrying a `required_policy_scope` field, allowing read-only or exploratory operations (list, read) to pass with lighter grounding requirements than write or delete operations, without weakening the D3 constraint for execution.
 
 ### VRE Networks
 
@@ -525,7 +527,7 @@ src/vre/
     graph.py               # PrimitiveRepository (Neo4j)
     grounding/
       resolver.py          # ConceptResolver — spaCy lemmatization + name lookup
-      engine.py            # GroundingEngine — D3 query, gap detection
+      engine.py            # GroundingEngine — depth-gated query, gap detection
       models.py            # GroundingResult
     policy/
       models.py            # Policy, Cardinality, PolicyResult
@@ -538,7 +540,9 @@ src/vre/
     claude_code.py         # Claude Code PreToolUse hook — install/uninstall/run
 
 scripts/
-  seed.py                  # Seed the graph with core epistemic primitives
+  clear_graph.py           # Clear all primitives from the Neo4j graph
+  seed_all.py              # Seed fully grounded graph (16 primitives)
+  seed_gaps.py             # Seed gap-demonstration graph (10 primitives)
 
 demo/
   main.py                  # Entry point — argparse + agent setup

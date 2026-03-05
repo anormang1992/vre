@@ -1,21 +1,30 @@
 """
-Seed script for populating VRE with epistemic primitives.
+Seed script for demonstrating depth-gated traversal and gap detection.
 
-Run: poetry run python scripts/seed.py
+Seeds a deliberately shaped graph (10 primitives) where each action
+primitive is truncated or structured to produce a specific gap type
+when queried by the grounding engine.
+
+See scripts/README.md for the full primitive table and expected gap scenarios.
+
+Run: poetry run python scripts/seed_gaps.py
 """
 import argparse
 
+from scripts.clear_graph import clear_graph
 from vre.core.graph import PrimitiveRepository
 from vre.core.models import Depth, DepthLevel, Primitive, Relatum, RelationType
+
+
+# ── Fully grounded substrates (D0–D3) ─────────────────────────────────────
 
 
 def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
     """
     Seed the OperatingSystem primitive at D0–D3.
 
-    The OS is the foundational substrate — the environment that provides
-    filesystems, enforces permissions, manages processes, and mediates
-    all interaction between software and hardware.
+    Fully grounded substrate. Provides the environment that provisions
+    filesystems, enforces permissions, and manages processes.
     """
     os_prim = Primitive(
         name="operating_system",
@@ -62,7 +71,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
         ],
     )
     repo.save_primitive(os_prim)
-    print(f"Saved: operating_system ({os_prim.id})")
+    print(f"  operating_system  D0–D3  (substrate)")
     return os_prim
 
 
@@ -70,8 +79,7 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     """
     Seed the Filesystem primitive at D0–D3.
 
-    The filesystem is the organizational substrate for persistent data.
-    It depends on the OS, which provisions and manages it.
+    Fully grounded substrate. Depends on the OS at D2.
     """
     filesystem = Primitive(
         name="filesystem",
@@ -125,51 +133,15 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(filesystem)
-    print(f"Saved: filesystem ({filesystem.id})")
+    print(f"  filesystem        D0–D3  (substrate)")
     return filesystem
-
-
-def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
-    """
-    Seed the Directory primitive at D0–D3.
-
-    A directory is a container within a filesystem that organizes files
-    and other directories into a hierarchy.
-    """
-    directory = Primitive(
-        name="directory",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "A named container within a filesystem that holds files and "
-                                   "other directories, forming the hierarchical structure of "
-                                   "the filesystem's namespace.",
-                    "attributes": ["path", "name", "parent", "children"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.REQUIRES,
-                        target_id=path.id,
-                        target_depth=DepthLevel.IDENTITY,
-                    ),
-                ],
-            )
-        ],
-    )
-    repo.save_primitive(directory)
-    print(f"Saved: directory ({directory.id})")
-    return directory
 
 
 def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
     """
     Seed the Path primitive at D0–D3.
 
-    A path is the addressing mechanism for locating entities within a
-    filesystem's hierarchy. It is not an entity itself — it is how
-    entities are named and found.
+    Fully grounded structural. Depends on filesystem at D2.
     """
     path = Primitive(
         name="path",
@@ -220,92 +192,15 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(path)
-    print(f"Saved: path ({path.id})")
+    print(f"  path              D0–D3  (structural)")
     return path
-
-
-def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
-    """
-    Seed the File primitive at D0–D3.
-
-    A file is a persistent unit of data that exists within a filesystem.
-    """
-    file = Primitive(
-        name="file",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "A persistent, named unit of data stored on a filesystem and addressed by path.",
-                    "attributes": ["path", "name", "extension", "size", "content"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.REQUIRES,
-                        target_id=path.id,
-                        target_depth=DepthLevel.IDENTITY,
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={
-                    "description": "Can be created, read, written, deleted, moved, copied, and renamed.",
-                    "operations": ["create", "read", "write", "delete", "move", "copy", "rename"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.DEPENDS_ON,
-                        target_id=filesystem.id,
-                        target_depth=DepthLevel.IDENTITY,
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "Operations are subject to filesystem permissions, path validity, "
-                                   "available disk space, and OS-level locking.",
-                    "constraints": [
-                        "Path must be valid for the target filesystem",
-                        "Write requires write permission on the parent directory",
-                        "Read requires read permission on the file",
-                        "Delete requires write permission on the parent directory",
-                        "File must not be locked by another process for exclusive operations",
-                    ],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.CONSTRAINED_BY,
-                        target_id=permission.id,
-                        target_depth=DepthLevel.IDENTITY,
-                        metadata={
-                            "read": "requires read permission on the file",
-                            "write": "requires write permission on the file",
-                            "execute": "requires execute permission on the file",
-                            "create": "requires write permission on the parent directory",
-                            "delete": "requires write permission on the parent directory",
-                            "provenance": "authored",
-                        },
-                    ),
-                ],
-            ),
-        ],
-    )
-    repo.save_primitive(file)
-    print(f"Saved: file ({file.id})")
-    return file
 
 
 def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     """
     Seed the Permission primitive at D0–D3.
 
-    Permission is a general access control concept — a rule governing
-    whether an actor may perform an operation on a target. The primitive
-    itself is generic; domain-specific details (POSIX rwx, ACLs) belong
-    on the relata that connect permission to constrained entities.
+    Fully grounded structural. Depends on OS at D2.
     """
     permission = Primitive(
         name="permission",
@@ -360,81 +255,144 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(permission)
-    print(f"Saved: permission ({permission.id})")
+    print(f"  permission        D0–D3  (structural)")
     return permission
 
 
-def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
+# ── Fully grounded entity (D0–D3) ─────────────────────────────────────────
+
+
+def seed_directory(
+    repo: PrimitiveRepository,
+    filesystem: Primitive,
+    path: Primitive,
+    permission: Primitive,
+) -> Primitive:
     """
-    Seed the Create primitive at D0–D3 with APPLIES_TO relata to File and Directory.
+    Seed the Directory primitive at D0–D3.
+
+    Fully grounded entity. Target for safe operations (list) and
+    destructive operations (delete, create). Deep enough (D3) to
+    satisfy any target_depth requirement from APPLIES_TO edges.
     """
-    create = Primitive(
-        name="create",
+    directory = Primitive(
+        name="directory",
         depths=[
             Depth(level=DepthLevel.EXISTENCE),
             Depth(
                 level=DepthLevel.IDENTITY,
                 properties={
-                    "description": "An operation that brings a new entity into existence where none previously existed.",
+                    "description": "A named container within a filesystem that holds files and "
+                                   "other directories, forming the hierarchical structure of "
+                                   "the filesystem's namespace.",
+                    "attributes": ["path", "name", "parent", "children"],
                 },
+                relata=[
+                    Relatum(
+                        relation_type=RelationType.REQUIRES,
+                        target_id=path.id,
+                        target_depth=DepthLevel.IDENTITY,
+                    ),
+                ],
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
                 properties={
-                    "description": "Accepts a target type, an optional destination context, and optional "
-                                   "initial state. Produces a new instance of the target type.",
-                    "inputs": ["target_type", "destination_context", "initial_state"],
-                    "outputs": ["new_entity_instance"],
+                    "description": "Can be created, deleted, listed, renamed, and traversed. "
+                                   "Serves as the scope and destination context for file operations.",
+                    "operations": ["create", "delete", "list", "rename", "traverse"],
                 },
                 relata=[
                     Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "default_destination": "current working directory when no path is specified",
-                            "provenance": "authored",
-                        },
-                    ),
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=directory.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "default_destination": "current working directory when no path is specified",
-                            "provenance": "authored",
-                        },
+                        relation_type=RelationType.DEPENDS_ON,
+                        target_id=filesystem.id,
+                        target_depth=DepthLevel.IDENTITY,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
                 properties={
-                    "description": "The destination context must exist and permit new entities. "
-                                   "The target type must be known. The entity must not already exist "
-                                   "at the destination unless replacement is explicitly intended.",
+                    "description": "Must have a valid path within a mounted filesystem. Deleting "
+                                   "requires the directory to be empty or deletion to be recursive. "
+                                   "The root directory cannot be deleted.",
                     "constraints": [
-                        "Destination context must exist",
-                        "Destination context must permit creation",
-                        "Target type must be known",
-                        "Entity must not already exist at destination unless replacement is explicit",
+                        "Path must be valid within the filesystem",
+                        "Parent directory must exist for creation",
+                        "Delete requires directory to be empty or explicitly recursive",
+                        "Root directory cannot be deleted",
+                        "Listing requires read permission on the directory",
+                        "Creation requires write permission on the parent directory",
                     ],
                 },
+                relata=[
+                    Relatum(
+                        relation_type=RelationType.CONSTRAINED_BY,
+                        target_id=permission.id,
+                        target_depth=DepthLevel.IDENTITY,
+                        metadata={
+                            "list": "requires read permission on the directory",
+                            "create_child": "requires write permission on the directory",
+                            "delete": "requires write permission on the parent directory",
+                            "rename": "requires write permission on both source and destination parent",
+                            "provenance": "authored",
+                        },
+                    ),
+                ],
             ),
         ],
     )
-    repo.save_primitive(create)
-    print(f"Saved: create ({create.id})")
-    return create
+    repo.save_primitive(directory)
+    print(f"  directory         D0–D3  (entity, fully grounded)")
+    return directory
+
+
+# ── Shallow entity (D0–D1) ────────────────────────────────────────────────
+
+
+def seed_file(repo: PrimitiveRepository, path: Primitive) -> Primitive:
+    """
+    Seed the File primitive at D0–D1 only.
+
+    Deliberately shallow. When an action's APPLIES_TO targets file at
+    target_depth D2, file's contiguous max (D1) is insufficient →
+    RelationalGap.
+    """
+    file = Primitive(
+        name="file",
+        depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(
+                level=DepthLevel.IDENTITY,
+                properties={
+                    "description": "A persistent, named unit of data stored on a filesystem and addressed by path.",
+                    "attributes": ["path", "name", "extension", "size", "content"],
+                },
+                relata=[
+                    Relatum(
+                        relation_type=RelationType.REQUIRES,
+                        target_id=path.id,
+                        target_depth=DepthLevel.IDENTITY,
+                    ),
+                ],
+            ),
+        ],
+    )
+    repo.save_primitive(file)
+    print(f"  file              D0–D1  (shallow → RelationalGap when targeted at D2)")
+    return file
+
+
+# ── Safe actions (D0–D2) ──────────────────────────────────────────────────
 
 
 def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     """
-    Seed the Read primitive at D0–D3.
+    Seed the Read primitive at D0–D2.
 
-    Read is the general operation of retrieving the contents or state of
-    an existing entity without modifying it. Domain-specific details
-    (partial reads, format interpretation) belong on the relata.
+    Safe action. APPLIES_TO lives at D2 (source_depth=D2), so the edge
+    is visible when read is grounded to D2. Targets file at target_depth
+    D2, but file is only at D1 → RelationalGap(read→file, req=D2, cur=D1).
     """
     read = Primitive(
         name="read",
@@ -463,196 +421,25 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
                         target_depth=DepthLevel.CAPABILITIES,
                         metadata={
                             "retrieval": "returns file contents as bytes or decoded text",
-                            "partial": "supports offset and range for partial reads",
-                            "formats": ["text", "binary"],
+                            "provenance": "authored",
                         },
                     ),
                 ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The target entity must exist. The actor must have sufficient "
-                                   "permission to access it. The entity must be in a state that "
-                                   "permits reading.",
-                    "constraints": [
-                        "Target entity must exist",
-                        "Actor must have read access to the target",
-                        "Target must be in a readable state",
-                        "Read does not modify the entity",
-                    ],
-                },
             ),
         ],
     )
     repo.save_primitive(read)
-    print(f"Saved: read ({read.id})")
+    print(f"  read              D0–D2  (safe action, APPLIES_TO@D2 → file)")
     return read
-
-
-def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, path: Primitive) -> Primitive:
-    """
-    Seed the Copy primitive at D0–D3.
-
-    Copy is the general operation of duplicating an entity into a new
-    context. Unlike move, the source entity is preserved.
-    """
-    copy = Primitive(
-        name="copy",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "An operation that duplicates an entity, producing a new "
-                                   "independent instance with identical contents. The source "
-                                   "entity is preserved unchanged.",
-                },
-            ),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={
-                    "description": "Accepts a source entity and a destination context. Produces "
-                                   "a new entity at the destination with contents identical to "
-                                   "the source. The copy is independent — subsequent changes to "
-                                   "either do not affect the other.",
-                    "inputs": ["source_entity", "destination_context"],
-                    "outputs": ["new_entity_instance"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                    ),
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=directory.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "recursive": "copying a directory copies all of its contents",
-                        },
-                    ),
-                    Relatum(
-                        relation_type=RelationType.REQUIRES,
-                        target_id=path.id,
-                        target_depth=DepthLevel.IDENTITY,
-                        metadata={
-                            "source": "path identifies the entity to copy",
-                            "destination": "path identifies where to place the copy",
-                        },
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The source entity must exist. The destination context must "
-                                   "exist and have sufficient capacity. The actor must have read "
-                                   "access to the source and write access to the destination. "
-                                   "The entity must not already exist at the destination unless "
-                                   "replacement is explicitly intended.",
-                    "constraints": [
-                        "Source entity must exist",
-                        "Destination context must exist and have sufficient capacity",
-                        "Actor must have read access at source and write access at destination",
-                        "Entity must not exist at destination unless replacement is explicit",
-                        "Copy is non-destructive to the source",
-                    ],
-                },
-            ),
-        ],
-    )
-    repo.save_primitive(copy)
-    print(f"Saved: copy ({copy.id})")
-    return copy
-
-
-def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, path: Primitive) -> Primitive:
-    """
-    Seed the Move primitive at D0–D3.
-
-    Move is the general operation of relocating an entity from one
-    context to another. The entity ceases to exist at the source
-    and exists at the destination.
-    """
-    move = Primitive(
-        name="move",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "An operation that relocates an entity from one context to "
-                                   "another. The entity ceases to exist at the source location "
-                                   "and exists at the destination. Content is preserved.",
-                },
-            ),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={
-                    "description": "Accepts a target entity and a destination context. "
-                                   "Produces the entity at the destination and removes it "
-                                   "from the source. May also rename the entity if the "
-                                   "destination implies a new identity.",
-                    "inputs": ["target_entity", "destination_context"],
-                    "outputs": ["relocated_entity"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                    ),
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=directory.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "recursive": "moving a directory moves all of its contents",
-                        },
-                    ),
-                    Relatum(
-                        relation_type=RelationType.REQUIRES,
-                        target_id=path.id,
-                        target_depth=DepthLevel.IDENTITY,
-                        metadata={
-                            "source": "path identifies the entity to move",
-                            "destination": "path identifies where to move it",
-                        },
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The source entity must exist. The destination context must "
-                                   "exist and permit the entity. The actor must have sufficient "
-                                   "permission at both source and destination. The entity must "
-                                   "not already exist at the destination unless replacement is "
-                                   "explicitly intended.",
-                    "constraints": [
-                        "Source entity must exist",
-                        "Destination context must exist and permit the entity",
-                        "Actor must have access at both source and destination",
-                        "Entity must not exist at destination unless replacement is explicit",
-                        "Move across filesystem boundaries may degrade to copy-then-delete",
-                    ],
-                },
-            ),
-        ],
-    )
-    repo.save_primitive(move)
-    print(f"Saved: move ({move.id})")
-    return move
 
 
 def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
     """
-    Seed the List primitive at D0–D3.
+    Seed the List primitive at D0–D2.
 
-    List is the general operation of enumerating the contents or members
-    of a container. Domain-specific details belong on the relata.
+    Safe action. APPLIES_TO lives at D2 (source_depth=D2), targeting
+    directory at target_depth D2. Directory is grounded to D3, so
+    D3 >= D2 → clean pass, no gaps.
     """
     list_prim = Primitive(
         name="list",
@@ -683,38 +470,29 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
                         metadata={
                             "contents": "returns files and subdirectories",
                             "recursive": "may enumerate contents of subdirectories recursively",
-                            "filtering": "supports glob patterns and type filtering (files only, dirs only)",
-                            "metadata": "may include size, timestamps, permissions per entry",
+                            "provenance": "authored",
                         },
                     ),
                 ],
             ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The container entity must exist. The actor must have "
-                                   "sufficient permission to enumerate its contents. List is "
-                                   "non-destructive.",
-                    "constraints": [
-                        "Container entity must exist",
-                        "Actor must have read access to the container",
-                        "List does not modify the container or its contents",
-                    ],
-                },
-            ),
         ],
     )
     repo.save_primitive(list_prim)
-    print(f"Saved: list ({list_prim.id})")
+    print(f"  list              D0–D2  (safe action, APPLIES_TO@D2 → directory)")
     return list_prim
+
+
+# ── Destructive actions ───────────────────────────────────────────────────
 
 
 def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
     """
-    Seed the Delete primitive at D0–D3.
+    Seed the Delete primitive at D0–D2 only.
 
-    Delete is the general operation of removing an existing entity from
-    existence. It is the inverse of create.
+    Destructive action. In the fully grounded graph (seed_all), delete's
+    APPLIES_TO edges live at D3 (CONSTRAINTS). Here D3 is omitted, so
+    those edges simply don't exist — delete has no visible connection to
+    its targets → ReachabilityGap on file or directory.
     """
     delete = Primitive(
         name="delete",
@@ -737,252 +515,100 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                     "inputs": ["target_entity"],
                     "outputs": ["confirmation_of_removal"],
                 },
+                # No relata — APPLIES_TO lives at D3 in seed_all, omitted here.
+            ),
+        ],
+    )
+    repo.save_primitive(delete)
+    print(f"  delete            D0–D2  (destructive, APPLIES_TO@D3 omitted → ReachabilityGap)")
+    return delete
+
+
+def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
+    """
+    Seed the Create primitive at D0–D1 + D3 (non-contiguous).
+
+    Destructive action. Has identity (D0–D1) but is missing D2
+    (CAPABILITIES). APPLIES_TO lives at D3 (source_depth=D3), but
+    contiguous max is D1 (D2 absent breaks the chain). The engine
+    gates the D3 edges → DepthGap(create, req=D3, cur=D1).
+
+    Since the APPLIES_TO edges are gated, file and directory are
+    unreachable from create → ReachabilityGap on the target.
+    """
+    create = Primitive(
+        name="create",
+        depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(
+                level=DepthLevel.IDENTITY,
+                properties={
+                    "description": "An operation that brings a new entity into existence where "
+                                   "none previously existed.",
+                },
+            ),
+            # D2 (CAPABILITIES) deliberately omitted — breaks contiguity.
+            # The agent knows create exists and what it is, but hasn't
+            # learned its capabilities. This gates all D3 edges.
+            Depth(
+                level=DepthLevel.CONSTRAINTS,
+                properties={},
                 relata=[
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        metadata={
+                            "default_destination": "current working directory when no path is specified",
+                            "provenance": "authored",
+                        },
                     ),
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
                         target_id=directory.id,
                         target_depth=DepthLevel.CAPABILITIES,
                         metadata={
-                            "recursive": "directory deletion may require recursive removal of contents",
-                            "empty_check": "some systems require the directory to be empty first",
+                            "default_destination": "current working directory when no path is specified",
+                            "provenance": "authored",
                         },
                     ),
                 ],
             ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The target entity must exist. The actor must have sufficient "
-                                   "permission to remove it. Deletion is irreversible by default. "
-                                   "Some entities may be protected from deletion.",
-                    "constraints": [
-                        "Target entity must exist",
-                        "Actor must have delete access in the target's context",
-                        "Deletion is irreversible by default",
-                        "Some entities may be protected from deletion",
-                    ],
-                },
-            ),
         ],
     )
-    repo.save_primitive(delete)
-    print(f"Saved: delete ({delete.id})")
-    return delete
+    repo.save_primitive(create)
+    print(f"  create            D0–D1+D3  (destructive, APPLIES_TO@D3 gated — D2 missing)")
+    return create
 
 
-def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
-    """
-    Seed the Write primitive at D0–D3.
-
-    Write is the general operation of modifying the contents or state
-    of an existing entity. Domain-specific details (append vs overwrite,
-    encoding) belong on the relata.
-    """
-    write = Primitive(
-        name="write",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "An operation that modifies the contents or state of an "
-                                   "existing entity. Unlike create, the entity must already "
-                                   "exist. Unlike read, the entity is changed.",
-                },
-            ),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={
-                    "description": "Accepts a target entity and new content or state. Produces "
-                                   "a modified version of the entity. Write is destructive — "
-                                   "previous state may be lost unless explicitly preserved.",
-                    "inputs": ["target_entity", "new_content_or_state"],
-                    "outputs": ["modified_entity"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "modes": ["overwrite", "append", "insert_at_offset"],
-                            "encoding": "content may require encoding (utf-8, binary)",
-                            "atomicity": "write may not be atomic — partial writes are possible on failure",
-                        },
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The target entity must exist. The actor must have sufficient "
-                                   "permission to modify it. The entity must be in a state that "
-                                   "permits modification. Previous state may be irrecoverably lost.",
-                    "constraints": [
-                        "Target entity must exist",
-                        "Actor must have write access to the target",
-                        "Target must be in a writable state",
-                        "Write is destructive — previous state may be lost",
-                    ],
-                },
-            ),
-        ],
-    )
-    repo.save_primitive(write)
-    print(f"Saved: write ({write.id})")
-    return write
-
-
-def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
-    """
-    Seed the User primitive at D0–D3.
-
-    A user is the OS-recognized principal of action — the identity against
-    which permissions are evaluated and ownership is attributed.
-    """
-    user = Primitive(
-        name="user",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "An entity recognized by the operating system as a principal of "
-                                   "action. Has a unique identity within the OS's user management "
-                                   "system. Used to attribute ownership, enforce permissions, and "
-                                   "establish the security context for running processes.",
-                    "attributes": ["identity", "uid", "home_directory", "process_context"],
-                },
-            ),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={
-                    "description": "Can own files and directories, belong to groups, and run "
-                                   "processes. The OS evaluates permissions against the user's "
-                                   "identity and group memberships when operations are attempted.",
-                    "operations": ["authenticate", "own_resource", "spawn_process", "elevate"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.DEPENDS_ON,
-                        target_id=os_prim.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "User identity must be recognized by the OS. Operations are "
-                                   "constrained by permissions granted directly to the user or "
-                                   "inherited via group membership. Superuser may bypass most "
-                                   "permission constraints.",
-                    "constraints": [
-                        "A process executes under exactly one effective user identity at a time",
-                        "User identity is resolved at process creation, not re-evaluated during execution",
-                        "Privilege escalation requires an explicit OS-mediated mechanism",
-                        "One user identity is designated as superuser with elevated capabilities",
-                        "A user must exist in the OS identity store before processes can run under it",
-                    ],
-                },
-            ),
-        ],
-    )
-    repo.save_primitive(user)
-    print(f"Saved: user ({user.id})")
-    return user
-
-
-def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -> Primitive:
-    """
-    Seed the Group primitive at D0–D3.
-
-    A group is a named collection of users through which permissions are
-    inherited collectively. The OS resolves group membership when evaluating
-    access control.
-    """
-    group = Primitive(
-        name="group",
-        depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.IDENTITY,
-                properties={
-                    "description": "A named collection of users recognized by the operating system. "
-                                   "Groups aggregate permissions and ownership, allowing multiple users "
-                                   "to share access to resources under a common identity.",
-                    "attributes": ["name", "gid", "members"],
-                },
-            ),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={
-                    "description": "Can contain multiple users. Permissions granted to a group apply "
-                                   "to all its members. The OS evaluates group membership when "
-                                   "resolving access control for a user.",
-                    "operations": ["add_member", "remove_member", "resolve_members"],
-                },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.DEPENDS_ON,
-                        target_id=os_prim.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                    ),
-                    Relatum(
-                        relation_type=RelationType.INCLUDES,
-                        target_id=user.id,
-                        target_depth=DepthLevel.IDENTITY,
-                    ),
-                ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "Group membership is the mechanism by which permissions are "
-                                   "inherited collectively. Membership and identity are managed "
-                                   "exclusively by the OS.",
-                    "constraints": [
-                        "A group identity must be unique within the OS's identity namespace",
-                        "A process inherits group memberships at creation; changes require a new process context",
-                        "The number of simultaneous group memberships per user is OS-bounded",
-                        "A group must exist in the OS identity store before it can be referenced",
-                        "Membership modification requires privileged access",
-                    ],
-                },
-            ),
-        ],
-    )
-    repo.save_primitive(group)
-    print(f"Saved: group ({group.id})")
-    return group
+# ── Main ──────────────────────────────────────────────────────────────────
 
 
 def main(repository: PrimitiveRepository) -> None:
     with repository as repo:
         repo.ensure_constraints()
+        deleted = clear_graph(repo)
+
+        print(f"Cleared {deleted} existing primitive(s).")
+        print("Seeding gap-demonstration graph (10 primitives):\n")
+
+        # Substrates
         os_prim = seed_operating_system(repo)
         filesystem = seed_filesystem(repo, os_prim)
         path = seed_path(repo, filesystem)
         permission = seed_permission(repo, os_prim)
+
+        # Entities
         directory = seed_directory(repo, filesystem, path, permission)
-        file = seed_file(repo, filesystem, path, permission)
-        create = seed_create(repo, file, directory)
+        file = seed_file(repo, path)
+
+        # Actions
         read = seed_read(repo, file)
-        write = seed_write(repo, file)
-        delete = seed_delete(repo, file, directory)
         list_prim = seed_list(repo, directory)
-        move = seed_move(repo, file, directory, path)
-        copy = seed_copy(repo, file, directory, path)
-        user = seed_user(repo, os_prim)
-        group = seed_group(repo, os_prim, user)
+        delete = seed_delete(repo, file, directory)
+        create = seed_create(repo, file, directory)
 
         # Add INCLUDES relata to filesystem now that file and directory exist.
-        # Filesystem's D2 (CAPABILITIES) includes these entities at D0 (EXISTENCE).
         fs_caps = next(d for d in filesystem.depths if d.level == DepthLevel.CAPABILITIES)
         fs_caps.relata.extend([
             Relatum(
@@ -997,164 +623,23 @@ def main(repository: PrimitiveRepository) -> None:
             ),
         ])
         repo.save_primitive(filesystem)
-        print(f"Updated: filesystem with INCLUDES relata")
+        print(f"\n  Updated: filesystem with INCLUDES → file, directory")
 
-        # Add APPLIES_TO relata to permission now that user, group, and action
-        # primitives exist. Permission's D2 (CAPABILITIES) applies to actor types
-        # at D1 (IDENTITY) and to action types at D2 (CAPABILITIES) — permission
-        # governs what actions an actor is allowed to perform.
-        perm_caps = next(d for d in permission.depths if d.level == DepthLevel.CAPABILITIES)
-        perm_caps.relata.extend([
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=user.id,
-                target_depth=DepthLevel.IDENTITY,
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=group.id,
-                target_depth=DepthLevel.IDENTITY,
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=read.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may perform a read operation",
-                    "provenance": "authored",
-                },
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=write.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may perform a write operation",
-                    "provenance": "authored",
-                },
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=delete.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may perform a delete operation",
-                    "provenance": "authored",
-                },
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=create.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may perform a create operation",
-                    "provenance": "authored",
-                },
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=list_prim.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may enumerate the contents of a directory",
-                    "provenance": "authored",
-                },
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=move.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may relocate an entity across contexts",
-                    "provenance": "authored",
-                },
-            ),
-            Relatum(
-                relation_type=RelationType.APPLIES_TO,
-                target_id=copy.id,
-                target_depth=DepthLevel.CAPABILITIES,
-                metadata={
-                    "description": "Permission governs whether an actor may duplicate an entity into a new context",
-                    "provenance": "authored",
-                },
-            ),
-        ])
-        repo.save_primitive(permission)
-        print(f"Updated: permission with APPLIES_TO relata")
+        print("""
+Done. Seeded 10 primitives.
 
-        # Add CONSTRAINED_BY relata to action primitives at D3 (CONSTRAINTS).
-        # read, write, delete, and create all state permission constraints in
-        # prose but have no relatum backing them — this closes that gap.
-        for action_prim in (read, write, delete, create):
-            action_constraints = next(d for d in action_prim.depths if d.level == DepthLevel.CONSTRAINTS)
-            action_constraints.relata.append(
-                Relatum(
-                    relation_type=RelationType.CONSTRAINED_BY,
-                    target_id=permission.id,
-                    target_depth=DepthLevel.IDENTITY,
-                    metadata={
-                        "description": f"The {action_prim.name} action requires the actor to hold the corresponding permission on the target",
-                        "provenance": "authored",
-                    },
-                )
-            )
-            repo.save_primitive(action_prim)
-        print(f"Updated: read, write, delete, create with CONSTRAINED_BY permission at D3")
-
-        list_constraints = next(d for d in list_prim.depths if d.level == DepthLevel.CONSTRAINTS)
-        list_constraints.relata.append(
-            Relatum(
-                relation_type=RelationType.CONSTRAINED_BY,
-                target_id=permission.id,
-                target_depth=DepthLevel.IDENTITY,
-                metadata={
-                    "description": "The list action requires read permission on the target directory to enumerate its contents",
-                    "provenance": "authored",
-                },
-            )
-        )
-        repo.save_primitive(list_prim)
-        print(f"Updated: list with CONSTRAINED_BY permission at D3")
-
-        move_constraints = next(d for d in move.depths if d.level == DepthLevel.CONSTRAINTS)
-        move_constraints.relata.append(
-            Relatum(
-                relation_type=RelationType.CONSTRAINED_BY,
-                target_id=permission.id,
-                target_depth=DepthLevel.IDENTITY,
-                metadata={
-                    "description": "The move action requires write permission on both source and destination contexts — the source must permit removal and the destination must permit creation",
-                    "source_permission": "write (delete-equivalent) on the source context",
-                    "destination_permission": "write (create-equivalent) on the destination context",
-                    "provenance": "authored",
-                },
-            )
-        )
-        repo.save_primitive(move)
-        print(f"Updated: move with CONSTRAINED_BY permission at D3")
-
-        copy_constraints = next(d for d in copy.depths if d.level == DepthLevel.CONSTRAINTS)
-        copy_constraints.relata.append(
-            Relatum(
-                relation_type=RelationType.CONSTRAINED_BY,
-                target_id=permission.id,
-                target_depth=DepthLevel.IDENTITY,
-                metadata={
-                    "description": "The copy action requires read permission on the source and write permission on the destination context",
-                    "source_permission": "read on the source entity",
-                    "destination_permission": "write (create-equivalent) on the destination context",
-                    "provenance": "authored",
-                },
-            )
-        )
-        repo.save_primitive(copy)
-        print(f"Updated: copy with CONSTRAINED_BY permission at D3")
-
-        print("\nDone. Seeded 16 primitives.")
+Expected gap scenarios:
+  ["list", "directory"]    → clean pass
+  ["read", "file"]         → RelationalGap (file too shallow)
+  ["delete", "file"]       → ReachabilityGap (APPLIES_TO@D3 omitted)
+  ["delete", "directory"]  → ReachabilityGap (APPLIES_TO@D3 omitted)
+  ["create", "file"]       → DepthGap + ReachabilityGap (edge gated)
+  ["create", "directory"]  → DepthGap + ReachabilityGap (edge gated)
+""")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Depth and Relational Gap Seeder")
+    parser = argparse.ArgumentParser(description="Depth-Gated Gap Demonstration Seeder")
     parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
     parser.add_argument("--neo4j-user", default="neo4j")
     parser.add_argument("--neo4j-password", default="password")

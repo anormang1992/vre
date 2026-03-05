@@ -263,11 +263,13 @@ def test_vre_guard_callable_concepts_result_is_grounded():
         return "executed"
 
     my_fn("logs/")
-    mock_vre.check.assert_called_once_with(["directory"])
+    mock_vre.check.assert_called_once_with(["directory"], min_depth=None)
 
 
 def test_vre_guard_callable_concepts_stored_on_attribute():
-    """_vre_concepts stores the callable itself for introspection."""
+    """
+    _vre_concepts stores the callable itself for introspection.
+    """
     from vre.guard import vre_guard
 
     fn = lambda: ["file"]
@@ -283,7 +285,9 @@ def test_vre_guard_callable_concepts_stored_on_attribute():
 # ── callable cardinality ──────────────────────────────────────────────────────
 
 def test_vre_guard_callable_cardinality_evaluated_on_call():
-    """When cardinality is callable, it is evaluated on the single-phase call."""
+    """
+    When cardinality is callable, it is evaluated on the single-phase call.
+    """
     from vre.guard import vre_guard
 
     received = []
@@ -338,3 +342,36 @@ def test_vre_guard_callable_cardinality_passed_to_check_policy():
     assert call_args[1] == "multiple"  # second positional arg is cardinality
 
 
+# ── min_depth passthrough ────────────────────────────────────────────────────
+
+def test_vre_guard_min_depth_passed_to_check():
+    """
+    min_depth parameter is forwarded to vre.check().
+    """
+    from vre.guard import vre_guard
+    from vre.core.models import DepthLevel
+
+    mock_vre = _mock_vre(_grounding())
+
+    @vre_guard(mock_vre, concepts=["file"], min_depth=DepthLevel.CONSTRAINTS)
+    def my_fn():
+        return "executed"
+
+    my_fn()
+    mock_vre.check.assert_called_once_with(["file"], min_depth=DepthLevel.CONSTRAINTS)
+
+
+def test_vre_guard_no_min_depth_passes_none():
+    """
+    Without min_depth, vre.check() is called with min_depth=None.
+    """
+    from vre.guard import vre_guard
+
+    mock_vre = _mock_vre(_grounding())
+
+    @vre_guard(mock_vre, concepts=["file"])
+    def my_fn():
+        return "executed"
+
+    my_fn()
+    mock_vre.check.assert_called_once_with(["file"], min_depth=None)
