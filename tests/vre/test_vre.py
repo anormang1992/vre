@@ -172,7 +172,27 @@ class TestVRECheck:
         result = vre.resolve(["file"])
         assert isinstance(result, list)
 
+    def test_check_min_depth_passthrough(self):
+        """
+        min_depth is forwarded through VRE.check to the engine.
+        """
+        file_p = _make_fully_grounded("file")
+        vre = _make_vre_with_stub([file_p])
+        # file is at D3 — min_depth=D3 should still pass
+        result = vre.check(["file"], min_depth=DepthLevel.CONSTRAINTS)
+        assert result.grounded is True
+        # min_depth=D4 should produce DepthGap
+        result = vre.check(["file"], min_depth=DepthLevel.IMPLICATIONS)
+        assert result.grounded is False
+        depth_gaps = [g for g in result.gaps if g.kind == "DEPTH"]
+        assert len(depth_gaps) == 1
+        assert depth_gaps[0].required_depth == DepthLevel.IMPLICATIONS
+
     def test_check_policy_returns_policy_result(self):
+        """
+        VRE.check_policy returns a PolicyResult with action PASS, PENDING, or BLOCK.
+        :return:
+        """
         file_p = _make_fully_grounded("file")
         vre = _make_vre_with_stub([file_p])
         result = vre.check_policy(["file"])

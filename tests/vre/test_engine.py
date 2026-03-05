@@ -326,12 +326,12 @@ class TestFlatQuery:
         assert len(reachability_gaps) == 1
         assert reachability_gaps[0].primitive.name == "network"
 
-    def test_connected_concept_with_depth_gap(self) -> None:
-        """Concept connected but insufficient depth → DepthGap, no ReachabilityGap."""
+    def test_connected_concept_with_relational_gap(self) -> None:
+        """Concept connected but target too shallow → RelationalGap, no ReachabilityGap."""
         file_p = _make_primitive("file", [
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
-            # Missing CAPABILITIES and CONSTRAINTS — always requires D3
+            # Missing CAPABILITIES and CONSTRAINTS
         ])
         create_p = _make_primitive("create", [
             _depth(DepthLevel.EXISTENCE),
@@ -345,8 +345,11 @@ class TestFlatQuery:
 
         resp = engine.query(["create", "file"])
 
-        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
-        assert any(g.primitive.name == "file" for g in depth_gaps)
+        # Edge is visible (create at D3 >= source_depth D2). Target file at D1 < D3 → RelationalGap.
+        relational = [g for g in resp.result.gaps if g.kind == "RELATIONAL"]
+        assert len(relational) == 1
+        assert relational[0].target.name == "file"
+        assert relational[0].required_depth == DepthLevel.CONSTRAINTS
         reachability_gaps = [g for g in resp.result.gaps if g.kind == "REACHABILITY"]
         assert len(reachability_gaps) == 0
 
@@ -372,17 +375,41 @@ class TestFlatQuery:
 
 class TestMonotonicDepth:
 
-    def test_missing_intermediate_depth_is_a_gap(self) -> None:
-        """D0 + D3 present but D1/D2 missing → DepthGap with current_depth=D0."""
+    def test_missing_intermediate_depth_produces_depth_gap_via_gated_edge(self) -> None:
+        """D0 + D3 present but D1/D2 missing → edge at D2 is gated → DepthGap."""
+        target = _make_primitive("file", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        # create has D0 and D3, but D1/D2 absent → contiguous max = D0.
+        # Edge lives at D2 (CAPABILITIES) so it's gated.
         p = _make_primitive("create", [
             _depth(DepthLevel.EXISTENCE),
-            _depth(DepthLevel.CONSTRAINTS),   # D1 and D2 absent
+            _depth(DepthLevel.CAPABILITIES, [
+                _relatum(target.id, RelationType.APPLIES_TO, DepthLevel.CAPABILITIES),
+            ]),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        engine = GroundingEngine(StubRepository([p, target]))
+        resp = engine.query(["create", "file"])
+        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
+        assert len(depth_gaps) == 1
+        assert depth_gaps[0].primitive.name == "create"
+        assert depth_gaps[0].required_depth == DepthLevel.CAPABILITIES
+        assert depth_gaps[0].current_depth == DepthLevel.EXISTENCE
+
+    def test_no_edges_no_depth_gap_without_min_depth(self) -> None:
+        """Root with no edges → no DepthGap (graph structure determines requirements)."""
+        p = _make_primitive("create", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.CONSTRAINTS),   # D1 and D2 absent, but no edges
         ])
         engine = GroundingEngine(StubRepository([p]))
         resp = engine.query(["create"])
         depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
-        assert len(depth_gaps) == 1
-        assert depth_gaps[0].current_depth == DepthLevel.EXISTENCE
+        assert len(depth_gaps) == 0
 
     def test_contiguous_depths_pass_grounding(self) -> None:
         """D0 through D3 all present → no gaps."""
@@ -438,3 +465,172 @@ class TestMonotonicDepth:
         resp = engine.query(["directory"])
         primitive_names = {p.name for p in resp.result.primitives}
         assert "permission" in primitive_names
+
+
+# ---------------------------------------------------------------------------
+# Tests: source depth gating
+# ---------------------------------------------------------------------------
+
+
+class TestSourceDepthGating:
+    """Graph-structural depth enforcement via edge source_depth."""
+
+    @staticmethod
+    def _gated_delete_and_file():
+        """
+        Shared fixture: delete has D0+D1 (contiguous max = D1) with a
+        relatum at D3 pointing to file. The D2 gap breaks contiguity,
+        so the D3 edge is gated.
+        """
+        file_p = _make_primitive("file", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        delete_p = _make_primitive("delete", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS, [
+                _relatum(file_p.id, RelationType.APPLIES_TO, DepthLevel.CAPABILITIES),
+            ]),
+        ])
+        return delete_p, file_p
+
+    def test_edge_at_d3_gated_when_source_at_d1(self) -> None:
+        """
+        Edge at D3 on source, source contiguous to D1 → DepthGap + ReachabilityGap.
+        """
+        delete_p, file_p = self._gated_delete_and_file()
+        engine = GroundingEngine(StubRepository([delete_p, file_p]))
+
+        resp = engine.query(["delete", "file"])
+
+        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
+        assert len(depth_gaps) == 1
+        assert depth_gaps[0].primitive.name == "delete"
+        assert depth_gaps[0].required_depth == DepthLevel.CONSTRAINTS
+        assert depth_gaps[0].current_depth == DepthLevel.IDENTITY
+        # Gated edge excluded from connectivity → roots are disconnected
+        reachability_gaps = [g for g in resp.result.gaps if g.kind == "REACHABILITY"]
+        assert len(reachability_gaps) == 1
+
+    def test_edge_at_d2_visible_when_source_at_d2(self) -> None:
+        """
+        Edge at D2, source contiguous to D2 → visible, no gaps.
+        """
+        file_p = _make_primitive("file", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        read_p = _make_primitive("read", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES, [
+                _relatum(file_p.id, RelationType.APPLIES_TO, DepthLevel.CAPABILITIES),
+            ]),
+        ])
+        engine = GroundingEngine(StubRepository([read_p, file_p]))
+
+        resp = engine.query(["read", "file"])
+
+        assert len(resp.result.gaps) == 0
+
+    def test_visible_edge_with_shallow_target_produces_relational_gap(self) -> None:
+        """
+        Source sees the edge, but target too shallow → RelationalGap.
+        """
+        file_p = _make_primitive("file", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+        ])
+        create_p = _make_primitive("create", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES, [
+                _relatum(file_p.id, RelationType.APPLIES_TO, DepthLevel.CAPABILITIES),
+            ]),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        engine = GroundingEngine(StubRepository([create_p, file_p]))
+
+        resp = engine.query(["create", "file"])
+
+        relational = [g for g in resp.result.gaps if g.kind == "RELATIONAL"]
+        assert len(relational) == 1
+        assert relational[0].source.name == "create"
+        assert relational[0].target.name == "file"
+        assert relational[0].required_depth == DepthLevel.CAPABILITIES
+        assert relational[0].current_depth == DepthLevel.IDENTITY
+
+    def test_min_depth_produces_depth_gap_on_shallow_root(self) -> None:
+        """
+        min_depth=D3 on a root at D2 → DepthGap even without gated edges.
+        """
+        read_p = _make_primitive("read", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        engine = GroundingEngine(StubRepository([read_p]))
+
+        resp = engine.query(["read"], min_depth=DepthLevel.CONSTRAINTS)
+
+        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
+        assert len(depth_gaps) == 1
+        assert depth_gaps[0].primitive.name == "read"
+        assert depth_gaps[0].required_depth == DepthLevel.CONSTRAINTS
+        assert depth_gaps[0].current_depth == DepthLevel.CAPABILITIES
+
+    def test_default_min_depth_no_gap_without_gated_edges(self) -> None:
+        """
+        No min_depth and no gated edges → no DepthGap.
+        """
+        read_p = _make_primitive("read", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        engine = GroundingEngine(StubRepository([read_p]))
+
+        resp = engine.query(["read"])
+
+        assert len(resp.result.gaps) == 0
+
+    def test_gated_only_edges_produce_reachability_gap(self) -> None:
+        """
+        Two roots connected only by gated edges → ReachabilityGap.
+        """
+        delete_p, file_p = self._gated_delete_and_file()
+        engine = GroundingEngine(StubRepository([delete_p, file_p]))
+
+        resp = engine.query(["delete", "file"])
+
+        reachability_gaps = [g for g in resp.result.gaps if g.kind == "REACHABILITY"]
+        assert len(reachability_gaps) == 1
+
+    def test_min_depth_cannot_lower_gated_edge_requirement(self) -> None:
+        """
+        min_depth=D2 does NOT suppress a DepthGap from a gated edge at D3.
+        """
+        delete_p, file_p = self._gated_delete_and_file()
+        engine = GroundingEngine(StubRepository([delete_p, file_p]))
+
+        resp = engine.query(["delete", "file"], min_depth=DepthLevel.CAPABILITIES)
+
+        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
+        assert len(depth_gaps) == 1
+        assert depth_gaps[0].primitive.name == "delete"
+        assert depth_gaps[0].required_depth == DepthLevel.CONSTRAINTS  # D3, not D2
+
+    def test_gated_edges_excluded_from_pathway(self) -> None:
+        """
+        Gated edges do not appear in the response pathway.
+        """
+        delete_p, file_p = self._gated_delete_and_file()
+        engine = GroundingEngine(StubRepository([delete_p, file_p]))
+
+        resp = engine.query(["delete", "file"])
+
+        assert len(resp.result.pathway) == 0

@@ -30,6 +30,7 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING, Callable
 
+from vre.core.models import DepthLevel
 from vre.core.policy import PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 
@@ -48,6 +49,7 @@ def vre_guard(
     vre: "VRE",
     concepts: ConceptsInput,
     cardinality: CardinalityInput = None,
+    min_depth: DepthLevel | None = None,
     on_trace: Callable[["GroundingResult"], None] | None = None,
     on_policy: Callable[[str], bool] | None = None,
 ) -> Callable:
@@ -65,6 +67,9 @@ def vre_guard(
         Optional cardinality hint for policy evaluation ("single", "multiple").
         Accepts a static string or a callable that receives (*args, **kwargs)
         and returns str | None.
+    min_depth:
+        Optional integrator override — enforces a minimum depth floor on all
+        root primitives. Can only raise the floor, never lower it.
     on_trace:
         Optional callback called with the GroundingResult after grounding
         (both grounded and ungrounded).
@@ -84,7 +89,7 @@ def vre_guard(
             Run grounding → policy → execution on each call.
             """
             resolved_concepts = concepts(*args, **kwargs) if callable(concepts) else concepts
-            grounding = vre.check(resolved_concepts)
+            grounding = vre.check(resolved_concepts, min_depth=min_depth)
             if on_trace:
                 on_trace(grounding)
 

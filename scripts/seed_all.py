@@ -1,12 +1,14 @@
 """
 Seed script for populating VRE with epistemic primitives.
 
-Run: poetry run python scripts/seed.py
+Run: poetry run python scripts/seed_all.py
 """
 import argparse
 
+from scripts.clear_graph import clear_graph
 from vre.core.graph import PrimitiveRepository
 from vre.core.models import Depth, DepthLevel, Primitive, Relatum, RelationType
+from vre.core.policy.models import Cardinality, Policy
 
 
 def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
@@ -431,6 +433,20 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                     "inputs": ["target_type", "destination_context", "initial_state"],
                     "outputs": ["new_entity_instance"],
                 },
+            ),
+            Depth(
+                level=DepthLevel.CONSTRAINTS,
+                properties={
+                    "description": "The destination context must exist and permit new entities. "
+                                   "The target type must be known. The entity must not already exist "
+                                   "at the destination unless replacement is explicitly intended.",
+                    "constraints": [
+                        "Destination context must exist",
+                        "Destination context must permit creation",
+                        "Target type must be known",
+                        "Entity must not already exist at destination unless replacement is explicit",
+                    ],
+                },
                 relata=[
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
@@ -451,20 +467,6 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                         },
                     ),
                 ],
-            ),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={
-                    "description": "The destination context must exist and permit new entities. "
-                                   "The target type must be known. The entity must not already exist "
-                                   "at the destination unless replacement is explicitly intended.",
-                    "constraints": [
-                        "Destination context must exist",
-                        "Destination context must permit creation",
-                        "Target type must be known",
-                        "Entity must not already exist at destination unless replacement is explicit",
-                    ],
-                },
             ),
         ],
     )
@@ -645,19 +647,6 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
                 },
                 relata=[
                     Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                    ),
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=directory.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "recursive": "moving a directory moves all of its contents",
-                        },
-                    ),
-                    Relatum(
                         relation_type=RelationType.REQUIRES,
                         target_id=path.id,
                         target_depth=DepthLevel.IDENTITY,
@@ -684,6 +673,21 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
                         "Move across filesystem boundaries may degrade to copy-then-delete",
                     ],
                 },
+                relata=[
+                    Relatum(
+                        relation_type=RelationType.APPLIES_TO,
+                        target_id=file.id,
+                        target_depth=DepthLevel.CAPABILITIES,
+                    ),
+                    Relatum(
+                        relation_type=RelationType.APPLIES_TO,
+                        target_id=directory.id,
+                        target_depth=DepthLevel.CAPABILITIES,
+                        metadata={
+                            "recursive": "moving a directory moves all of its contents",
+                        },
+                    ),
+                ],
             ),
         ],
     )
@@ -782,22 +786,6 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                     "inputs": ["target_entity"],
                     "outputs": ["confirmation_of_removal"],
                 },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                    ),
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=directory.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "recursive": "directory deletion may require recursive removal of contents",
-                            "empty_check": "some systems require the directory to be empty first",
-                        },
-                    ),
-                ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
@@ -812,6 +800,30 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                         "Some entities may be protected from deletion",
                     ],
                 },
+                relata=[
+                    Relatum(
+                        relation_type=RelationType.APPLIES_TO,
+                        target_id=file.id,
+                        target_depth=DepthLevel.CAPABILITIES,
+                        policies=[
+                            Policy(
+                                name="BulkFileDeletePolicy",
+                                requires_confirmation=True,
+                                trigger_cardinality=Cardinality.MULTIPLE,
+                                confirmation_message="Bulk file deletion requires user approval. Proceed?",
+                            ),
+                        ],
+                    ),
+                    Relatum(
+                        relation_type=RelationType.APPLIES_TO,
+                        target_id=directory.id,
+                        target_depth=DepthLevel.CAPABILITIES,
+                        metadata={
+                            "recursive": "directory deletion may require recursive removal of contents",
+                            "empty_check": "some systems require the directory to be empty first",
+                        },
+                    ),
+                ],
             ),
         ],
     )
@@ -849,18 +861,6 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
                     "inputs": ["target_entity", "new_content_or_state"],
                     "outputs": ["modified_entity"],
                 },
-                relata=[
-                    Relatum(
-                        relation_type=RelationType.APPLIES_TO,
-                        target_id=file.id,
-                        target_depth=DepthLevel.CAPABILITIES,
-                        metadata={
-                            "modes": ["overwrite", "append", "insert_at_offset"],
-                            "encoding": "content may require encoding (utf-8, binary)",
-                            "atomicity": "write may not be atomic — partial writes are possible on failure",
-                        },
-                    ),
-                ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
@@ -875,6 +875,18 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
                         "Write is destructive — previous state may be lost",
                     ],
                 },
+                relata=[
+                    Relatum(
+                        relation_type=RelationType.APPLIES_TO,
+                        target_id=file.id,
+                        target_depth=DepthLevel.CAPABILITIES,
+                        metadata={
+                            "modes": ["overwrite", "append", "insert_at_offset"],
+                            "encoding": "content may require encoding (utf-8, binary)",
+                            "atomicity": "write may not be atomic — partial writes are possible on failure",
+                        },
+                    ),
+                ],
             ),
         ],
     )
@@ -1010,6 +1022,8 @@ def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -
 def main(repository: PrimitiveRepository) -> None:
     with repository as repo:
         repo.ensure_constraints()
+        deleted = clear_graph(repo)
+        print(f"Cleared {deleted} existing primitive(s).\n")
         os_prim = seed_operating_system(repo)
         filesystem = seed_filesystem(repo, os_prim)
         path = seed_path(repo, filesystem)
@@ -1195,7 +1209,7 @@ def main(repository: PrimitiveRepository) -> None:
         repo.save_primitive(copy)
         print(f"Updated: copy with CONSTRAINED_BY permission at D3")
 
-        print("\nDone. Seeded 16 primitives.")
+        print("\nDone. Seeded 15 primitives.")
 
 
 if __name__ == "__main__":
