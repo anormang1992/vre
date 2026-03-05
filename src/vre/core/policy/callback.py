@@ -9,7 +9,7 @@ PolicyCallback and accept a PolicyCallContext argument.
 
 Example::
 
-    from vre.core.policy import PolicyCallback, PolicyCallContext
+    from vre.core.policy.callback import PolicyCallback, PolicyCallContext
 
     class AllowTempWrites:
         def __call__(self, context: PolicyCallContext) -> bool:
@@ -34,7 +34,7 @@ class PolicyCallContext(BaseModel):
     tool_name:
         Name of the decorated function that triggered the policy check.
     grounding:
-        The GroundingResult from Phase 1, including the full epistemic trace.
+        The GroundingResult from grounding, including the full epistemic trace.
     call_args:
         Positional arguments the decorated function was called with.
     call_kwargs:

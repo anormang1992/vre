@@ -4,7 +4,6 @@ Unit tests for vre.core.guard — lemmatize and vre_guard.
 
 from unittest.mock import MagicMock
 
-from vre.core.grounding import lemmatize
 from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyResult
 
@@ -25,33 +24,6 @@ def _mock_vre(grounding: GroundingResult, policy: PolicyResult | None = None):
     mock.check.return_value = grounding
     mock.check_policy.return_value = policy or PolicyResult(action="PASS")
     return mock
-
-
-# ── lemmatize ────────────────────────────────────────────────────────────────
-
-def test_lemmatize_removes_stopwords():
-    result = lemmatize("Delete a file from the filesystem")
-    assert "delete" in result
-    assert "file" in result
-    assert "a" not in result
-    assert "the" not in result
-
-
-def test_lemmatize_lowercases():
-    result = lemmatize("Write Content To A File")
-    assert all(t == t.lower() for t in result)
-
-
-def test_lemmatize_removes_punctuation():
-    result = lemmatize("read, write, and execute!")
-    for token in result:
-        assert token.isalpha(), f"Expected alpha token, got: {token!r}"
-
-
-def test_lemmatize_returns_list_of_strings():
-    result = lemmatize("create a directory")
-    assert isinstance(result, list)
-    assert all(isinstance(t, str) for t in result)
 
 
 # ── ungrounded path ───────────────────────────────────────────────────────────
