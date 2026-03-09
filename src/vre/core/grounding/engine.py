@@ -233,10 +233,14 @@ class GroundingEngine:
         collected_ids = {n.id for n in all_nodes}
         return [
             Primitive(
-                id=p.id, name=p.name,
+                id=p.id,
+                name=p.name,
+                provenance=p.provenance,
                 depths=[
                     Depth(
-                        level=d.level, properties=d.properties,
+                        level=d.level,
+                        properties=d.properties,
+                        provenance=d.provenance,
                         relata=[r for r in d.relata if r.target_id in collected_ids],
                     )
                     for d in p.depths

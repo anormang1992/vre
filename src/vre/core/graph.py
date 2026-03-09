@@ -20,6 +20,7 @@ from vre.core.models import (
     DepthLevel,
     EpistemicStep,
     Primitive,
+    Provenance,
     Relatum,
     RelationType,
     ResolvedSubgraph,
@@ -90,12 +91,13 @@ class PrimitiveRepository:
         """
         stripped = []
         for depth in depths:
-            stripped.append(
-                {
-                    "level": int(depth.level),
-                    "properties": depth.properties,
-                }
-            )
+            entry: dict[str, Any] = {
+                "level": int(depth.level),
+                "properties": depth.properties,
+            }
+            if depth.provenance:
+                entry["provenance"] = depth.provenance.model_dump(mode="json")
+            stripped.append(entry)
         return json.dumps(stripped)
 
     @staticmethod
@@ -112,6 +114,7 @@ class PrimitiveRepository:
             depth = Depth(
                 level=DepthLevel(rd["level"]),
                 properties=rd.get("properties", {}),
+                provenance=Provenance(**rd["provenance"]) if rd.get("provenance") else None,
             )
             depths_by_level[int(depth.level)] = depth
 
@@ -126,12 +129,19 @@ class PrimitiveRepository:
             policies_data = json.loads(policies) if policies else []
             policies = [parse_policy(p) for p in policies_data]
 
+            rel_prov_json = rel_props.get("provenance")
+            rel_prov = None
+            if rel_prov_json:
+                rel_prov_data = json.loads(rel_prov_json) if isinstance(rel_prov_json, str) else rel_prov_json
+                rel_prov = Provenance(**rel_prov_data)
+
             relatum = Relatum(
                 relation_type=RelationType(rel["rel_type"]),
                 target_id=UUID(rel["target_id"]),
                 target_depth=DepthLevel(target_depth_val),
                 metadata=metadata,
                 policies=policies,
+                provenance=rel_prov,
             )
 
             if source_depth is not None and source_depth in depths_by_level:
@@ -139,16 +149,24 @@ class PrimitiveRepository:
 
         sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
 
+        node_prov_json = node_data.get("provenance")
+        node_prov = None
+        if node_prov_json:
+            node_prov_data = json.loads(node_prov_json) if isinstance(node_prov_json, str) else node_prov_json
+            node_prov = Provenance(**node_prov_data)
+
         return Primitive(
             id=UUID(node_data["id"]),
             name=node_data["name"],
             depths=sorted_depths,
+            provenance=node_prov,
         )
 
     def save_primitive(self, primitive: Primitive) -> None:
         """
         Persist a Primitive — full replace of depths and relata.
         """
+        primitive.validate_provenance()
         depths_json = self._depths_to_json(primitive.depths)
 
         relata_params: list[dict[str, Any]] = []
@@ -162,21 +180,25 @@ class PrimitiveRepository:
                         "target_depth": int(relatum.target_depth),
                         "metadata_json": json.dumps(relatum.metadata) if relatum.metadata else "{}",
                         "policies": json.dumps([p.model_dump() for p in relatum.policies]) if relatum.policies else "[]",
+                        "provenance": json.dumps(relatum.provenance.model_dump(mode="json")) if relatum.provenance else None,
                     }
                 )
 
         rel_types = [rt.value for rt in RelationType]
+
+        node_provenance = json.dumps(primitive.provenance.model_dump(mode="json")) if primitive.provenance else None
 
         def _tx(tx: Any) -> None:
             tx.run(
                 cast(
                     LiteralString,
                     "MERGE (p:Primitive {id: $id}) "
-                    "SET p.name = $name, p.depths_json = $depths_json",
+                    "SET p.name = $name, p.depths_json = $depths_json, p.provenance = $provenance",
                 ),
                 id=str(primitive.id),
                 name=primitive.name,
                 depths_json=depths_json,
+                provenance=node_provenance,
             )
 
             for rt in rel_types:
@@ -198,7 +220,8 @@ class PrimitiveRepository:
                         f"source_depth: $source_depth, "
                         f"target_depth: $target_depth, "
                         f"metadata_json: $metadata_json, "
-                        f"policies: $policies"
+                        f"policies: $policies, "
+                        f"provenance: $provenance"
                         f"}}]->(t)",
                     ),
                     source_id=str(primitive.id),
@@ -207,6 +230,7 @@ class PrimitiveRepository:
                     target_depth=rp["target_depth"],
                     metadata_json=rp["metadata_json"],
                     policies=rp["policies"],
+                    provenance=rp["provenance"],
                 )
 
         with self._driver.session(database=self._database) as session:
@@ -235,13 +259,15 @@ class PrimitiveRepository:
               p.id AS id,
               p.name AS name,
               p.depths_json AS depths_json,
+              p.provenance AS provenance,
               collect({
                 rel_type: type(r),
                 target_id: t.id,
                 source_depth: r.source_depth,
                 target_depth: r.target_depth,
                 metadata_json: coalesce(r.metadata_json, "{}"),
-                policies: coalesce(r.policies, "[]")
+                policies: coalesce(r.policies, "[]"),
+                provenance: r.provenance
               }) AS rels
             """,
         )
@@ -255,6 +281,7 @@ class PrimitiveRepository:
                 "id": record["id"],
                 "name": record["name"],
                 "depths_json": record["depths_json"],
+                "provenance": record["provenance"],
             }
             relationships = [
                 {
@@ -265,6 +292,7 @@ class PrimitiveRepository:
                         "target_depth": r["target_depth"],
                         "metadata_json": r.get("metadata_json") or "{}",
                         "policies": r.get("policies") or "[]",
+                        "provenance": r.get("provenance"),
                     },
                 }
                 for r in record["rels"]
@@ -286,13 +314,15 @@ class PrimitiveRepository:
               p.id AS id,
               p.name AS name,
               p.depths_json AS depths_json,
+              p.provenance AS provenance,
               collect({
                 rel_type: type(r),
                 target_id: t.id,
                 source_depth: r.source_depth,
                 target_depth: r.target_depth,
                 metadata_json: coalesce(r.metadata_json, "{}"),
-                policies: coalesce(r.policies, "[]")
+                policies: coalesce(r.policies, "[]"),
+                provenance: r.provenance
               }) AS rels
             """,
         )
@@ -306,6 +336,7 @@ class PrimitiveRepository:
                 "id": record["id"],
                 "name": record["name"],
                 "depths_json": record["depths_json"],
+                "provenance": record["provenance"],
             }
             relationships = [
                 {
@@ -316,6 +347,7 @@ class PrimitiveRepository:
                         "target_depth": r["target_depth"],
                         "metadata_json": r.get("metadata_json") or "{}",
                         "policies": r.get("policies") or "[]",
+                        "provenance": r.get("provenance"),
                     },
                 }
                 for r in record["rels"]
@@ -371,13 +403,14 @@ class PrimitiveRepository:
             OPTIONAL MATCH (src)-[r]->(tgt:Primitive)
             WHERE tgt IN nodes
             RETURN
-              [r IN roots | {id: r.id, name: r.name, depths_json: r.depths_json}] AS roots,
-              [n IN nodes | {id: n.id, name: n.name, depths_json: n.depths_json}] AS nodes,
+              [r IN roots | {id: r.id, name: r.name, depths_json: r.depths_json, provenance: r.provenance}] AS roots,
+              [n IN nodes | {id: n.id, name: n.name, depths_json: n.depths_json, provenance: n.provenance}] AS nodes,
               [e IN collect({
                   source_id: src.id, target_id: tgt.id, rel_type: type(r),
                   source_depth: r.source_depth, target_depth: r.target_depth,
                   metadata_json: coalesce(r.metadata_json, "{}"),
-                  policies: coalesce(r.policies, "[]")
+                  policies: coalesce(r.policies, "[]"),
+                  provenance: r.provenance
               }) WHERE e.rel_type IS NOT NULL] AS edges
             """,
         )
@@ -407,6 +440,7 @@ class PrimitiveRepository:
                         "target_depth": e["target_depth"],
                         "metadata_json": e.get("metadata_json", "{}"),
                         "policies": e.get("policies", "[]"),
+                        "provenance": e.get("provenance"),
                     },
                 })
 

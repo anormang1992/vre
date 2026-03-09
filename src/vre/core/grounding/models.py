@@ -47,7 +47,7 @@ def _fmt_gap(gap: Any) -> str:
 
 def _fmt_relatum(r: Any, id_to_name: dict) -> list[str]:
     """
-    Format a single Relatum as display lines, including metadata and policy count if present.
+    Format a single Relatum as display lines, including metadata, policy count, and provenance.
     """
     target_name = id_to_name.get(r.target_id, str(r.target_id))
     lines = [f"      → {target_name}  [{r.relation_type.value}, target@D{r.target_depth.value}]"]
@@ -58,6 +58,9 @@ def _fmt_relatum(r: Any, id_to_name: dict) -> list[str]:
         n = len(r.policies)
         word = "policy" if n == 1 else "policies"
         lines.append(f"        policies: {n} {word}")
+    if r.provenance:
+        date_str = r.provenance.created_at.strftime("%Y-%m-%d")
+        lines.append(f"        provenance: {r.provenance.source.value} ({date_str})")
     return lines
 
 
@@ -65,7 +68,8 @@ def _fmt_depth(depth: Any, id_to_name: dict) -> list[str]:
     """
     Format a single Depth level as display lines, including its relata.
     """
-    lines = [f"  D{depth.level.value} {depth.level.name}"]
+    prov_tag = f"  [{depth.provenance.source.value}]" if depth.provenance else ""
+    lines = [f"  D{depth.level.value} {depth.level.name}{prov_tag}"]
     if depth.properties:
         lines.append("    properties:")
         for k, v in depth.properties.items():
@@ -84,6 +88,10 @@ def _fmt_primitive(primitive: Any, id_to_name: dict) -> list[str]:
     name = primitive.name
     header = f"═══ {name} {'═' * max(0, 50 - len(name))}"
     lines = [header]
+
+    if primitive.provenance:
+        date_str = primitive.provenance.created_at.strftime("%Y-%m-%d")
+        lines.append(f"  provenance: {primitive.provenance.source.value} ({date_str})")
 
     if not primitive.depths:
         return lines

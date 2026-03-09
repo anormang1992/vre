@@ -90,7 +90,7 @@ def test_grounding_str_shows_relatum_with_metadata():
         relation_type=RelationType.CONSTRAINED_BY,
         target_id=permission.id,
         target_depth=DepthLevel.CONSTRAINTS,
-        metadata={"provenance": "authored"},
+        metadata={"enforcement": "kernel-level"},
     )
     file_p = _make_primitive("file", [
         _make_depth(DepthLevel.EXISTENCE),
@@ -101,7 +101,7 @@ def test_grounding_str_shows_relatum_with_metadata():
     result = _grounded(["file", "permission"], [file_p, permission])
     s = str(result)
     assert "→ permission  [CONSTRAINED_BY, target@D3]" in s
-    assert "metadata: provenance=authored" in s
+    assert "metadata: enforcement=kernel-level" in s
 
 
 def test_grounding_str_shows_pathway():

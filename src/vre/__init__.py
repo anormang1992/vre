@@ -17,7 +17,7 @@ Usage::
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
-from vre.core.models import DepthLevel
+from vre.core.models import DepthLevel, Provenance, ProvenanceSource
 from vre.core.policy import Cardinality, PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
