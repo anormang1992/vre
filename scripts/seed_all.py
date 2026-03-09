@@ -7,8 +7,10 @@ import argparse
 
 from scripts.clear_graph import clear_graph
 from vre.core.graph import PrimitiveRepository
-from vre.core.models import Depth, DepthLevel, Primitive, Relatum, RelationType
+from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 from vre.core.policy.models import Cardinality, Policy
+
+SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
 
 
 def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
@@ -21,10 +23,12 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
     """
     os_prim = Primitive(
         name="operating_system",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The software layer that manages hardware resources and provides "
                                    "services to applications. Mediates all access to storage, memory, "
@@ -34,6 +38,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Provides filesystems, process management, user/group identity, "
                                    "permission enforcement, environment variables, and inter-process "
@@ -49,6 +54,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Behavior varies across OS families (POSIX vs Windows). Resource "
                                    "limits, security policies, and kernel capabilities bound what is "
@@ -77,10 +83,12 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     """
     filesystem = Primitive(
         name="filesystem",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "A hierarchical system for organizing, storing, and retrieving "
                                    "persistent data. Provides the namespace (paths) and structure "
@@ -90,6 +98,7 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Organizes data into files and directories via a path-based "
                                    "hierarchy. Supports mounting, traversal, and metadata tracking "
@@ -106,11 +115,13 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=os_prim.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Filesystem type determines supported features (max path length, "
                                    "case sensitivity, symlinks, permissions model). Must be mounted "
@@ -140,10 +151,12 @@ def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primi
     """
     directory = Primitive(
         name="directory",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "A named container within a filesystem that holds files and "
                                    "other directories, forming the hierarchical structure of "
@@ -155,11 +168,13 @@ def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primi
                         relation_type=RelationType.REQUIRES,
                         target_id=path.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Can be created, deleted, listed, renamed, and traversed. "
                                    "Serves as the scope and destination context for file operations.",
@@ -170,11 +185,13 @@ def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primi
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=filesystem.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Must have a valid path within a mounted filesystem. Deleting "
                                    "requires the directory to be empty or deletion to be recursive. "
@@ -193,12 +210,12 @@ def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primi
                         relation_type=RelationType.CONSTRAINED_BY,
                         target_id=permission.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "list": "requires read permission on the directory",
                             "create_child": "requires write permission on the directory",
                             "delete": "requires write permission on the parent directory",
                             "rename": "requires write permission on both source and destination parent",
-                            "provenance": "authored",
                         },
                     ),
                 ],
@@ -220,10 +237,12 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
     """
     path = Primitive(
         name="path",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "A string that uniquely addresses a location within a "
                                    "filesystem's hierarchy. Composed of segments separated "
@@ -234,6 +253,7 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Can be resolved to a filesystem entity, joined with other "
                                    "paths, normalized, and decomposed into parent and basename. "
@@ -245,11 +265,13 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=filesystem.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Maximum length and valid characters are filesystem-dependent. "
                                    "Delimiter is OS-dependent (/ vs \\). Resolution may fail if "
@@ -279,10 +301,12 @@ def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive,
     """
     file = Primitive(
         name="file",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "A persistent, named unit of data stored on a filesystem and addressed by path.",
                     "attributes": ["path", "name", "extension", "size", "content"],
@@ -292,11 +316,13 @@ def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive,
                         relation_type=RelationType.REQUIRES,
                         target_id=path.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Can be created, read, written, deleted, moved, copied, and renamed.",
                     "operations": ["create", "read", "write", "delete", "move", "copy", "rename"],
@@ -306,11 +332,13 @@ def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive,
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=filesystem.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Operations are subject to filesystem permissions, path validity, "
                                    "available disk space, and OS-level locking.",
@@ -327,13 +355,13 @@ def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive,
                         relation_type=RelationType.CONSTRAINED_BY,
                         target_id=permission.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "read": "requires read permission on the file",
                             "write": "requires write permission on the file",
                             "execute": "requires execute permission on the file",
                             "create": "requires write permission on the parent directory",
                             "delete": "requires write permission on the parent directory",
-                            "provenance": "authored",
                         },
                     ),
                 ],
@@ -356,10 +384,12 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     """
     permission = Primitive(
         name="permission",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "A rule that governs whether an actor is allowed to perform "
                                    "a specific operation on a specific target. Expressed as a "
@@ -370,6 +400,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Can be checked, granted, revoked, and inherited. Multiple "
                                    "permission models exist; the specific model is determined "
@@ -381,6 +412,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=os_prim.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "enforcement": "kernel-level",
                             "models": ["posix_rwx", "acl", "capabilities"],
@@ -390,6 +422,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Only the granting authority can modify permissions. "
                                    "Inherited permissions may be overridden by explicit grants. "
@@ -417,16 +450,19 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     """
     create = Primitive(
         name="create",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that brings a new entity into existence where none previously existed.",
                 },
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a target type, an optional destination context, and optional "
                                    "initial state. Produces a new instance of the target type.",
@@ -436,6 +472,7 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The destination context must exist and permit new entities. "
                                    "The target type must be known. The entity must not already exist "
@@ -452,18 +489,18 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "default_destination": "current working directory when no path is specified",
-                            "provenance": "authored",
                         },
                     ),
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
                         target_id=directory.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "default_destination": "current working directory when no path is specified",
-                            "provenance": "authored",
                         },
                     ),
                 ],
@@ -485,10 +522,12 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     """
     read = Primitive(
         name="read",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that retrieves the contents or state of an "
                                    "existing entity without modifying it.",
@@ -496,6 +535,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a target entity and returns its contents or state. "
                                    "Read is inherently non-destructive — the target is unchanged "
@@ -508,6 +548,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "retrieval": "returns file contents as bytes or decoded text",
                             "partial": "supports offset and range for partial reads",
@@ -518,6 +559,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The target entity must exist. The actor must have sufficient "
                                    "permission to access it. The entity must be in a state that "
@@ -546,10 +588,12 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
     """
     copy = Primitive(
         name="copy",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that duplicates an entity, producing a new "
                                    "independent instance with identical contents. The source "
@@ -558,6 +602,7 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a source entity and a destination context. Produces "
                                    "a new entity at the destination with contents identical to "
@@ -571,11 +616,13 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                     ),
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
                         target_id=directory.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "recursive": "copying a directory copies all of its contents",
                         },
@@ -584,6 +631,7 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
                         relation_type=RelationType.REQUIRES,
                         target_id=path.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "source": "path identifies the entity to copy",
                             "destination": "path identifies where to place the copy",
@@ -593,6 +641,7 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The source entity must exist. The destination context must "
                                    "exist and have sufficient capacity. The actor must have read "
@@ -625,10 +674,12 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
     """
     move = Primitive(
         name="move",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that relocates an entity from one context to "
                                    "another. The entity ceases to exist at the source location "
@@ -637,6 +688,7 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a target entity and a destination context. "
                                    "Produces the entity at the destination and removes it "
@@ -650,6 +702,7 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
                         relation_type=RelationType.REQUIRES,
                         target_id=path.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "source": "path identifies the entity to move",
                             "destination": "path identifies where to move it",
@@ -659,6 +712,7 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The source entity must exist. The destination context must "
                                    "exist and permit the entity. The actor must have sufficient "
@@ -678,11 +732,13 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                     ),
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
                         target_id=directory.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "recursive": "moving a directory moves all of its contents",
                         },
@@ -705,10 +761,12 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
     """
     list_prim = Primitive(
         name="list",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that enumerates the contents or members of a "
                                    "container entity. Returns a collection of contained entities "
@@ -717,6 +775,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a container entity and returns its contents. May "
                                    "support filtering, sorting, and recursive enumeration. "
@@ -729,6 +788,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
                         relation_type=RelationType.APPLIES_TO,
                         target_id=directory.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "contents": "returns files and subdirectories",
                             "recursive": "may enumerate contents of subdirectories recursively",
@@ -740,6 +800,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The container entity must exist. The actor must have "
                                    "sufficient permission to enumerate its contents. List is "
@@ -767,10 +828,12 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     """
     delete = Primitive(
         name="delete",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that removes an existing entity from existence. "
                                    "The inverse of create. After deletion, the entity no longer "
@@ -779,6 +842,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a target entity and removes it. May support "
                                    "recursive deletion for composite entities. Deletion is "
@@ -789,6 +853,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The target entity must exist. The actor must have sufficient "
                                    "permission to remove it. Deletion is irreversible by default. "
@@ -805,6 +870,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         policies=[
                             Policy(
                                 name="BulkFileDeletePolicy",
@@ -818,6 +884,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                         relation_type=RelationType.APPLIES_TO,
                         target_id=directory.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "recursive": "directory deletion may require recursive removal of contents",
                             "empty_check": "some systems require the directory to be empty first",
@@ -842,10 +909,12 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     """
     write = Primitive(
         name="write",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An operation that modifies the contents or state of an "
                                    "existing entity. Unlike create, the entity must already "
@@ -854,6 +923,7 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Accepts a target entity and new content or state. Produces "
                                    "a modified version of the entity. Write is destructive — "
@@ -864,6 +934,7 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "The target entity must exist. The actor must have sufficient "
                                    "permission to modify it. The entity must be in a state that "
@@ -880,6 +951,7 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
                         relation_type=RelationType.APPLIES_TO,
                         target_id=file.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                         metadata={
                             "modes": ["overwrite", "append", "insert_at_offset"],
                             "encoding": "content may require encoding (utf-8, binary)",
@@ -904,10 +976,12 @@ def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     """
     user = Primitive(
         name="user",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "An entity recognized by the operating system as a principal of "
                                    "action. Has a unique identity within the OS's user management "
@@ -918,6 +992,7 @@ def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Can own files and directories, belong to groups, and run "
                                    "processes. The OS evaluates permissions against the user's "
@@ -929,11 +1004,13 @@ def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=os_prim.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "User identity must be recognized by the OS. Operations are "
                                    "constrained by permissions granted directly to the user or "
@@ -965,10 +1042,12 @@ def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -
     """
     group = Primitive(
         name="group",
+        provenance=SEED_PROVENANCE,
         depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.EXISTENCE, provenance=SEED_PROVENANCE),
             Depth(
                 level=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "A named collection of users recognized by the operating system. "
                                    "Groups aggregate permissions and ownership, allowing multiple users "
@@ -978,6 +1057,7 @@ def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -
             ),
             Depth(
                 level=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Can contain multiple users. Permissions granted to a group apply "
                                    "to all its members. The OS evaluates group membership when "
@@ -989,16 +1069,19 @@ def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -
                         relation_type=RelationType.DEPENDS_ON,
                         target_id=os_prim.id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=SEED_PROVENANCE,
                     ),
                     Relatum(
                         relation_type=RelationType.INCLUDES,
                         target_id=user.id,
                         target_depth=DepthLevel.IDENTITY,
+                        provenance=SEED_PROVENANCE,
                     ),
                 ],
             ),
             Depth(
                 level=DepthLevel.CONSTRAINTS,
+                provenance=SEED_PROVENANCE,
                 properties={
                     "description": "Group membership is the mechanism by which permissions are "
                                    "inherited collectively. Membership and identity are managed "
@@ -1048,11 +1131,13 @@ def main(repository: PrimitiveRepository) -> None:
                 relation_type=RelationType.INCLUDES,
                 target_id=file.id,
                 target_depth=DepthLevel.EXISTENCE,
+                provenance=SEED_PROVENANCE,
             ),
             Relatum(
                 relation_type=RelationType.INCLUDES,
                 target_id=directory.id,
                 target_depth=DepthLevel.EXISTENCE,
+                provenance=SEED_PROVENANCE,
             ),
         ])
         repo.save_primitive(filesystem)
@@ -1068,73 +1153,75 @@ def main(repository: PrimitiveRepository) -> None:
                 relation_type=RelationType.APPLIES_TO,
                 target_id=user.id,
                 target_depth=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=group.id,
                 target_depth=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=read.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may perform a read operation",
-                    "provenance": "authored",
                 },
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=write.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may perform a write operation",
-                    "provenance": "authored",
                 },
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=delete.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may perform a delete operation",
-                    "provenance": "authored",
                 },
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=create.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may perform a create operation",
-                    "provenance": "authored",
                 },
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=list_prim.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may enumerate the contents of a directory",
-                    "provenance": "authored",
                 },
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=move.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may relocate an entity across contexts",
-                    "provenance": "authored",
                 },
             ),
             Relatum(
                 relation_type=RelationType.APPLIES_TO,
                 target_id=copy.id,
                 target_depth=DepthLevel.CAPABILITIES,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "Permission governs whether an actor may duplicate an entity into a new context",
-                    "provenance": "authored",
                 },
             ),
         ])
@@ -1151,9 +1238,9 @@ def main(repository: PrimitiveRepository) -> None:
                     relation_type=RelationType.CONSTRAINED_BY,
                     target_id=permission.id,
                     target_depth=DepthLevel.IDENTITY,
+                    provenance=SEED_PROVENANCE,
                     metadata={
                         "description": f"The {action_prim.name} action requires the actor to hold the corresponding permission on the target",
-                        "provenance": "authored",
                     },
                 )
             )
@@ -1166,9 +1253,9 @@ def main(repository: PrimitiveRepository) -> None:
                 relation_type=RelationType.CONSTRAINED_BY,
                 target_id=permission.id,
                 target_depth=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "The list action requires read permission on the target directory to enumerate its contents",
-                    "provenance": "authored",
                 },
             )
         )
@@ -1181,11 +1268,11 @@ def main(repository: PrimitiveRepository) -> None:
                 relation_type=RelationType.CONSTRAINED_BY,
                 target_id=permission.id,
                 target_depth=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "The move action requires write permission on both source and destination contexts — the source must permit removal and the destination must permit creation",
                     "source_permission": "write (delete-equivalent) on the source context",
                     "destination_permission": "write (create-equivalent) on the destination context",
-                    "provenance": "authored",
                 },
             )
         )
@@ -1198,11 +1285,11 @@ def main(repository: PrimitiveRepository) -> None:
                 relation_type=RelationType.CONSTRAINED_BY,
                 target_id=permission.id,
                 target_depth=DepthLevel.IDENTITY,
+                provenance=SEED_PROVENANCE,
                 metadata={
                     "description": "The copy action requires read permission on the source and write permission on the destination context",
                     "source_permission": "read on the source entity",
                     "destination_permission": "write (create-equivalent) on the destination context",
-                    "provenance": "authored",
                 },
             )
         )

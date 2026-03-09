@@ -5,6 +5,7 @@
 Core epistemic models for the Volute Reasoning Engine.
 """
 
+from datetime import datetime, timezone
 from enum import Enum, IntEnum
 from typing import Annotated, Any, Literal, NamedTuple
 from uuid import UUID, uuid4
@@ -38,6 +39,27 @@ class RelationType(str, Enum):
     INCLUDES = "INCLUDES"
 
 
+class ProvenanceSource(str, Enum):
+    """
+    Origin category for knowledge in the epistemic graph.
+    """
+
+    AUTHORED = "authored"
+    LEARNED = "learned"
+    CONVERSATIONAL = "conversational"
+
+
+class Provenance(BaseModel):
+    """
+    Structured provenance record for epistemic knowledge.
+    """
+
+    source: ProvenanceSource
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    detail: str | None = None
+
+
 class Relatum(BaseModel):
     """
     Directional, typed, depth-aware relationship.
@@ -48,6 +70,17 @@ class Relatum(BaseModel):
     target_depth: DepthLevel
     metadata: dict[str, Any] = Field(default_factory=dict)
     policies: list[Policy] = Field(default_factory=list)
+    provenance: Provenance | None = None
+
+    def validate_provenance(self, context: str = "") -> None:
+        """
+        Raise ValueError if provenance is missing.
+        """
+        if self.provenance is None:
+            raise ValueError(
+                f"{context}relatum {self.relation_type.value} → "
+                f"{self.target_id} is missing provenance"
+            )
 
 
 class Depth(BaseModel):
@@ -58,6 +91,21 @@ class Depth(BaseModel):
     level: DepthLevel
     properties: dict[str, Any] = Field(default_factory=dict)
     relata: list[Relatum] = Field(default_factory=list)
+    provenance: Provenance | None = None
+
+    def validate_provenance(self, context: str = "") -> None:
+        """
+        Raise ValueError if provenance is missing on this depth or any of its relata.
+        """
+        if self.provenance is None:
+            raise ValueError(
+                f"{context}depth D{self.level.value} ({self.level.name}) "
+                f"is missing provenance"
+            )
+        for relatum in self.relata:
+            relatum.validate_provenance(
+                context=f"{context}depth D{self.level.value} "
+            )
 
 
 class Primitive(BaseModel):
@@ -68,6 +116,18 @@ class Primitive(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str
     depths: list[Depth] = Field(default_factory=list)
+    provenance: Provenance | None = None
+
+    def validate_provenance(self) -> None:
+        """
+        Raise ValueError if provenance is missing on this primitive, any depth, or any relatum.
+        """
+        if self.provenance is None:
+            raise ValueError(
+                f"Primitive '{self.name}' is missing provenance"
+            )
+        for depth in self.depths:
+            depth.validate_provenance(context=f"Primitive '{self.name}' ")
 
 
 class EpistemicQuery(BaseModel):
