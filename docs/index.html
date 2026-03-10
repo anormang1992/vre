@@ -1,0 +1,2124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VRE — Volute Reasoning Engine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500&family=Playfair+Display:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap');
+
+  :root {
+    --bg: #040a14;
+    --tb: #4ECDC4;
+    --tm: #2E6B8A;
+    --td: #1B3A5C;
+    --tp: #0F2440;
+    --t1: #E8F0F2;
+    --t2: #8BA4B8;
+    --t3: #4A6478;
+    --red: #E74C5E;
+    --yel: #F0C54D;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--t1);
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #canvas-container {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 1;
+  }
+
+  canvas { display: block; }
+
+  /* ---------- HEADER ---------- */
+  #header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 1.5rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: opacity 0.6s ease;
+  }
+
+  #header.hidden { opacity: 0; pointer-events: none; }
+
+  .logo {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 1rem;
+    font-weight: 200;
+    letter-spacing: 1.2rem;
+    color: var(--t1);
+    text-transform: uppercase;
+  }
+
+  .tagline-header {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 300;
+    letter-spacing: 0.4rem;
+    color: var(--tb);
+    text-transform: uppercase;
+  }
+
+  /* ---------- HERO TEXT ---------- */
+  #hero-text {
+    position: fixed;
+    bottom: 7%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    width: 90%;
+    max-width: 600px;
+  }
+
+  #hero-text.hidden { opacity: 0; transform: translateX(-50%) translateY(15px); }
+
+  #hero-text h1 {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: clamp(2.5rem, 6vw, 4.2rem);
+    font-weight: 200;
+    letter-spacing: 1.8rem;
+    line-height: 1.2;
+    color: var(--t1);
+    margin-bottom: 0.3rem;
+  }
+
+  .hero-line {
+    width: 120px;
+    height: 1.5px;
+    background: linear-gradient(90deg, transparent, var(--tb), transparent);
+    margin: 0 auto 0.8rem;
+  }
+
+  #hero-text .hero-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 300;
+    letter-spacing: 0.4rem;
+    color: var(--tb);
+    text-transform: uppercase;
+  }
+
+  .scroll-hint {
+    margin-top: 1.2rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.5rem;
+    letter-spacing: 0.2rem;
+    color: var(--t3);
+    text-transform: uppercase;
+    animation: pulse-hint 2.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-hint {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.8; }
+  }
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .fade-in { opacity: 0; animation: fade-up 1s forwards; }
+  .fade-in-d1 { animation-delay: 0.3s; }
+  .fade-in-d2 { animation-delay: 0.5s; }
+  .fade-in-d3 { animation-delay: 0.7s; }
+  .fade-in-d4 { animation-delay: 1.3s; }
+
+  /* ---------- NODE LABELS ---------- */
+  .node-label {
+    position: fixed;
+    z-index: 60;
+    pointer-events: auto;
+    cursor: pointer;
+    text-align: center;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+    user-select: none;
+  }
+
+  .node-label.hidden { opacity: 0; pointer-events: none; }
+  .node-label.no-transition, .no-transition { transition: none !important; }
+
+  .node-label .depth-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 0.15rem;
+    text-transform: uppercase;
+    margin-bottom: 0.2rem;
+    opacity: 0.5;
+  }
+
+  .node-label .label-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(0.55rem, 1vw, 0.7rem);
+    font-weight: 400;
+    letter-spacing: 0.1rem;
+    text-transform: uppercase;
+    text-shadow: 0 0 10px currentColor;
+    transition: text-shadow 0.3s ease;
+  }
+
+  .node-label:hover .label-text {
+    text-shadow: 0 0 25px currentColor, 0 0 50px currentColor;
+  }
+
+  /* ---------- CONTENT PANEL ---------- */
+  #content-panel {
+    position: fixed;
+    z-index: 80;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+
+  #content-panel.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .content-box {
+    width: 600px;
+    max-width: 92vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: rgba(4, 10, 20, 0.72);
+    border: 1px solid rgba(78, 205, 196, 0.12);
+    padding: 2.5rem 3rem;
+    transform: scale(0.88) translateY(25px);
+    opacity: 0;
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.5s ease;
+    scrollbar-width: thin;
+    scrollbar-color: var(--td) transparent;
+    box-shadow: 0 0 80px rgba(78, 205, 196, 0.05);
+  }
+
+  #content-panel.visible .content-box {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+
+  .content-box::-webkit-scrollbar { width: 3px; }
+  .content-box::-webkit-scrollbar-thumb { background: var(--td); }
+
+  .panel-depth {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 0.3rem;
+    color: var(--tb);
+    opacity: 0.7;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+  }
+
+  #content-panel h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(1.4rem, 3vw, 1.9rem);
+    font-weight: 300;
+    line-height: 1.35;
+    margin-bottom: 1.5rem;
+    color: var(--t1);
+  }
+
+  .content-body {
+    font-size: 0.93rem;
+    line-height: 1.8;
+    color: var(--t2);
+  }
+
+  .content-body p { margin-bottom: 1.2rem; }
+  .content-body strong { color: var(--t1); font-weight: 500; }
+
+  .content-body .highlight {
+    color: var(--tb);
+    font-weight: 500;
+  }
+
+  .content-body blockquote {
+    border-left: 2px solid var(--tb);
+    padding-left: 1rem;
+    margin: 1.2rem 0;
+    font-family: 'Playfair Display', serif;
+    font-style: italic;
+    color: var(--t1);
+    font-size: 1.05em;
+  }
+
+  .content-body code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--tb);
+    background: rgba(78, 205, 196, 0.06);
+    padding: 0.1rem 0.35rem;
+  }
+
+  /* Incident cards */
+  .incident-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.2rem 0;
+  }
+
+  .incident-card {
+    border: 1px solid rgba(78, 205, 196, 0.07);
+    background: rgba(10, 22, 40, 0.3);
+    padding: 1.2rem;
+    position: relative;
+  }
+
+  .incident-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--red);
+  }
+
+  .incident-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.1rem;
+    color: var(--red);
+    margin-bottom: 0.4rem;
+  }
+
+  .incident-desc {
+    font-size: 0.82rem;
+    color: var(--t2);
+    line-height: 1.6;
+  }
+
+  .incident-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.5rem;
+    color: var(--t3);
+    margin-top: 0.6rem;
+  }
+
+  /* Depth rows */
+  .depth-row {
+    display: flex;
+    border-bottom: 1px solid rgba(78, 205, 196, 0.04);
+  }
+
+  .depth-indicator {
+    width: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 1rem 0;
+  }
+
+  .depth-indicator.d0 { color: var(--tp); border-left: 3px solid var(--tp); }
+  .depth-indicator.d1 { color: var(--td); border-left: 3px solid var(--td); }
+  .depth-indicator.d2 { color: var(--tm); border-left: 3px solid var(--tm); }
+  .depth-indicator.d3 { color: var(--tb); border-left: 3px solid var(--tb); }
+
+  .depth-text {
+    flex: 1;
+    padding: 1rem 1.2rem;
+  }
+
+  .depth-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 0.15rem;
+    color: var(--t3);
+  }
+
+  .depth-question {
+    font-size: 0.9rem;
+    color: var(--t1);
+    margin-top: 0.15rem;
+  }
+
+  /* Trace blocks */
+  .trace-block {
+    background: rgba(10, 22, 40, 0.35);
+    border: 1px solid rgba(78, 205, 196, 0.1);
+    padding: 1.2rem 1.5rem;
+    margin: 1.2rem 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    line-height: 1.8;
+  }
+
+  .tg { color: var(--tb); }
+  .tx { color: var(--red); }
+  .tw { color: var(--yel); }
+  .td2 { color: var(--t3); }
+  .tl { color: var(--t2); }
+  .tn { color: var(--t1); }
+
+  /* Code blocks */
+  .code-block {
+    background: rgba(10, 22, 40, 0.35);
+    border: 1px solid rgba(78, 205, 196, 0.08);
+    padding: 1.2rem 1.5rem;
+    margin: 1.2rem 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.75;
+  }
+
+  .cc { color: var(--t3); }
+  .cdc { color: var(--tb); }
+  .ck { color: var(--tm); }
+  .cs { color: #89CFF0; }
+  .cfn { color: var(--t1); }
+
+  /* Roadmap items */
+  .roadmap-item {
+    padding: 1rem 0;
+    border-bottom: 1px solid rgba(78, 205, 196, 0.04);
+  }
+  .roadmap-item:last-child { border: none; }
+
+  .roadmap-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1rem;
+    color: var(--tb);
+    margin-bottom: 0.3rem;
+  }
+
+  .roadmap-desc {
+    font-size: 0.85rem;
+    color: var(--t2);
+    line-height: 1.6;
+  }
+
+  /* CTA buttons */
+  .cta-row {
+    display: flex;
+    gap: 0.8rem;
+    margin-top: 1.5rem;
+  }
+
+  .cta-row a {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1rem;
+    padding: 0.65rem 1.5rem;
+    border: 1px solid var(--tb);
+    background: transparent;
+    color: var(--tb);
+    text-decoration: none;
+    transition: all 0.3s;
+    text-transform: uppercase;
+  }
+
+  .cta-row a:hover { background: var(--tb); color: var(--bg); }
+  .cta-row a.primary { background: var(--tb); color: var(--bg); }
+  .cta-row a.primary:hover { background: var(--t1); border-color: var(--t1); }
+
+  /* ---------- BACK BUTTON ---------- */
+  #back-btn {
+    position: fixed;
+    top: 1.5rem; left: 2rem;
+    z-index: 110;
+    background: none;
+    border: 1px solid rgba(78, 205, 196, 0.25);
+    color: var(--tb);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.15rem;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s ease, background 0.3s ease;
+  }
+
+  #back-btn.visible { opacity: 1; pointer-events: auto; }
+  #back-btn:hover { background: rgba(78, 205, 196, 0.1); border-color: var(--tb); }
+
+  /* ---------- DEPTH NAV (MOBILE) ---------- */
+  #depth-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0; right: 0;
+    z-index: 90;
+    display: none;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 1rem 0.5rem;
+    flex-wrap: wrap;
+    background: linear-gradient(transparent, rgba(4, 10, 20, 0.95));
+    transition: opacity 0.5s ease;
+  }
+
+  #depth-nav.visible { display: flex; }
+  #depth-nav.hidden-nav { opacity: 0; pointer-events: none; }
+
+  .depth-nav-btn {
+    background: rgba(78, 205, 196, 0.06);
+    border: 1px solid rgba(78, 205, 196, 0.15);
+    color: var(--t2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    letter-spacing: 0.08rem;
+    padding: 0.45rem 0.7rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+
+  .depth-nav-btn:hover, .depth-nav-btn.active {
+    background: rgba(78, 205, 196, 0.12);
+    color: var(--tb);
+    border-color: rgba(78, 205, 196, 0.35);
+  }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width: 768px) {
+    #header { padding: 1rem 1.2rem; }
+    .tagline-header { display: none; }
+    #hero-text { bottom: 15%; }
+    #hero-text h1 { letter-spacing: 0.8rem; }
+    #depth-nav.visible { display: flex; }
+    .content-box { padding: 1.5rem; max-height: 70vh; }
+    .incident-grid { grid-template-columns: 1fr; }
+  }
+
+  @media (min-width: 769px) {
+    #depth-nav { display: none !important; }
+  }
+
+  /* ---------- LOADING ---------- */
+  #loader {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    transition: opacity 1s ease;
+  }
+
+  #loader.fade-out { opacity: 0; pointer-events: none; }
+
+  .loader-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.3rem;
+    text-transform: uppercase;
+    color: var(--tb);
+    animation: pulse-hint 1.5s ease-in-out infinite;
+  }
+</style>
+</head>
+<body>
+
+<div id="loader"><div class="loader-text">Initializing VRE</div></div>
+
+<div id="canvas-container"></div>
+
+<div id="header">
+  <div class="logo">VRE</div>
+  <div style="display:flex;align-items:center;gap:1.2rem">
+    <div class="tagline-header">Structural Epistemic Enforcement</div>
+    <a href="https://github.com/anormang1992/vre" target="_blank" rel="noopener" style="color:var(--t2);transition:color 0.3s;display:flex;align-items:center" onmouseover="this.style.color='var(--tb)'" onmouseout="this.style.color='var(--t2)'">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+    </a>
+  </div>
+</div>
+
+<div id="hero-text">
+  <h1 class="fade-in fade-in-d1">VRE</h1>
+  <div class="hero-line fade-in fade-in-d2"></div>
+  <p class="hero-sub fade-in fade-in-d3">Structural Epistemic Enforcement</p>
+  <div class="scroll-hint fade-in fade-in-d4">Click a node to explore</div>
+</div>
+
+<div id="depth-nav"></div>
+
+<button id="back-btn">← VOLUTE</button>
+
+<div id="content-panel">
+  <div class="content-box">
+    <div class="panel-depth" id="panel-depth"></div>
+    <h2 id="panel-title"></h2>
+    <div class="content-body" id="panel-body"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ─────────────── CONTENT DATA ───────────────
+const NODES = [
+  {
+    id: 'problem',
+    label: 'THE PROBLEM',
+    ring: 3,
+    color: { r: 231, g: 76, b: 94 },
+    hex: '#E74C5E',
+    threeColor: 0xE74C5E,
+    content: {
+      depth: 'THE PROBLEM',
+      title: 'Agents act as if they know more than they can justify.',
+      body: `
+        <p>
+          Modern LLM-based agents fail in a specific way: they act as if they
+          know more than they can justify. This is not a capability problem — it
+          is an <strong>epistemic</strong> problem. The agent has no internal
+          representation of the boundary between what it understands and what it
+          is confabulating.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            FAILURE MODE EXAMPLES
+          </strong>
+        </p>
+        <div class="incident-grid">
+          <div class="incident-card">
+            <div class="incident-name">AWS KIRO</div>
+            <p class="incident-desc">
+              Decided to delete and recreate an entire production environment.
+              13-hour outage.
+            </p>
+            <div class="incident-date">DECEMBER 2025</div>
+          </div>
+          <div class="incident-card">
+            <div class="incident-name">OPENCLAW</div>
+            <p class="incident-desc">
+              Deleted hundreds of emails after context compaction dropped the
+              safety rule.
+            </p>
+            <div class="incident-date">FEBRUARY 2026</div>
+          </div>
+        </div>
+        <p>
+          The majority of safety mechanisms in production today are
+          <strong>linguistic</strong>. System prompts, RLHF, and
+          guardrails exist as tokens in a context window. They can be forgotten,
+          overridden, or reasoned around.
+        </p>
+        <p>
+          This is the fundamental gap: there is no difference, inside the
+          model's reasoning, between a safety constraint and any other piece of
+          text. When context is compacted, the constraint is the first thing
+          dropped. When the model reasons about its own instructions, it can talk
+          itself out of following them.
+        </p>
+        <blockquote>
+          The agent must never act as if it knows more than it can justify.
+        </blockquote>
+        <p>
+          <strong>Volute Reasoning Engine (VRE)</strong> addresses this by
+          making an agent's <span class="highlight">knowledge boundary</span> a
+          first-class object. Not tokens in a window, but a graph structure that
+          exists outside the model that can be queried, audited, and
+          enforced at runtime.
+          <strong>
+            A decorator cannot be compacted. A graph edge cannot be
+            prompt-injected.
+          </strong>
+        </p>
+        <div class="cta-row">
+          <a href="https://github.com/anormang1992/vre" class="primary" target="_blank">
+            GITHUB
+          </a>
+          <a href="https://github.com/anormang1992/vre/blob/main/README.md" target="_blank">
+            README
+          </a>
+        </div>
+      `
+    }
+  },
+  {
+    id: 'philosophy',
+    label: 'FOUNDATIONS',
+    ring: 3,
+    color: { r: 78, g: 205, b: 196 },
+    hex: '#4ECDC4',
+    threeColor: 0x4ECDC4,
+    content: {
+      depth: 'FOUNDATIONS',
+      title: 'From pure theoretic information to epistemic enforcement.',
+      body: `
+        <p>
+          VRE is derived from <em>Meditationes de Informatione Pure</em>, a
+          thesis on pure theoretic information that explores the epistemic
+          boundaries inherent in any reasoning agent. The thesis establishes a
+          fundamental hierarchy:
+          <strong>understanding precedes knowledge</strong>. One might understand
+          a concept without knowing it in the ontological sense, but without
+          understanding there can be no knowing at all.
+        </p>
+        <p>
+          Knowledge itself is an open system, composed of experience,
+          meaning, understanding, belief, and information. Each layer builds on
+          the last. An agent cannot meaningfully claim to <em>believe</em>
+          something it does not understand, nor can it understand without having
+          engaged with the concept's meaning. VRE's depth model is an
+          operationalization of this hierarchy.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            WITTGENSTEIN & THE DEPTH MODEL
+          </strong>
+        </p>
+        <p>
+          The thesis draws on Wittgenstein's propositional logic to show that
+          our representations of reality are always
+          <strong>projections</strong>, i.e indirect cognitions bounded by the depth
+          of our engagement with a concept. The proposition is not the thing
+          itself; it is a picture whose accuracy depends on the resolution of
+          the projection.
+        </p>
+        <p>
+          An agent that claims to <em>know</em> something must demonstrate that
+          its understanding is grounded through the constituent layers, not
+          merely that it possesses the propositional sign. VRE's depth model
+          (D0–D3) is a direct operationalization of this insight:
+          <strong>existence</strong> is the shallowest form of engagement, while
+          <strong>constraints</strong> represent the depth at which an agent can
+          justify acting on what it understands.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            THE VOLUTE
+          </strong>
+        </p>
+        <p>
+          The volute itself, VRE's central motif, originates from the thesis's
+          proposed structure for navigable pure theoretic information: a spiral
+          topology where knowledge deepens as you move inward, and each loop
+          carries the relational context of the loops that contain it. The shape
+          is not decorative. It is the thesis's answer to how knowledge should be
+          structured for an agent that must reason about what it knows.
+        </p>
+      `
+    }
+  },
+  {
+    id: 'architecture',
+    label: 'ARCHITECTURE',
+    ring: 2,
+    color: { r: 58, g: 155, b: 213 },
+    hex: '#3A9BD5',
+    threeColor: 0x3A9BD5,
+    content: {
+      depth: 'ARCHITECTURE',
+      title: 'A graph the agent cannot modify.',
+      body: `
+        <p>
+          VRE maintains a <strong>Neo4j graph</strong> of conceptual
+          primitives such as <code>file</code>, <code>create</code>,
+          <code>permission</code>, <code>directory</code>. These are concepts
+          the agent reasons <em>about</em>, never tools or commands.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            THE DEPTH MODEL
+          </strong>
+        </p>
+        <div style="margin:0.8rem 0 1.2rem">
+          <div class="depth-row">
+            <div class="depth-indicator d0">D0</div>
+            <div class="depth-text">
+              <div class="depth-label">EXISTENCE</div>
+              <div class="depth-question">Does this concept exist?</div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d1">D1</div>
+            <div class="depth-text">
+              <div class="depth-label">IDENTITY</div>
+              <div class="depth-question">What is it, in principle?</div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d2">D2</div>
+            <div class="depth-text">
+              <div class="depth-label">CAPABILITIES</div>
+              <div class="depth-question">What can be done with it?</div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d3">D3</div>
+            <div class="depth-text">
+              <div class="depth-label">CONSTRAINTS</div>
+              <div class="depth-question">
+                Under what conditions does that hold?
+              </div>
+            </div>
+          </div>
+        </div>
+        <p>
+          Depth is <strong>monotonic</strong>: D3 grounding implies D0–D2.
+          Planning requires D2. Execution requires D3. Execution without D3
+          grounding is forbidden.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            RELATA
+          </strong>
+        </p>
+        <p>
+          Primitives are connected by typed, directional,
+          <strong>depth-aware relationships</strong>. A relatum carries a source
+          depth (when the edge becomes visible) and a target depth (what the
+          target must be grounded to for resolution).
+        </p>
+        <div class="code-block">
+          <span class="tn">create</span>
+          <span class="td2">--[</span><span class="tl">APPLIES_TO</span>
+          <span class="td2">@ D2]--></span>
+          <span class="tn">file</span><br>
+          <span class="tn">file</span>
+          &nbsp;&nbsp;<span class="td2">--[</span><span class="tl">CONSTRAINED_BY</span>
+          <span class="td2">@ D3]--></span>
+          <span class="tn">permission</span>
+        </div>
+        <p>
+          The graph topology <em>is</em> the policy. Destructive edges sit at
+          deeper source depths. Until the agent is grounded deeply enough, the
+          edge is <strong>invisible</strong>.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            GROUNDING ENGINE
+          </strong>
+        </p>
+        <p>
+          The engine resolves concepts via <strong>spaCy lemmatization</strong>,
+          traverses the depth-gated subgraph, and returns structured gap objects
+          when grounding fails:
+        </p>
+        <ul style="margin-left:0.8rem">
+          <li>
+            <code>ExistenceGap</code> — concept not in graph.
+          </li>
+          <li>
+            <code>DepthGap</code> — exists but insufficient depth.
+          </li>
+          <li>
+            <code>RelationalGap</code> — relatum target unmet.
+          </li>
+          <li>
+            <code>ReachabilityGap</code> — concept disconnected from the submitted set.
+          </li>
+        </ul>
+        <p style="margin-top: 1.5rem; margin-bottom:0.5rem">
+          Gaps are information, not errors. They tell the agent exactly what it
+          does not know.
+        </p>
+      `
+    }
+  },
+  {
+    id: 'safety',
+    label: 'SAFETY',
+    ring: 2,
+    color: { r: 78, g: 205, b: 196 },
+    hex: '#4ECDC4',
+    threeColor: 0x4ECDC4,
+    content: {
+      depth: 'SAFETY',
+      title: 'Three layers. VRE governs the first.',
+      body: `
+        <p style="margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            POLICIES
+          </strong>
+        </p>
+        <p>
+          Policies live on <code>APPLIES_TO</code> relata and define
+          human-in-the-loop gates for specific concept relationships. Each
+          policy specifies whether confirmation is required, under what
+          <strong>cardinality</strong> conditions it fires (single target vs.
+          multiple/recursive), and what confirmation message to surface.
+        </p>
+        <div class="code-block">
+          <span class="cfn">Policy</span>(<br>
+          &nbsp;&nbsp;name=<span class="cs">"confirm_file_deletion"</span>,<br>
+          &nbsp;&nbsp;requires_confirmation=<span class="ck">True</span>,<br>
+          &nbsp;&nbsp;trigger_cardinality=Cardinality.<span class="cfn">MULTIPLE</span>,<br>
+          &nbsp;&nbsp;confirmation_message=<span class="cs">"This will delete multiple files. Proceed?"</span>,<br>
+          )
+        </div>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            GUARD EXECUTION SEQUENCE
+          </strong>
+        </p>
+        <p>
+          Each <code>vre_guard</code> call follows a strict sequence:
+          <strong>resolve</strong> concept names to canonical primitives →
+          <strong>ground</strong> the subgraph against depth requirements → fire
+          <strong>on_trace</strong> with the result → if not grounded,
+          <strong>block</strong> and return gaps → evaluate
+          <strong>policies</strong> on APPLIES_TO relata → if PENDING, call
+          <strong>on_policy</strong> for human confirmation → if approved,
+          <strong>execute</strong> the original function.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            THE THREE LAYERS
+          </strong>
+        </p>
+        <p>
+          VRE provides one layer of a deliberately layered safety model:
+        </p>
+        <div style="margin:0.8rem 0 1.2rem">
+          <div class="depth-row">
+            <div class="depth-indicator d3">L1</div>
+            <div class="depth-text">
+              <div class="depth-label">EPISTEMIC SAFETY</div>
+              <div class="depth-question">
+                Does the agent understand what it is about to do? (VRE)
+              </div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d2">L2</div>
+            <div class="depth-text">
+              <div class="depth-label">MECHANICAL SAFETY</div>
+              <div class="depth-question">
+                Is the agent permitted to do it? (tool constraints, sandboxes)
+              </div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d1">L3</div>
+            <div class="depth-text">
+              <div class="depth-label">HUMAN SAFETY</div>
+              <div class="depth-question">
+                Has a human approved the elevated action? (policy gates)
+              </div>
+            </div>
+          </div>
+        </div>
+        <p>
+          VRE governs only the first layer, by design. It does not replace
+          sandboxing or human oversight, but makes those layers more meaningful
+          by ensuring the agent <strong>understood what it was doing</strong>
+          when it asked for permission to act.
+        </p>
+      `
+    }
+  },
+  {
+    id: 'usage',
+    label: 'USAGE',
+    ring: 1,
+    color: { r: 91, g: 143, b: 185 },
+    hex: '#5B8FB9',
+    threeColor: 0x5B8FB9,
+    content: {
+      depth: 'USAGE',
+      title: 'One decorator. Any agent.',
+      body: `
+        <p>
+          The <code>vre_guard</code> decorator is the primary integration point.
+          It wraps any callable and gates it behind a grounding check and policy
+          evaluation before the function body executes.
+        </p>
+        <div class="code-block">
+          <span class="cdc">@vre_guard</span>(<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;vre,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># VRE instance</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;concepts,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># list[str] | Callable → list[str]</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;cardinality=<span class="ck">None</span>,&nbsp;<span class="cc"># str | Callable → str | None</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;on_trace=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[GroundingResult], None]</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;on_policy=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[str], bool]</span><br>
+          )
+        </div>
+        <ul style="margin-left:0.8rem">
+          <li>
+            <strong>concepts</strong> — static list or a callable that derives concepts from args at runtime.
+          </li>
+          <li>
+            <strong>cardinality</strong> — hints single vs. multiple targets (e.g. recursive delete).
+          </li>
+          <li>
+            <strong>on_trace</strong> — callback after grounding, receives the full epistemic trace.
+          </li>
+          <li>
+              <strong>on_policy</strong> — called when a policy gate requires human confirmation.
+          </li>
+        </ul>
+        <div class="code-block">
+          <span class="cc"># Static concepts</span><br>
+          <span class="cdc">@vre_guard</span>(vre, concepts=[<span class="cs">"delete"</span>, <span class="cs">"file"</span>])<br>
+          <span class="ck">def</span> <span class="cfn">delete_file</span>(path: <span class="cfn">str</span>) -> <span class="cfn">str</span>: ...<br><br>
+          <span class="cc"># Dynamic concepts from shell command</span><br>
+          <span class="cdc">@vre_guard</span>(vre, concepts=parse_bash_primitives)<br>
+          <span class="ck">def</span> <span class="cfn">shell_tool</span>(command: <span class="cfn">str</span>) -> <span class="cfn">str</span>: ...
+        </div>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            EXAMPLE ON_TRACE OUTPUT
+          </strong>
+        </p>
+        <div class="trace-block">
+          <div>
+            <span class="tl">VRE Epistemic Check</span>
+          </div>
+          <div>
+            <span class="td2">├──</span>
+            <span class="td2">◈</span>
+            <span class="tn">create</span>
+            &nbsp;<span class="tg">● ● ● ●</span>
+          </div>
+          <div>
+            <span class="td2">│  ├──</span>
+            <span class="tl">APPLIES_TO</span>
+            <span class="td2">→</span>
+            <span class="tn">file</span>
+            <span class="td2">(target D2)</span>
+          </div>
+          <div>
+            <span class="td2">│  └──</span>
+            <span class="tl">REQUIRES</span>
+            <span class="td2">→</span>
+            <span class="tn">filesystem</span>
+            <span class="td2">(target D3)</span>
+          </div>
+          <div>
+            <span class="td2">├──</span>
+            <span class="td2">◈</span>
+            <span class="tn">file</span>
+            &nbsp;&nbsp;&nbsp;<span class="tg">● ● ● ●</span>
+          </div>
+          <div>
+            <span class="td2">│  └──</span>
+            <span class="tl">CONSTRAINED_BY</span>
+            <span class="td2">→</span>
+            <span class="tn">permission</span>
+            <span class="td2">(target D3)</span>
+          </div>
+          <div>
+            <span class="td2">└──</span>
+            <span class="tg">✓ Grounded at D3 — EPISTEMIC PERMISSION GRANTED</span>
+          </div>
+        </div>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            CLAUDE CODE INTEGRATION
+          </strong>
+        </p>
+        <p>
+          VRE ships with a <code>PreToolUse</code> hook for Claude Code that
+          intercepts every Bash command before execution. Ungrounded commands
+          are blocked and gaps are surfaced directly to the model.
+        </p>
+        <div class="code-block">
+          <span class="ck">from</span> vre.integrations.claude_code <span class="ck">import</span> install<br><br>
+          install(<span class="cs">"neo4j://localhost:7687"</span>, <span class="cs">"neo4j"</span>, <span class="cs">"password"</span>)
+        </div>
+        <p>
+          When blocked, Opus reads the trace, identifies exact gap types, and
+          proposes graph additions without having been <strong>prompted</strong>.
+          A frontier model, structurally constrained by a graph it cannot modify.
+        </p>
+      `
+    }
+  },
+  {
+    id: 'roadmap',
+    label: 'ROADMAP',
+    ring: 3,
+    color: { r: 240, g: 197, b: 77 },
+    hex: '#F0C54D',
+    threeColor: 0xF0C54D,
+    content: {
+      depth: 'ROADMAP',
+      title: 'Where VRE is going.',
+      body: `
+        <div class="roadmap-item">
+          <div class="roadmap-name">LEARNING THROUGH FAILURE</div>
+          <p class="roadmap-desc">
+            When a mechanical failure reveals a constraint that was not modeled,
+            the agent proposes the missing relatum. Humans validate. The graph
+            grows through contact with reality.
+          </p>
+        </div>
+        <div class="roadmap-item">
+          <div class="roadmap-name">PROVENANCE</div>
+          <p class="roadmap-desc">
+            First-class tracking of how knowledge entered the graph — authored,
+            learned, or conversational — with timestamps and audit trails inside
+            the epistemic structure.
+          </p>
+        </div>
+        <div class="roadmap-item">
+          <div class="roadmap-name">META-EPISTEMIC DISCUSSION</div>
+          <p class="roadmap-desc">
+            Structured conversation about the agent's epistemic state: asking
+            why a concept is unknown, providing domain knowledge, or refining
+            relata through dialogue.
+          </p>
+        </div>
+        <div class="roadmap-item">
+          <div class="roadmap-name">VRE NETWORKS</div>
+          <p class="roadmap-desc">
+            Federated epistemic graphs. Agents share grounded knowledge across
+            trust boundaries while preserving each agent's epistemic contract.
+          </p>
+        </div>
+        <div class="roadmap-item">
+          <div class="roadmap-name">EPISTEMIC SCORE</div>
+          <p class="roadmap-desc">
+            Composite confidence from depth, recency, provenance, and exercise
+            history.
+          </p>
+        </div>
+        <div class="cta-row">
+          <a href="https://github.com/anormang1992/vre" class="primary" target="_blank">
+            CONTRIBUTE
+          </a>
+        </div>
+      `
+    }
+  }
+];
+
+// ─────────────── STATE ───────────────
+const state = {
+  mode: 'overview',
+  activeNode: null,
+  transitioning: false,
+  mouseX: 0,
+  mouseY: 0,
+  targetRotX: 0,
+  targetRotY: 0,
+  currentRotX: 0,
+  currentRotY: 0,
+  isMobile: window.innerWidth < 769
+};
+
+// ─────────────── THREE.JS SETUP ───────────────
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 0, 18);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x040a14, 1);
+container.appendChild(renderer.domElement);
+
+// ─────────────── VOLUTE GEOMETRY ───────────────
+const voluteGroup = new THREE.Group();
+scene.add(voluteGroup);
+
+// Depth-ring colors: graduated navy → teal
+const RING_COLORS = [
+  new THREE.Color(0x0F2440), // D0 — deepest
+  new THREE.Color(0x1B3A5C), // D1
+  new THREE.Color(0x2E6B8A), // D2
+  new THREE.Color(0x4ECDC4)  // D3 — brightest
+];
+
+// Build the spiral
+function buildVolute() {
+  const points = [];
+  const turns = 3.5;
+  const segments = 600;
+  const maxRadius = 6;
+  const minRadius = 0.4;
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = t * turns * Math.PI * 2;
+    const r = maxRadius - (maxRadius - minRadius) * t;
+    points.push(new THREE.Vector3(Math.cos(angle) * r, Math.sin(angle) * r, 0));
+  }
+  return points;
+}
+
+const volutePoints = buildVolute();
+
+// Create multiple spiral lines with depth-graduated colors
+function createSpiralLines() {
+  const layers = 5;
+  for (let l = 0; l < layers; l++) {
+    const opacity = 0.06 + (l / layers) * 0.18;
+    const zOffset = (l - layers / 2) * 0.05;
+
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(volutePoints.length * 3);
+    const colors = new Float32Array(volutePoints.length * 3);
+
+    for (let i = 0; i < volutePoints.length; i++) {
+      const t = i / volutePoints.length;
+      positions[i * 3] = volutePoints[i].x;
+      positions[i * 3 + 1] = volutePoints[i].y;
+      positions[i * 3 + 2] = zOffset;
+
+      // Graduated color: outer (teal) → inner (deep navy)
+      const ringIdx = Math.min(3, Math.floor(t * 4));
+      const nextIdx = Math.min(3, ringIdx + 1);
+      const localT = (t * 4) - ringIdx;
+      const c = RING_COLORS[ringIdx].clone().lerp(RING_COLORS[nextIdx], localT);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: opacity
+    });
+
+    const line = new THREE.Line(geometry, material);
+    line.userData = { layer: l, baseOpacity: opacity };
+    voluteGroup.add(line);
+  }
+}
+
+createSpiralLines();
+
+// ─────────────── CONCENTRIC DEPTH RINGS ───────────────
+for (let ring = 0; ring < 4; ring++) {
+  const radius = 1.5 + ring * 1.5;
+  const ringGeo = new THREE.BufferGeometry();
+  const ringPts = [];
+  for (let i = 0; i <= 128; i++) {
+    const a = (i / 128) * Math.PI * 2;
+    ringPts.push(new THREE.Vector3(Math.cos(a) * radius, Math.sin(a) * radius, -0.1));
+  }
+  ringGeo.setFromPoints(ringPts);
+  const ringMat = new THREE.LineBasicMaterial({
+    color: RING_COLORS[ring],
+    transparent: true,
+    opacity: 0.12 + ring * 0.06
+  });
+  const ringLine = new THREE.LineLoop(ringGeo, ringMat);
+  ringLine.userData = { ring: ring, baseOpacity: 0.12 + ring * 0.06 };
+  voluteGroup.add(ringLine);
+}
+
+// ─────────────── SPIRAL ARM CONNECTORS ───────────────
+for (let ring = 0; ring < 3; ring++) {
+  const r1 = 1.5 + ring * 1.5;
+  const r2 = 1.5 + (ring + 1) * 1.5;
+  const armPts = [];
+  const startAngle = ring * 1.3;
+  for (let s = 0; s <= 1; s += 0.015) {
+    const a = startAngle + s * 1.8;
+    const r = r1 + (r2 - r1) * s;
+    armPts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, -0.05));
+  }
+  const armGeo = new THREE.BufferGeometry().setFromPoints(armPts);
+  const armMat = new THREE.LineBasicMaterial({
+    color: RING_COLORS[ring + 1],
+    transparent: true,
+    opacity: 0.06
+  });
+  voluteGroup.add(new THREE.Line(armGeo, armMat));
+}
+
+// ─────────────── PARTICLES ALONG SPIRAL ───────────────
+const particleCount = 1800;
+const particleGeometry = new THREE.BufferGeometry();
+const particlePositions = new Float32Array(particleCount * 3);
+const particleColors = new Float32Array(particleCount * 3);
+const particleSpeeds = new Float32Array(particleCount);
+const particleOffsets = new Float32Array(particleCount);
+
+for (let i = 0; i < particleCount; i++) {
+  const t = Math.random();
+  const idx = Math.floor(t * (volutePoints.length - 1));
+  const pt = volutePoints[idx];
+  const spread = 0.25 + Math.random() * 0.4;
+
+  particlePositions[i * 3] = pt.x + (Math.random() - 0.5) * spread;
+  particlePositions[i * 3 + 1] = pt.y + (Math.random() - 0.5) * spread;
+  particlePositions[i * 3 + 2] = (Math.random() - 0.5) * 0.6;
+
+  // Color from depth ring gradient
+  const ringIdx = Math.min(3, Math.floor(t * 4));
+  const c = RING_COLORS[ringIdx].clone();
+  c.multiplyScalar(0.6 + Math.random() * 0.5);
+  particleColors[i * 3] = c.r;
+  particleColors[i * 3 + 1] = c.g;
+  particleColors[i * 3 + 2] = c.b;
+
+  particleSpeeds[i] = 0.2 + Math.random() * 0.8;
+  particleOffsets[i] = Math.random() * Math.PI * 2;
+}
+
+particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+particleGeometry.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+
+const particleMaterial = new THREE.PointsMaterial({
+  size: 0.035,
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.5,
+  blending: THREE.AdditiveBlending,
+  sizeAttenuation: true,
+  depthWrite: false
+});
+
+const particles = new THREE.Points(particleGeometry, particleMaterial);
+voluteGroup.add(particles);
+
+// ─────────────── AMBIENT NODES ON RINGS ───────────────
+const ambientNodes = [];
+for (let ring = 0; ring < 4; ring++) {
+  const count = 5 + ring * 2;
+  const radius = 1.5 + ring * 1.5;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i / count) + ring * 0.6 + Math.random() * 0.4;
+    const geo = new THREE.SphereGeometry(0.03 + ring * 0.008, 8, 8);
+    const mat = new THREE.MeshBasicMaterial({
+      color: RING_COLORS[ring],
+      transparent: true,
+      opacity: 0.25 + ring * 0.1
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+    mesh.userData = { angle, radius, ring, speed: 0.12 + Math.random() * 0.2, phase: Math.random() * Math.PI * 2 };
+    voluteGroup.add(mesh);
+    ambientNodes.push(mesh);
+  }
+}
+
+// Connections between ambient nodes
+for (let i = 0; i < ambientNodes.length; i++) {
+  for (let j = i + 1; j < ambientNodes.length; j++) {
+    if (Math.abs(ambientNodes[i].userData.ring - ambientNodes[j].userData.ring) <= 1 && Math.random() < 0.08) {
+      const pts = [ambientNodes[i].position.clone(), ambientNodes[j].position.clone()];
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: 0x4ECDC4, transparent: true, opacity: 0.04 });
+      voluteGroup.add(new THREE.Line(geo, mat));
+    }
+  }
+}
+
+// ─────────────── CORE GLOW ───────────────
+const coreGeo = new THREE.SphereGeometry(0.15, 16, 16);
+const coreMat = new THREE.MeshBasicMaterial({ color: 0x4ECDC4, transparent: true, opacity: 0.55 });
+const core = new THREE.Mesh(coreGeo, coreMat);
+voluteGroup.add(core);
+
+const coreGlowGeo = new THREE.SphereGeometry(0.5, 16, 16);
+const coreGlowMat = new THREE.MeshBasicMaterial({ color: 0x4ECDC4, transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending });
+const coreGlow = new THREE.Mesh(coreGlowGeo, coreGlowMat);
+voluteGroup.add(coreGlow);
+
+// ─────────────── OUTER GLOW RING ───────────────
+const outerGlowCount = 250;
+const outerGlowGeo = new THREE.BufferGeometry();
+const outerGlowPos = new Float32Array(outerGlowCount * 3);
+const outerGlowCol = new Float32Array(outerGlowCount * 3);
+
+for (let i = 0; i < outerGlowCount; i++) {
+  const angle = Math.random() * Math.PI * 2;
+  const r = 5.5 + Math.random() * 1.5;
+  outerGlowPos[i * 3] = Math.cos(angle) * r;
+  outerGlowPos[i * 3 + 1] = Math.sin(angle) * r;
+  outerGlowPos[i * 3 + 2] = (Math.random() - 0.5) * 0.4;
+
+  const c = new THREE.Color(0x4ECDC4);
+  outerGlowCol[i * 3] = c.r;
+  outerGlowCol[i * 3 + 1] = c.g;
+  outerGlowCol[i * 3 + 2] = c.b;
+}
+
+outerGlowGeo.setAttribute('position', new THREE.BufferAttribute(outerGlowPos, 3));
+outerGlowGeo.setAttribute('color', new THREE.BufferAttribute(outerGlowCol, 3));
+
+const outerGlowMat = new THREE.PointsMaterial({
+  size: 0.06,
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.1,
+  blending: THREE.AdditiveBlending,
+  sizeAttenuation: true,
+  depthWrite: false
+});
+
+const outerGlowParticles = new THREE.Points(outerGlowGeo, outerGlowMat);
+voluteGroup.add(outerGlowParticles);
+
+// ─────────────── NAV NODE SPHERES ───────────────
+const nodeMeshes = [];
+const nodePositions = [];
+
+// Map nodes to positions on the spiral based on ring
+NODES.forEach((node, i) => {
+  // Distribute along the spiral
+  const angles = [0.88, 0.72, 0.55, 0.4, 0.24, 0.08];
+  const t = angles[i] || (i / NODES.length);
+  const idx = Math.floor(t * (volutePoints.length - 1));
+  const pt = volutePoints[idx];
+  const pos = new THREE.Vector3(pt.x, pt.y, 0);
+  nodePositions.push(pos);
+
+  // Outer glow
+  const glowGeo = new THREE.SphereGeometry(0.35, 32, 32);
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: node.threeColor,
+    transparent: true,
+    opacity: 0.12,
+    blending: THREE.AdditiveBlending
+  });
+  const glowMesh = new THREE.Mesh(glowGeo, glowMat);
+  glowMesh.position.copy(pos);
+  voluteGroup.add(glowMesh);
+
+  // Inner glow — tighter, brighter halo
+  const glow2Geo = new THREE.SphereGeometry(0.18, 32, 32);
+  const glow2Mat = new THREE.MeshBasicMaterial({
+    color: node.threeColor,
+    transparent: true,
+    opacity: 0.18,
+    blending: THREE.AdditiveBlending
+  });
+  const glow2Mesh = new THREE.Mesh(glow2Geo, glow2Mat);
+  glow2Mesh.position.copy(pos);
+  voluteGroup.add(glow2Mesh);
+
+  // Ring
+  const ringGeo = new THREE.RingGeometry(0.15, 0.17, 32);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: node.threeColor,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide
+  });
+  const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+  ringMesh.position.copy(pos);
+  voluteGroup.add(ringMesh);
+
+  // Core sphere
+  const geo = new THREE.SphereGeometry(0.09, 32, 32);
+  const mat = new THREE.MeshBasicMaterial({
+    color: node.threeColor,
+    transparent: true,
+    opacity: 0.9
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  mesh.userData = { nodeIndex: i, glowMesh, glow2Mesh, ringMesh };
+  voluteGroup.add(mesh);
+  nodeMeshes.push(mesh);
+
+  // Inner bright dot
+  const dotGeo = new THREE.SphereGeometry(0.035, 16, 16);
+  const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
+  const dot = new THREE.Mesh(dotGeo, dotMat);
+  dot.position.copy(pos);
+  voluteGroup.add(dot);
+});
+
+// ─────────────── 3D DETAIL VOLUTE ───────────────
+const detailVoluteGroup = new THREE.Group();
+detailVoluteGroup.visible = false;
+scene.add(detailVoluteGroup);
+
+function buildDetailVolute(nodeThreeColor) {
+  while (detailVoluteGroup.children.length) detailVoluteGroup.remove(detailVoluteGroup.children[0]);
+
+  const ringColors3D = [0x0F2440, 0x1B3A5C, 0x2E6B8A, 0x4ECDC4];
+
+  // 4 torus rings — sized to envelop the camera at z≈3.8
+  for (let ring = 0; ring < 4; ring++) {
+    const radius = 1.8 + ring * 0.9;
+    const tubeGeo = new THREE.TorusGeometry(radius, 0.015 + ring * 0.006, 12, 180);
+    const tubeMat = new THREE.MeshBasicMaterial({
+      color: ringColors3D[ring],
+      transparent: true,
+      opacity: 0.3 + ring * 0.12
+    });
+    const torus = new THREE.Mesh(tubeGeo, tubeMat);
+    torus.rotation.x = Math.PI / 2;
+    torus.userData = { ring };
+    detailVoluteGroup.add(torus);
+  }
+
+  // Connecting spiral arms
+  for (let ring = 0; ring < 3; ring++) {
+    const r1 = 1.8 + ring * 0.9;
+    const r2 = 1.8 + (ring + 1) * 0.9;
+    const armPts = [];
+    for (let s = 0; s <= 1; s += 0.01) {
+      const a = ring * 1.2 + s * 2;
+      const r = r1 + (r2 - r1) * s;
+      const y = (s - 0.5) * 0.3;
+      armPts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(armPts);
+    const mat = new THREE.LineBasicMaterial({ color: ringColors3D[ring + 1], transparent: true, opacity: 0.2 });
+    detailVoluteGroup.add(new THREE.Line(geo, mat));
+  }
+
+  // Ambient nodes in 3D
+  for (let ring = 0; ring < 4; ring++) {
+    const count = 6 + ring * 3;
+    const radius = 1.8 + ring * 0.9;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i / count) + ring * 0.5;
+      const geo = new THREE.SphereGeometry(0.025 + ring * 0.008, 8, 8);
+      const mat = new THREE.MeshBasicMaterial({
+        color: ringColors3D[ring],
+        transparent: true,
+        opacity: 0.35 + ring * 0.12
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(Math.cos(angle) * radius, (Math.random() - 0.5) * 0.2, Math.sin(angle) * radius);
+      mesh.userData = { angle, radius, ring, speed: 0.2 + Math.random() * 0.3 };
+      detailVoluteGroup.add(mesh);
+    }
+  }
+
+  // Core glow
+  const cg = new THREE.SphereGeometry(0.12, 16, 16);
+  const cm = new THREE.MeshBasicMaterial({ color: 0x4ECDC4, transparent: true, opacity: 0.6 });
+  detailVoluteGroup.add(new THREE.Mesh(cg, cm));
+
+  const cgg = new THREE.SphereGeometry(0.35, 16, 16);
+  const cgm = new THREE.MeshBasicMaterial({ color: 0x4ECDC4, transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending });
+  detailVoluteGroup.add(new THREE.Mesh(cgg, cgm));
+}
+
+// ─────────────── DOM ELEMENTS ───────────────
+const heroText = document.getElementById('hero-text');
+const header = document.getElementById('header');
+const contentPanel = document.getElementById('content-panel');
+const panelDepth = document.getElementById('panel-depth');
+const panelTitle = document.getElementById('panel-title');
+const panelBody = document.getElementById('panel-body');
+const backBtn = document.getElementById('back-btn');
+const depthNav = document.getElementById('depth-nav');
+
+// Create node labels
+const nodeLabels = [];
+NODES.forEach((node, i) => {
+  const el = document.createElement('div');
+  el.className = 'node-label';
+  el.innerHTML = `
+    <div class="label-text" style="color:${node.hex}">${node.label}</div>
+  `;
+  el.addEventListener('click', () => navigateToNode(i));
+  document.body.appendChild(el);
+  nodeLabels.push(el);
+});
+
+// Mobile nav buttons
+NODES.forEach((node, i) => {
+  const btn = document.createElement('button');
+  btn.className = 'depth-nav-btn';
+  btn.textContent = node.label;
+  btn.addEventListener('click', () => navigateToNode(i));
+  depthNav.appendChild(btn);
+});
+
+if (state.isMobile) depthNav.classList.add('visible');
+
+// ─────────────── CAMERA ANIMATION ───────────────
+const cameraLookAt = { x: 0, y: 0, z: 0 };
+let cameraAnimating = false;
+
+// Simple single-target camera animation (used for return trip)
+function animateCamera(target, lookAt, duration, callback) {
+  cameraAnimating = true;
+  const startPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+  const startLook = { ...cameraLookAt };
+  const startTime = performance.now();
+
+  function step(now) {
+    const elapsed = (now - startTime) / (duration * 1000);
+    if (elapsed >= 1) {
+      camera.position.set(target.x, target.y, target.z);
+      Object.assign(cameraLookAt, lookAt);
+      cameraAnimating = false;
+      if (callback) callback();
+      return;
+    }
+
+    // Smooth ease in-out
+    const t = elapsed < 0.5
+      ? 4 * elapsed * elapsed * elapsed
+      : 1 - Math.pow(-2 * elapsed + 2, 3) / 2;
+
+    camera.position.set(
+      startPos.x + (target.x - startPos.x) * t,
+      startPos.y + (target.y - startPos.y) * t,
+      startPos.z + (target.z - startPos.z) * t
+    );
+
+    cameraLookAt.x = startLook.x + (lookAt.x - startLook.x) * t;
+    cameraLookAt.y = startLook.y + (lookAt.y - startLook.y) * t;
+    cameraLookAt.z = startLook.z + (lookAt.z - startLook.z) * t;
+
+    requestAnimationFrame(step);
+  }
+
+  requestAnimationFrame(step);
+}
+
+// Quadratic bezier interpolation for a smooth path through a waypoint
+function bezierPoint(p0, p1, p2, t) {
+  const mt = 1 - t;
+  return {
+    x: mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
+    y: mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y,
+    z: mt * mt * p0.z + 2 * mt * t * p1.z + t * t * p2.z
+  };
+}
+
+// ─────────────── NAVIGATION ───────────────
+function navigateToNode(index) {
+  if (state.transitioning) return;
+  state.transitioning = true;
+  state.activeNode = index;
+
+  const node = NODES[index];
+  const pos = nodePositions[index];
+
+  // Don't use CSS class toggle — we'll manually drive UI elements out
+  // over the first portion of the sweep so they fade with the motion
+  heroText.classList.add('no-transition');
+  header.classList.add('no-transition');
+  nodeLabels.forEach(l => l.classList.add('no-transition'));
+  depthNav.classList.add('hidden-nav');
+
+  buildDetailVolute(node.threeColor);
+  detailVoluteGroup.visible = true;
+
+  // Prep detail volute: store target opacity, set to zero for crossfade
+  detailVoluteGroup.traverse(child => {
+    if (child.material) {
+      child.material._targetOpacity = child.material.opacity;
+      child.material.opacity = 0;
+    }
+  });
+
+  // Store overview volute base opacities
+  voluteGroup.children.forEach(child => {
+    if (child.material) child.material._baseOpacityStored = child.material.opacity;
+  });
+
+  // Single continuous camera sweep: start → waypoint near node → final detail position
+  const startPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+  const startLook = { ...cameraLookAt };
+  const waypoint = { x: pos.x * 0.4, y: pos.y * 0.4, z: 7 };
+  const endPos = { x: 0, y: 0.2, z: 3.8 };
+  const endLook = { x: 0, y: 0, z: 0 };
+
+  const totalDuration = 2200; // ms — one smooth sweep
+  const uiFadeEnd = 0.25;     // labels/hero fully gone by 25%
+  const crossfadeStart = 0.3; // 3D crossfade starts at 30%
+  const crossfadeEnd = 0.75;  // 3D crossfade done at 75%
+  const panelAppear = 0.85;   // content panel at 85%
+  let panelShown = false;
+  let uiHidden = false;
+
+  cameraAnimating = true;
+  const t0 = performance.now();
+
+  function sweepStep(now) {
+    const raw = (now - t0) / totalDuration;
+    const progress = Math.min(raw, 1);
+
+    // Global ease: smooth acceleration then deceleration
+    const ease = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    // Camera position follows bezier curve through waypoint
+    const camPos = bezierPoint(startPos, waypoint, endPos, ease);
+    camera.position.set(camPos.x, camPos.y, camPos.z);
+
+    // Look-at interpolates smoothly
+    const lookT = ease;
+    const lookWaypoint = { x: pos.x * 0.2, y: pos.y * 0.2, z: 0 };
+    const look = bezierPoint(startLook, lookWaypoint, endLook, lookT);
+    cameraLookAt.x = look.x;
+    cameraLookAt.y = look.y;
+    cameraLookAt.z = look.z;
+
+    // ── Fade out labels / hero / header over the first 25% ──
+    {
+      const uiRaw = Math.min(1, progress / uiFadeEnd);
+      const uiFade = uiRaw * uiRaw * (3 - 2 * uiRaw); // smoothstep 0→1
+      const uiOpacity = 1 - uiFade;
+      const yDrift = 10 * uiFade; // subtle downward drift as they fade
+
+      heroText.style.opacity = String(uiOpacity);
+      heroText.style.transform = `translateX(-50%) translateY(${yDrift}px)`;
+      header.style.opacity = String(uiOpacity);
+      nodeLabels.forEach(l => l.style.opacity = String(uiOpacity));
+
+      // Once fully faded, apply the hidden class and clean up
+      if (uiOpacity <= 0 && !uiHidden) {
+        uiHidden = true;
+        heroText.classList.add('hidden');
+        heroText.style.opacity = '';
+        heroText.style.transform = '';
+        heroText.classList.remove('no-transition');
+        header.classList.add('hidden');
+        header.style.opacity = '';
+        header.classList.remove('no-transition');
+        nodeLabels.forEach(l => {
+          l.classList.add('hidden');
+          l.style.opacity = '';
+          l.classList.remove('no-transition');
+        });
+      }
+    }
+
+    // ── Crossfade: overview 3D out, detail 3D in ──
+    if (progress >= crossfadeStart) {
+      const cfRaw = (progress - crossfadeStart) / (crossfadeEnd - crossfadeStart);
+      const cf = Math.min(1, Math.max(0, cfRaw));
+      const cfEase = cf * cf * (3 - 2 * cf); // smoothstep
+
+      voluteGroup.children.forEach(child => {
+        if (child.material && child.material._baseOpacityStored !== undefined) {
+          child.material.opacity = child.material._baseOpacityStored * (1 - cfEase);
+        }
+      });
+
+      detailVoluteGroup.children.forEach(child => {
+        if (child.material && child.material._targetOpacity !== undefined) {
+          child.material.opacity = child.material._targetOpacity * cfEase;
+        }
+      });
+    }
+
+    // ── Show content panel smoothly ──
+    if (progress >= panelAppear && !panelShown) {
+      panelShown = true;
+      panelDepth.textContent = node.content.depth;
+      panelTitle.textContent = node.content.title;
+      panelBody.innerHTML = node.content.body;
+      contentPanel.classList.add('visible');
+      backBtn.classList.add('visible');
+    }
+
+    if (progress >= 1) {
+      // Final cleanup
+      if (!uiHidden) {
+        heroText.classList.add('hidden');
+        heroText.style.opacity = '';
+        heroText.style.transform = '';
+        heroText.classList.remove('no-transition');
+        header.classList.add('hidden');
+        header.style.opacity = '';
+        header.classList.remove('no-transition');
+        nodeLabels.forEach(l => {
+          l.classList.add('hidden');
+          l.style.opacity = '';
+          l.classList.remove('no-transition');
+        });
+      }
+      voluteGroup.visible = false;
+      voluteGroup.children.forEach(child => {
+        if (child.material && child.material._baseOpacityStored !== undefined) {
+          child.material.opacity = child.material._baseOpacityStored;
+          delete child.material._baseOpacityStored;
+        }
+      });
+      cameraAnimating = false;
+      state._crossfading = false;
+      state.mode = 'detail';
+      state.transitioning = false;
+      return;
+    }
+
+    requestAnimationFrame(sweepStep);
+  }
+
+  requestAnimationFrame(sweepStep);
+}
+
+function returnToOverview() {
+  if (state.transitioning) return;
+  state.transitioning = true;
+
+  contentPanel.classList.remove('visible');
+  backBtn.classList.remove('visible');
+
+  // Small delay for panel fade-out, then one smooth sweep back
+  setTimeout(() => {
+    voluteGroup.visible = true;
+
+    // Store detail opacities for crossfade
+    detailVoluteGroup.children.forEach(child => {
+      if (child.material) child.material._targetOpacity = child.material.opacity;
+    });
+    // Reset overview opacities to 0 for fade-in
+    voluteGroup.children.forEach(child => {
+      if (child.material) {
+        if (child.material._baseOpacityStored === undefined) {
+          child.material._baseOpacityStored = child.material.opacity;
+        }
+        child.material.opacity = 0;
+      }
+    });
+
+    const startPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+    const startLook = { ...cameraLookAt };
+    const waypoint = { x: 0, y: 0.1, z: 10 };
+    const endPos = { x: 0, y: 0, z: 18 };
+    const endLook = { x: 0, y: 0, z: 0 };
+
+    const totalDuration = 1800;
+    const crossfadeStart = 0.1;
+    const crossfadeEnd = 0.6;
+    const uiAppear = 0.78;
+    let uiShown = false;
+
+    cameraAnimating = true;
+    const t0 = performance.now();
+
+    function returnStep(now) {
+      const raw = (now - t0) / totalDuration;
+      const progress = Math.min(raw, 1);
+
+      const ease = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      const camPos = bezierPoint(startPos, waypoint, endPos, ease);
+      camera.position.set(camPos.x, camPos.y, camPos.z);
+
+      const look = bezierPoint(startLook, { x: 0, y: 0, z: 0 }, endLook, ease);
+      cameraLookAt.x = look.x;
+      cameraLookAt.y = look.y;
+      cameraLookAt.z = look.z;
+
+      // Crossfade: detail out, overview in
+      if (progress >= crossfadeStart) {
+        const cfRaw = (progress - crossfadeStart) / (crossfadeEnd - crossfadeStart);
+        const cf = Math.min(1, Math.max(0, cfRaw));
+        const cfEase = cf * cf * (3 - 2 * cf);
+
+        detailVoluteGroup.children.forEach(child => {
+          if (child.material && child.material._targetOpacity !== undefined) {
+            child.material.opacity = child.material._targetOpacity * (1 - cfEase);
+          }
+        });
+
+        voluteGroup.children.forEach(child => {
+          if (child.material && child.material._baseOpacityStored !== undefined) {
+            child.material.opacity = child.material._baseOpacityStored * cfEase;
+          }
+        });
+      }
+
+      // Gradually fade overview UI back in over the final stretch
+      if (progress >= uiAppear) {
+        if (!uiShown) {
+          uiShown = true;
+          // Remove hidden class but override to invisible via inline styles
+          // Disable CSS transitions so we drive everything manually per-frame
+          heroText.classList.remove('hidden');
+          heroText.classList.add('no-transition');
+          header.classList.remove('hidden');
+          header.classList.add('no-transition');
+          nodeLabels.forEach(l => { l.classList.remove('hidden'); l.classList.add('no-transition'); });
+          depthNav.classList.remove('hidden-nav');
+          heroText.style.opacity = '0';
+          heroText.style.transform = 'translateX(-50%) translateY(12px)';
+          header.style.opacity = '0';
+          header.style.transform = 'translateY(-8px)';
+          nodeLabels.forEach(l => { l.style.opacity = '0'; });
+        }
+
+        // Ramp from 0→1 over the uiAppear→1.0 range with smoothstep
+        const uiRaw = (progress - uiAppear) / (1 - uiAppear);
+        const uiFade = Math.min(1, uiRaw * uiRaw * (3 - 2 * uiRaw));
+        const yOffset = 12 * (1 - uiFade);
+        heroText.style.opacity = String(uiFade);
+        heroText.style.transform = `translateX(-50%) translateY(${yOffset}px)`;
+        header.style.opacity = String(uiFade);
+        header.style.transform = `translateY(${-8 * (1 - uiFade)}px)`;
+        nodeLabels.forEach(l => l.style.opacity = String(uiFade));
+      }
+
+      if (progress >= 1) {
+        // Clean up — clear all inline overrides and re-enable CSS transitions
+        heroText.style.opacity = '';
+        heroText.style.transform = '';
+        heroText.classList.remove('no-transition');
+        header.style.opacity = '';
+        header.style.transform = '';
+        header.classList.remove('no-transition');
+        nodeLabels.forEach(l => { l.style.opacity = ''; l.classList.remove('no-transition'); });
+
+        detailVoluteGroup.visible = false;
+        voluteGroup.children.forEach(child => {
+          if (child.material && child.material._baseOpacityStored !== undefined) {
+            child.material.opacity = child.material._baseOpacityStored;
+            delete child.material._baseOpacityStored;
+          }
+        });
+        cameraAnimating = false;
+        state._crossfadeBack = false;
+        state.mode = 'overview';
+        state.activeNode = null;
+        state.transitioning = false;
+        return;
+      }
+
+      requestAnimationFrame(returnStep);
+    }
+
+    requestAnimationFrame(returnStep);
+  }, 250);
+}
+
+backBtn.addEventListener('click', returnToOverview);
+
+// Click outside panel to go back
+contentPanel.addEventListener('click', (e) => {
+  if (e.target === contentPanel) returnToOverview();
+});
+
+// ─────────────── INPUT HANDLERS ───────────────
+document.addEventListener('mousemove', (e) => {
+  state.mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+  state.mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+});
+
+document.addEventListener('touchmove', (e) => {
+  state.mouseX = (e.touches[0].clientX / window.innerWidth - 0.5) * 2;
+  state.mouseY = (e.touches[0].clientY / window.innerHeight - 0.5) * 2;
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.mode === 'detail') returnToOverview();
+});
+
+// ─────────────── RAYCASTING ───────────────
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+function onCanvasClick(e) {
+  if (state.mode !== 'overview' || state.transitioning) return;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = e.clientX || (e.changedTouches && e.changedTouches[0].clientX);
+  const y = e.clientY || (e.changedTouches && e.changedTouches[0].clientY);
+
+  mouse.x = ((x - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((y - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(nodeMeshes);
+
+  if (intersects.length > 0) {
+    const idx = intersects[0].object.userData.nodeIndex;
+    if (idx !== undefined) navigateToNode(idx);
+  }
+}
+
+renderer.domElement.addEventListener('click', onCanvasClick);
+renderer.domElement.addEventListener('touchend', (e) => {
+  if (e.changedTouches.length === 1) {
+    onCanvasClick(e);
+  }
+});
+
+// ─────────────── RESIZE ───────────────
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  state.isMobile = window.innerWidth < 769;
+
+  if (state.isMobile && state.mode === 'overview') {
+    depthNav.classList.add('visible');
+  } else if (!state.isMobile) {
+    depthNav.classList.remove('visible');
+  }
+}
+
+window.addEventListener('resize', onResize);
+
+// ─────────────── ANIMATION LOOP ───────────────
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const elapsed = clock.getElapsedTime();
+
+  // Breathing scale
+  const breathScale = 1 + Math.sin(elapsed * 0.8) * 0.012 + Math.sin(elapsed * 1.3) * 0.006;
+  voluteGroup.scale.set(breathScale, breathScale, breathScale);
+
+  // Mouse parallax
+  if (!cameraAnimating && state.mode === 'overview') {
+    state.targetRotX = state.mouseY * 0.1;
+    state.targetRotY = state.mouseX * 0.12;
+  }
+
+  state.currentRotX += (state.targetRotX - state.currentRotX) * 0.03;
+  state.currentRotY += (state.targetRotY - state.currentRotY) * 0.03;
+
+  if (state.mode === 'overview') {
+    voluteGroup.rotation.x = state.currentRotX;
+    voluteGroup.rotation.y = state.currentRotY;
+    voluteGroup.rotation.z = elapsed * 0.015;
+  }
+
+  // Spiral line breathing (skip during transitions to avoid fighting crossfade)
+  if (!state.transitioning) {
+    voluteGroup.children.forEach(child => {
+      if (child.isLine && child.userData.layer !== undefined) {
+        const l = child.userData.layer;
+        child.material.opacity = child.userData.baseOpacity * (1 + Math.sin(elapsed * 0.6 + l * 0.5) * 0.35);
+      }
+      if (child.isLineLoop && child.userData.ring !== undefined) {
+        child.material.opacity = child.userData.baseOpacity * (1 + Math.sin(elapsed * 0.5 + child.userData.ring * 0.7) * 0.3);
+      }
+    });
+  }
+
+  // Particles drift
+  const pPos = particles.geometry.attributes.position.array;
+  for (let i = 0; i < particleCount; i++) {
+    pPos[i * 3 + 2] = Math.sin(elapsed * particleSpeeds[i] + particleOffsets[i]) * 0.25;
+  }
+  particles.geometry.attributes.position.needsUpdate = true;
+  if (!state.transitioning) {
+    particleMaterial.opacity = 0.35 + Math.sin(elapsed * 0.5) * 0.12;
+    outerGlowMat.opacity = 0.06 + Math.sin(elapsed * 0.6) * 0.04;
+  }
+  outerGlowParticles.rotation.z = elapsed * 0.008;
+
+  // Core breathing
+  const corePulse = 1 + Math.sin(elapsed * 1.2) * 0.15;
+  core.scale.set(corePulse, corePulse, corePulse);
+  if (!state.transitioning) {
+    coreGlowMat.opacity = 0.08 + Math.sin(elapsed * 0.8) * 0.05;
+  }
+  const coreGlowPulse = 1 + Math.sin(elapsed * 0.6) * 0.2;
+  coreGlow.scale.set(coreGlowPulse, coreGlowPulse, coreGlowPulse);
+
+  // Ambient nodes drift
+  ambientNodes.forEach(mesh => {
+    const d = mesh.userData;
+    const a = d.angle + Math.sin(elapsed * d.speed + d.phase) * 0.1 + elapsed * 0.015;
+    mesh.position.x = Math.cos(a) * d.radius;
+    mesh.position.y = Math.sin(a) * d.radius;
+  });
+
+  // Nav node spheres pulse (skip opacity writes during transitions — crossfade owns those)
+  nodeMeshes.forEach((mesh, i) => {
+    const pulse = 1 + Math.sin(elapsed * 1.2 + i * 1.5) * 0.2;
+    mesh.scale.set(pulse, pulse, pulse);
+
+    const glow = mesh.userData.glowMesh;
+    if (glow) {
+      const gp = 1 + Math.sin(elapsed * 0.8 + i * 1.5) * 0.25;
+      glow.scale.set(gp, gp, gp);
+      if (!state.transitioning) {
+        glow.material.opacity = 0.08 + Math.sin(elapsed * 1.0 + i) * 0.05;
+      }
+    }
+
+    const glow2 = mesh.userData.glow2Mesh;
+    if (glow2) {
+      const g2p = 1 + Math.sin(elapsed * 1.1 + i * 1.2) * 0.15;
+      glow2.scale.set(g2p, g2p, g2p);
+      if (!state.transitioning) {
+        glow2.material.opacity = 0.12 + Math.sin(elapsed * 1.3 + i * 0.8) * 0.06;
+      }
+    }
+
+    const ring = mesh.userData.ringMesh;
+    if (ring) {
+      if (!state.transitioning) {
+        ring.material.opacity = 0.2 + Math.sin(elapsed * 1.5 + i * 2) * 0.1;
+      }
+      const rp = 1 + Math.sin(elapsed * 0.7 + i) * 0.15;
+      ring.scale.set(rp, rp, rp);
+    }
+  });
+
+  // Detail volute animation
+  if (detailVoluteGroup.visible) {
+    detailVoluteGroup.rotation.y = elapsed * 0.3;
+    detailVoluteGroup.rotation.x = Math.sin(elapsed * 0.15) * 0.15 + 0.2;
+
+    detailVoluteGroup.children.forEach(child => {
+      if (child.isMesh && child.userData.ring !== undefined) {
+        child.rotation.x = Math.PI / 2 + Math.sin(elapsed + child.userData.ring) * 0.05;
+        child.rotation.z = Math.cos(elapsed * 0.7 + child.userData.ring) * 0.03;
+      }
+      if (child.isMesh && child.userData.speed) {
+        const d = child.userData;
+        const a = d.angle + elapsed * d.speed;
+        child.position.x = Math.cos(a) * d.radius;
+        child.position.z = Math.sin(a) * d.radius;
+      }
+    });
+  }
+
+  // Update node label positions — also during return transitions so they
+  // track the moving camera instead of popping to stale positions
+  if (state.mode === 'overview' || (state.transitioning && voluteGroup.visible)) {
+    nodeLabels.forEach((label, i) => {
+      const pos = nodePositions[i].clone();
+      pos.applyMatrix4(voluteGroup.matrixWorld);
+      pos.project(camera);
+
+      const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+
+      label.style.left = x + 'px';
+      label.style.top = y + 'px';
+      label.style.transform = 'translate(-50%, -140%)';
+    });
+  }
+
+  camera.lookAt(cameraLookAt.x, cameraLookAt.y, cameraLookAt.z);
+  renderer.render(scene, camera);
+}
+
+// ─────────────── INIT ───────────────
+function init() {
+  const loader = document.getElementById('loader');
+  setTimeout(() => {
+    loader.classList.add('fade-out');
+    setTimeout(() => loader.remove(), 1000);
+  }, 800);
+
+  animate();
+}
+
+init();
+</script>
+</body>
+</html>
