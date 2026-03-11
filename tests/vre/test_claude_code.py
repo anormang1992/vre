@@ -7,7 +7,6 @@ Unit tests for vre.integrations.claude_code — install, uninstall, and _run_hoo
 
 import io
 import json
-import stat
 from unittest.mock import MagicMock, patch
 
 import pytest

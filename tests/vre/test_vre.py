@@ -5,7 +5,7 @@ Uses a stub repository to avoid Neo4j dependency.
 """
 
 from collections import deque
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from vre import VRE
 from vre.core.models import (
