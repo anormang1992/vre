@@ -1,6 +1,6 @@
 [project]
 name = "vre"
-version = "0.1.0"
+version = "0.2.0"
 description = "Volute Reasoning Engine — decorator-based epistemic enforcement"
 authors = [
     {name = "Andrew Greene",email = "anormang@gmail.com"}
@@ -28,4 +28,11 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [dependency-groups]
-dev = ["pytest>=9.0.2,<10.0.0"]
+dev = ["pytest>=9.0.2,<10.0.0", "pytest-cov (>=7.0.0,<8.0.0)", "ruff (>=0.15.5,<0.16.0)"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.pytest.ini_options]
+addopts = "--cov=src/vre --cov-fail-under=70"

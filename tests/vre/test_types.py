@@ -2,7 +2,6 @@
 Unit tests for GroundingResult.__str__ and PolicyResult.__str__.
 """
 
-from uuid import uuid4
 
 from vre.core.models import (
     Depth,

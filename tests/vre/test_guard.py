@@ -244,7 +244,8 @@ def test_vre_guard_callable_concepts_stored_on_attribute():
     """
     from vre.guard import vre_guard
 
-    fn = lambda: ["file"]
+    def fn():
+        return ["file"]
     mock_vre = _mock_vre(_grounding())
 
     @vre_guard(mock_vre, concepts=fn)

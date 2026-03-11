@@ -22,6 +22,21 @@ from vre.core.policy import Cardinality, PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
 
+__all__ = [
+    "VRE",
+    "PrimitiveRepository",
+    "ConceptResolver",
+    "GroundingEngine",
+    "GroundingResult",
+    "DepthLevel",
+    "Provenance",
+    "ProvenanceSource",
+    "Cardinality",
+    "PolicyResult",
+    "PolicyCallContext",
+    "PolicyGate",
+]
+
 
 class VRE:
     """
