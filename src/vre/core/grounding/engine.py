@@ -204,8 +204,10 @@ class GroundingEngine:
                 continue
             curr = GroundingEngine._contiguous_max_depth(tgt_prim)
             gaps.append(RelationalGap(
-                source=src_prim, target=tgt_prim,
-                required_depth=max_req, current_depth=curr,
+                source=src_prim,
+                target=tgt_prim,
+                required_depth=max_req,
+                current_depth=curr,
             ))
 
         return gaps
@@ -292,17 +294,21 @@ class GroundingEngine:
         )
 
         # Undirected connectivity check across all non-transient roots
-        # using only visible edges
+        # using only visible edges. Anchor on the root with the largest
+        # reachable component so truly isolated nodes get reported.
         non_transient_roots = [r for r in roots if r.id not in transient_ids]
         if len(non_transient_roots) > 1:
             neighbors: dict[UUID, set[UUID]] = {}
             for edge in visible_edges:
                 neighbors.setdefault(edge.source_id, set()).add(edge.target_id)
                 neighbors.setdefault(edge.target_id, set()).add(edge.source_id)
-            anchor = non_transient_roots[0]
+            anchor = max(
+                non_transient_roots,
+                key=lambda r: len(self._reachable_undirected(r.id, neighbors)),
+            )
             reachable = self._reachable_undirected(anchor.id, neighbors)
-            for root in non_transient_roots[1:]:
-                if root.id not in reachable:
+            for root in non_transient_roots:
+                if root.id != anchor.id and root.id not in reachable:
                     gaps.append(ReachabilityGap(primitive=root))
 
         filtered = self._filter_depths(all_nodes)

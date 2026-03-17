@@ -1,5 +1,6 @@
 """
-Demo callbacks for vre_guard: trace renderer and policy confirmation.
+Demo callbacks for vre_guard: trace renderer, policy confirmation, and
+auto-learning via meta-epistemic dialogue with the agent.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING
 from rich.prompt import Confirm
 from rich.tree import Tree
 
+from demo.learner import DemoLearner
 from demo.repl import console
 from vre.builtins.shell import parse_bash_primitives
 
@@ -72,7 +74,7 @@ def on_trace(grounding: "GroundingResult") -> None:
         for gap in grounding.gaps:
             tree.add(f"[yellow]⚠  {_gap_description(gap)}[/]")
         tree.add(
-            "[bold green]✓ Grounded at D3 — epistemic permission granted[/]"
+            "[bold green]✓ Grounded — epistemic permission granted[/]"
             if grounding.grounded
             else "[bold red]✗ Not grounded — action blocked[/]"
         )
@@ -115,7 +117,7 @@ def on_trace(grounding: "GroundingResult") -> None:
         tree.add(f"[yellow]⚠  {_gap_description(gap)}[/]")
 
     tree.add(
-        "[bold green]✓ Grounded at D3 — EPISTEMIC PERMISSION GRANTED[/]"
+        "[bold green]✓ Grounded — EPISTEMIC PERMISSION GRANTED[/]"
         if grounding.grounded
         else "[bold red]✗ Not grounded — COMMAND EXECUTION IS BLOCKED[/]"
     )
@@ -125,3 +127,10 @@ def on_trace(grounding: "GroundingResult") -> None:
 
 def on_policy(message: str) -> bool:
     return Confirm.ask(f"[yellow]⚠  Policy gate:[/] {message}")
+
+
+def make_on_learn(model: str = "qwen3:8b") -> DemoLearner:
+    """
+    Create a learning callback for the demo agent.
+    """
+    return DemoLearner(model=model)

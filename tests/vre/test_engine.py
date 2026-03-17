@@ -634,3 +634,92 @@ class TestSourceDepthGating:
         resp = engine.query(["delete", "file"])
 
         assert len(resp.result.pathway) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: empty concepts and utility methods
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyConcepts:
+    def test_query_empty_concepts_returns_empty_response(self) -> None:
+        """query([]) returns a valid but empty EpistemicResponse."""
+        engine = GroundingEngine(StubRepository([]))
+        resp = engine.query([])
+        assert len(resp.result.primitives) == 0
+        assert len(resp.result.gaps) == 0
+
+    def test_list_primitive_names(self) -> None:
+        """list_primitive_names returns all names in the repository."""
+        p = _make_primitive("file", [_depth(DepthLevel.EXISTENCE)])
+        engine = GroundingEngine(StubRepository([p]))
+        names = engine.list_primitive_names()
+        assert "file" in names
+
+
+class TestReachabilityAnchorSelection:
+    """Anchor selection uses the root with the largest reachable component."""
+
+    def test_isolated_node_reported_not_majority(self) -> None:
+        """
+        With 3 roots where 2 are connected and 1 is isolated, the isolated
+        one gets the ReachabilityGap regardless of submission order.
+        """
+        permission_p = _make_primitive("permission", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        file_p = _make_primitive("file", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES, [
+                _relatum(permission_p.id, RelationType.REQUIRES, DepthLevel.CONSTRAINTS),
+            ]),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        orphan_p = _make_primitive("orphan", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        engine = GroundingEngine(StubRepository([file_p, permission_p, orphan_p]))
+
+        # Submit orphan first to test that anchor selection picks the larger component
+        resp = engine.query(["orphan", "file", "permission"])
+        reachability_gaps = [g for g in resp.result.gaps if g.kind == "REACHABILITY"]
+        assert len(reachability_gaps) == 1
+        assert reachability_gaps[0].primitive.name == "orphan"
+
+
+class TestMinDepthOnNonRootNodes:
+    """min_depth only applies to root (submitted) nodes, not discovered ones."""
+
+    def test_min_depth_skips_non_root_discovered_nodes(self) -> None:
+        """
+        Discovered node (via BFS) should not get a DepthGap from min_depth.
+        """
+        permission_p = _make_primitive("permission", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            # Only D0+D1, but it's not a root — min_depth should not apply
+        ])
+        file_p = _make_primitive("file", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.CONSTRAINTS, [
+                _relatum(permission_p.id, RelationType.CONSTRAINED_BY, DepthLevel.IDENTITY),
+            ]),
+        ])
+        engine = GroundingEngine(StubRepository([file_p, permission_p]))
+
+        # Only "file" is the root; "permission" is discovered via BFS
+        resp = engine.query(["file"], min_depth=DepthLevel.CONSTRAINTS)
+
+        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
+        # No DepthGap on permission — it's not a root
+        for gap in depth_gaps:
+            assert gap.primitive.name != "permission"

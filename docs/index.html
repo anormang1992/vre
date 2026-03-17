@@ -874,7 +874,10 @@ const NODES = [
           Each <code>vre_guard</code> call follows a strict sequence:
           <strong>resolve</strong> concept names to canonical primitives →
           <strong>ground</strong> the subgraph against depth requirements → fire
-          <strong>on_trace</strong> with the result → if not grounded,
+          <strong>on_trace</strong> with the result → if not grounded and
+          <strong>on_learn</strong> is provided, enter the
+          <strong>learning loop</strong> to resolve gaps → re-ground and fire
+          <strong>on_trace</strong> again → if still not grounded,
           <strong>block</strong> and return gaps → evaluate
           <strong>policies</strong> on APPLIES_TO relata → if PENDING, call
           <strong>on_policy</strong> for human confirmation → if approved,
@@ -947,8 +950,10 @@ const NODES = [
           &nbsp;&nbsp;&nbsp;&nbsp;vre,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># VRE instance</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;concepts,&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># list[str] | Callable → list[str]</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;cardinality=<span class="ck">None</span>,&nbsp;<span class="cc"># str | Callable → str | None</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;min_depth=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># DepthLevel | None — floor override</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;on_trace=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[GroundingResult], None]</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;on_policy=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[str], bool]</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;on_learn=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># LearningCallback | None</span><br>
           )
         </div>
         <ul style="margin-left:0.8rem">
@@ -963,6 +968,9 @@ const NODES = [
           </li>
           <li>
               <strong>on_policy</strong> — called when a policy gate requires human confirmation.
+          </li>
+          <li>
+            <strong>on_learn</strong> — a <code>LearningCallback</code> that enables the auto-learning loop when grounding fails.
           </li>
         </ul>
         <div class="code-block">
@@ -1017,7 +1025,7 @@ const NODES = [
           </div>
           <div>
             <span class="td2">└──</span>
-            <span class="tg">✓ Grounded at D3 — EPISTEMIC PERMISSION GRANTED</span>
+            <span class="tg">✓ Grounded — EPISTEMIC PERMISSION GRANTED</span>
           </div>
         </div>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
@@ -1043,6 +1051,108 @@ const NODES = [
     }
   },
   {
+    id: 'learning',
+    label: 'LEARNING',
+    ring: 2,
+    color: { r: 240, g: 197, b: 77 },
+    hex: '#F0C54D',
+    threeColor: 0xF0C54D,
+    content: {
+      depth: 'LEARNING',
+      title: 'Ignorance is surfaced. Knowledge is earned.',
+      body: `
+        <p>
+          When grounding fails, VRE does not simply block the agent. It surfaces
+          <strong>structured knowledge gaps</strong> that describe exactly what is
+          missing. The auto-learning loop turns these gaps into proposals that a
+          human reviews before anything enters the graph.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            THE LEARNING LOOP
+          </strong>
+        </p>
+        <p>
+          Each gap type produces a <strong>candidate template</strong> that an
+          agent fills in. The human reviews, modifies, or rejects the proposal.
+          Accepted candidates are persisted with provenance tracking.
+        </p>
+        <div style="margin:0.8rem 0 1.2rem">
+          <div class="depth-row">
+            <div class="depth-indicator d0">1</div>
+            <div class="depth-text">
+              <div class="depth-label">GAP DETECTED</div>
+              <div class="depth-question">Grounding fails → structured gap surfaced</div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d1">2</div>
+            <div class="depth-text">
+              <div class="depth-label">TEMPLATE CREATED</div>
+              <div class="depth-question">Engine builds a candidate from the gap type</div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d2">3</div>
+            <div class="depth-text">
+              <div class="depth-label">AGENT PROPOSES</div>
+              <div class="depth-question">LLM fills the template with domain knowledge</div>
+            </div>
+          </div>
+          <div class="depth-row">
+            <div class="depth-indicator d3">4</div>
+            <div class="depth-text">
+              <div class="depth-label">HUMAN REVIEWS</div>
+              <div class="depth-question">Accept, modify, skip, or reject the proposal</div>
+            </div>
+          </div>
+        </div>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            CANDIDATE TYPES
+          </strong>
+        </p>
+        <ul style="margin-left:0.8rem">
+          <li>
+            <strong>ExistenceCandidate</strong> — concept not in graph. Agent proposes D1 (identity); D0 is auto-generated on acceptance.
+          </li>
+          <li>
+            <strong>DepthCandidate</strong> — concept exists but is too shallow. Proposes missing depths.
+          </li>
+          <li>
+            <strong>RelationalCandidate</strong> — relatum target is under-grounded. Proposes depths on target.
+          </li>
+          <li>
+            <strong>ReachabilityCandidate</strong> — concept is disconnected. Proposes edge placement.
+          </li>
+        </ul>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            TWO-PHASE EDGE PLACEMENT
+          </strong>
+        </p>
+        <p>
+          When a reachability gap is resolved by placing an edge, the engine
+          checks whether the source and target have the required depths. If not,
+          it synthesizes <code>DepthGap</code>s and invokes the learning callback
+          for each missing depth <strong>before</strong> placing the edge. The
+          agent cannot connect concepts it does not yet understand.
+        </p>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            PROVENANCE
+          </strong>
+        </p>
+        <p>
+          Every piece of learned knowledge carries structured provenance.
+          Accepted proposals are marked <code>learned</code>. Modified proposals
+          are marked <code>conversational</code>. The graph remembers not just
+          what it knows, but <strong>how it came to know it</strong>.
+        </p>
+      `
+    }
+  },
+  {
     id: 'roadmap',
     label: 'ROADMAP',
     ring: 3,
@@ -1056,17 +1166,12 @@ const NODES = [
         <div class="roadmap-item">
           <div class="roadmap-name">LEARNING THROUGH FAILURE</div>
           <p class="roadmap-desc">
-            When a mechanical failure reveals a constraint that was not modeled,
-            the agent proposes the missing relatum. Humans validate. The graph
-            grows through contact with reality.
-          </p>
-        </div>
-        <div class="roadmap-item">
-          <div class="roadmap-name">META-EPISTEMIC DISCUSSION</div>
-          <p class="roadmap-desc">
-            Structured conversation about the agent's epistemic state: asking
-            why a concept is unknown, providing domain knowledge, or refining
-            relata through dialogue.
+            Pre-execution learning is implemented. The next frontier is
+            <strong>post-execution</strong> learning: when a fully grounded
+            action fails mechanically (e.g. permission denied), the failure
+            reveals a constraint that was not modeled. The agent proposes the
+            missing relatum. Humans validate. The graph grows through contact
+            with reality.
           </p>
         </div>
         <div class="roadmap-item">
@@ -1370,13 +1475,15 @@ const outerGlowParticles = new THREE.Points(outerGlowGeo, outerGlowMat);
 voluteGroup.add(outerGlowParticles);
 
 // ─────────────── NAV NODE SPHERES ───────────────
+const navNodesGroup = new THREE.Group();
+scene.add(navNodesGroup);
 const nodeMeshes = [];
 const nodePositions = [];
 
 // Map nodes to positions on the spiral based on ring
 NODES.forEach((node, i) => {
   // Distribute along the spiral
-  const angles = [0.88, 0.72, 0.55, 0.4, 0.24, 0.08];
+  const angles = [0.93, 0.79, 0.65, 0.51, 0.24, 0.38, 0.08];
   const t = angles[i] || (i / NODES.length);
   const idx = Math.floor(t * (volutePoints.length - 1));
   const pt = volutePoints[idx];
@@ -1393,7 +1500,7 @@ NODES.forEach((node, i) => {
   });
   const glowMesh = new THREE.Mesh(glowGeo, glowMat);
   glowMesh.position.copy(pos);
-  voluteGroup.add(glowMesh);
+  navNodesGroup.add(glowMesh);
 
   // Inner glow — tighter, brighter halo
   const glow2Geo = new THREE.SphereGeometry(0.18, 32, 32);
@@ -1405,7 +1512,7 @@ NODES.forEach((node, i) => {
   });
   const glow2Mesh = new THREE.Mesh(glow2Geo, glow2Mat);
   glow2Mesh.position.copy(pos);
-  voluteGroup.add(glow2Mesh);
+  navNodesGroup.add(glow2Mesh);
 
   // Ring
   const ringGeo = new THREE.RingGeometry(0.15, 0.17, 32);
@@ -1417,7 +1524,7 @@ NODES.forEach((node, i) => {
   });
   const ringMesh = new THREE.Mesh(ringGeo, ringMat);
   ringMesh.position.copy(pos);
-  voluteGroup.add(ringMesh);
+  navNodesGroup.add(ringMesh);
 
   // Core sphere
   const geo = new THREE.SphereGeometry(0.09, 32, 32);
@@ -1429,7 +1536,7 @@ NODES.forEach((node, i) => {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(pos);
   mesh.userData = { nodeIndex: i, glowMesh, glow2Mesh, ringMesh };
-  voluteGroup.add(mesh);
+  navNodesGroup.add(mesh);
   nodeMeshes.push(mesh);
 
   // Inner bright dot
@@ -1437,7 +1544,7 @@ NODES.forEach((node, i) => {
   const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
   const dot = new THREE.Mesh(dotGeo, dotMat);
   dot.position.copy(pos);
-  voluteGroup.add(dot);
+  navNodesGroup.add(dot);
 });
 
 // ─────────────── 3D DETAIL VOLUTE ───────────────
@@ -1627,6 +1734,9 @@ function navigateToNode(index) {
   voluteGroup.children.forEach(child => {
     if (child.material) child.material._baseOpacityStored = child.material.opacity;
   });
+  navNodesGroup.children.forEach(child => {
+    if (child.material) child.material._baseOpacityStored = child.material.opacity;
+  });
 
   // Single continuous camera sweep: start → waypoint near node → final detail position
   const startPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
@@ -1708,6 +1818,11 @@ function navigateToNode(index) {
           child.material.opacity = child.material._baseOpacityStored * (1 - cfEase);
         }
       });
+      navNodesGroup.children.forEach(child => {
+        if (child.material && child.material._baseOpacityStored !== undefined) {
+          child.material.opacity = child.material._baseOpacityStored * (1 - cfEase);
+        }
+      });
 
       detailVoluteGroup.children.forEach(child => {
         if (child.material && child.material._targetOpacity !== undefined) {
@@ -1743,7 +1858,14 @@ function navigateToNode(index) {
         });
       }
       voluteGroup.visible = false;
+      navNodesGroup.visible = false;
       voluteGroup.children.forEach(child => {
+        if (child.material && child.material._baseOpacityStored !== undefined) {
+          child.material.opacity = child.material._baseOpacityStored;
+          delete child.material._baseOpacityStored;
+        }
+      });
+      navNodesGroup.children.forEach(child => {
         if (child.material && child.material._baseOpacityStored !== undefined) {
           child.material.opacity = child.material._baseOpacityStored;
           delete child.material._baseOpacityStored;
@@ -1772,6 +1894,7 @@ function returnToOverview() {
   // Small delay for panel fade-out, then one smooth sweep back
   setTimeout(() => {
     voluteGroup.visible = true;
+    navNodesGroup.visible = true;
 
     // Store detail opacities for crossfade
     detailVoluteGroup.children.forEach(child => {
@@ -1779,6 +1902,14 @@ function returnToOverview() {
     });
     // Reset overview opacities to 0 for fade-in
     voluteGroup.children.forEach(child => {
+      if (child.material) {
+        if (child.material._baseOpacityStored === undefined) {
+          child.material._baseOpacityStored = child.material.opacity;
+        }
+        child.material.opacity = 0;
+      }
+    });
+    navNodesGroup.children.forEach(child => {
       if (child.material) {
         if (child.material._baseOpacityStored === undefined) {
           child.material._baseOpacityStored = child.material.opacity;
@@ -1835,6 +1966,11 @@ function returnToOverview() {
             child.material.opacity = child.material._baseOpacityStored * cfEase;
           }
         });
+        navNodesGroup.children.forEach(child => {
+          if (child.material && child.material._baseOpacityStored !== undefined) {
+            child.material.opacity = child.material._baseOpacityStored * cfEase;
+          }
+        });
       }
 
       // Gradually fade overview UI back in over the final stretch
@@ -1879,6 +2015,12 @@ function returnToOverview() {
 
         detailVoluteGroup.visible = false;
         voluteGroup.children.forEach(child => {
+          if (child.material && child.material._baseOpacityStored !== undefined) {
+            child.material.opacity = child.material._baseOpacityStored;
+            delete child.material._baseOpacityStored;
+          }
+        });
+        navNodesGroup.children.forEach(child => {
           if (child.material && child.material._baseOpacityStored !== undefined) {
             child.material.opacity = child.material._baseOpacityStored;
             delete child.material._baseOpacityStored;
@@ -1978,6 +2120,7 @@ function animate() {
   // Breathing scale
   const breathScale = 1 + Math.sin(elapsed * 0.8) * 0.012 + Math.sin(elapsed * 1.3) * 0.006;
   voluteGroup.scale.set(breathScale, breathScale, breathScale);
+  navNodesGroup.scale.set(breathScale, breathScale, breathScale);
 
   // Mouse parallax
   if (!cameraAnimating && state.mode === 'overview') {
@@ -2093,7 +2236,7 @@ function animate() {
   if (state.mode === 'overview' || (state.transitioning && voluteGroup.visible)) {
     nodeLabels.forEach((label, i) => {
       const pos = nodePositions[i].clone();
-      pos.applyMatrix4(voluteGroup.matrixWorld);
+      pos.applyMatrix4(navNodesGroup.matrixWorld);
       pos.project(camera);
 
       const x = (pos.x * 0.5 + 0.5) * window.innerWidth;

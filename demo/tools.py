@@ -17,6 +17,7 @@ def init_tools(
     cardinality: Callable,
     on_trace: Callable,
     on_policy: Callable,
+    on_learn: Callable | None = None,
 ):
     @vre_guard(
         vre,
@@ -24,6 +25,7 @@ def init_tools(
         cardinality=cardinality,
         on_trace=on_trace,
         on_policy=on_policy,
+        on_learn=on_learn,
     )
     def shell_tool(command: str) -> str:
         """Execute a shell command inside the sandbox directory."""
