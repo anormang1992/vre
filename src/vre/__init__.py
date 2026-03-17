@@ -21,6 +21,13 @@ from vre.core.models import DepthLevel, Provenance, ProvenanceSource
 from vre.core.policy import Cardinality, PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
+from vre.learning import (
+    CandidateDecision,
+    LearningCallback,
+    LearningCandidate,
+    LearningEngine,
+    LearningResult,
+)
 
 __all__ = [
     "VRE",
@@ -35,6 +42,11 @@ __all__ = [
     "PolicyResult",
     "PolicyCallContext",
     "PolicyGate",
+    "CandidateDecision",
+    "LearningCallback",
+    "LearningCandidate",
+    "LearningEngine",
+    "LearningResult",
 ]
 
 
@@ -51,8 +63,10 @@ class VRE:
         """
         Initialize VRE with the given primitive repository.
         """
+        self._repo = repository
         self._resolver = ConceptResolver(repository)
         self._engine = GroundingEngine(repository)
+        self._learning_engine = LearningEngine(repository)
 
     def resolve(self, concepts: list[str]) -> list[str]:
         """
@@ -78,6 +92,40 @@ class VRE:
             on all root primitives. Can only raise the floor, never lower it.
         """
         return self._engine.ground(concepts, self._resolver, min_depth=min_depth)
+
+    def learn_all(
+        self,
+        grounding: GroundingResult,
+        callback: LearningCallback,
+        concepts: list[str],
+        min_depth: DepthLevel | None = None,
+    ) -> GroundingResult:
+        """
+        Iteratively resolve all gaps via the learning loop.
+
+        Processes one gap at a time, re-grounding after each accepted/modified
+        candidate. Skipped gaps are excluded from subsequent rounds (the user
+        has acknowledged them). Rejected gaps stop the loop entirely.
+        Returns the final GroundingResult.
+        """
+        skipped: set[int] = set()
+        with callback:
+            while not grounding.grounded and grounding.gaps:
+                gap_index = next(
+                    (i for i, g in enumerate(grounding.gaps) if i not in skipped),
+                    None,
+                )
+                if gap_index is None:
+                    break
+                result = self._learning_engine.learn_at(grounding, gap_index, callback)
+                if result.decision == CandidateDecision.REJECTED:
+                    break
+                if result.decision == CandidateDecision.SKIPPED:
+                    skipped.add(gap_index)
+                    continue
+                grounding = self.check(concepts, min_depth=min_depth)
+                skipped.clear()
+        return grounding
 
     def check_policy(
         self,

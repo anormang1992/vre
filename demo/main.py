@@ -16,7 +16,7 @@ from vre import VRE
 from vre.core.graph import PrimitiveRepository
 
 from demo.agent import make_agent
-from demo.callbacks import get_concepts, get_cardinality, on_policy, on_trace
+from demo.callbacks import get_concepts, get_cardinality, make_on_learn, on_policy, on_trace
 from demo.repl import run
 from demo.tools import init_tools
 
@@ -26,7 +26,7 @@ def main() -> None:
     parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
     parser.add_argument("--neo4j-user", default="neo4j")
     parser.add_argument("--neo4j-password", default="password")
-    parser.add_argument("--model", default="qwen3:8b")
+    parser.add_argument("--model", default="qwen3.5:latest")
     parser.add_argument("--sandbox", default="demo/workspace")
     args = parser.parse_args()
 
@@ -35,13 +35,15 @@ def main() -> None:
     repo = PrimitiveRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
     vre = VRE(repo)
 
+    on_learn = make_on_learn(model=args.model)
     shell_fn = init_tools(
         vre,
         args.sandbox,
         get_concepts,
         get_cardinality,
         on_trace,
-        on_policy
+        on_policy,
+        on_learn,
     )
     shell_tool = StructuredTool.from_function(
         shell_fn,

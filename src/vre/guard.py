@@ -37,6 +37,7 @@ from vre.core.policy.callback import PolicyCallContext
 if TYPE_CHECKING:
     from vre import VRE
     from vre.core.grounding import GroundingResult
+    from vre.learning.callback import LearningCallback
 
 # `concepts` and `cardinality` may be static values or callables that receive
 # the same (*args, **kwargs) as the decorated function and return the value
@@ -52,6 +53,7 @@ def vre_guard(
     min_depth: DepthLevel | None = None,
     on_trace: Callable[["GroundingResult"], None] | None = None,
     on_policy: Callable[[str], bool] | None = None,
+    on_learn: "LearningCallback | None" = None,
 ) -> Callable:
     """
     Decorator that gates a function behind VRE grounding and policy checks.
@@ -76,6 +78,12 @@ def vre_guard(
     on_policy:
         Optional callback called with the confirmation message when a policy
         requires confirmation. Should return True to proceed, False to block.
+    on_learn:
+        Optional learning callback invoked when grounding fails. Enters the
+        auto-learning loop: surfaces gap templates, collects agent/user
+        responses, persists accepted candidates, and re-grounds iteratively.
+        When absent, ungrounded results are returned immediately (existing
+        behaviour).
     """
     def decorator(fn: Callable) -> Callable:
         """
@@ -86,38 +94,49 @@ def vre_guard(
         @functools.wraps(fn)
         def wrapped(*args, **kwargs):
             """
-            Run grounding → policy → execution on each call.
+            Run grounding → learning [optional] → policy → execution on each call.
             """
             resolved_concepts = concepts(*args, **kwargs) if callable(concepts) else concepts
             grounding = vre.check(resolved_concepts, min_depth=min_depth)
             if on_trace:
                 on_trace(grounding)
 
+            if not grounding.grounded and on_learn:
+                grounding = vre.learn_all(grounding, on_learn, resolved_concepts, min_depth=min_depth)
+                if on_trace:
+                    on_trace(grounding)
+
             if not grounding.grounded:
-                return grounding
+                result = grounding
+            else:
+                # Policy evaluation
+                resolved_cardinality = (
+                    cardinality(*args, **kwargs) if callable(cardinality) else cardinality
+                )
+                context = PolicyCallContext(
+                    tool_name=tool_name,
+                    grounding=grounding,
+                    call_args=args,
+                    call_kwargs=kwargs,
+                )
 
-            resolved_cardinality = (
-                cardinality(*args, **kwargs) if callable(cardinality) else cardinality
-            )
-            context = PolicyCallContext(
-                tool_name=tool_name,
-                grounding=grounding,
-                call_args=args,
-                call_kwargs=kwargs,
-            )
+                policy = vre.check_policy(grounding, resolved_cardinality, context)
 
-            policy = vre.check_policy(grounding, resolved_cardinality, context)
-            if policy.action == "PENDING":
-                if on_policy:
-                    if not on_policy(policy.confirmation_message or ""):
-                        return PolicyResult(action="BLOCK", reason="User declined")
-                else:
-                    return PolicyResult(
-                        action="BLOCK", reason="Confirmation required, no handler"
-                    )
-            if policy.action == "BLOCK":
-                return policy
-            return fn(*args, **kwargs)
+                match policy.action:
+                    case "PENDING":
+                        if on_policy:
+                            if on_policy(policy.confirmation_message or ""):
+                                result = fn(*args, **kwargs)
+                            else:
+                                result = PolicyResult(action="BLOCK", reason="User declined")
+                        else:
+                            result = PolicyResult(action="BLOCK", reason="Confirmation required, no handler")
+                    case "BLOCK":
+                        result = policy
+                    case _:
+                        result = fn(*args, **kwargs)
+
+            return result
 
         wrapped._vre_concepts = concepts  # type: ignore[attr-defined]
         return wrapped

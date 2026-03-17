@@ -1141,7 +1141,7 @@ def main(repository: PrimitiveRepository) -> None:
             ),
         ])
         repo.save_primitive(filesystem)
-        print(f"Updated: filesystem with INCLUDES relata")
+        print("Updated: filesystem with INCLUDES relata")
 
         # Add APPLIES_TO relata to permission now that user, group, and action
         # primitives exist. Permission's D2 (CAPABILITIES) applies to actor types
@@ -1226,7 +1226,7 @@ def main(repository: PrimitiveRepository) -> None:
             ),
         ])
         repo.save_primitive(permission)
-        print(f"Updated: permission with APPLIES_TO relata")
+        print("Updated: permission with APPLIES_TO relata")
 
         # Add CONSTRAINED_BY relata to action primitives at D3 (CONSTRAINTS).
         # read, write, delete, and create all state permission constraints in
@@ -1245,7 +1245,7 @@ def main(repository: PrimitiveRepository) -> None:
                 )
             )
             repo.save_primitive(action_prim)
-        print(f"Updated: read, write, delete, create with CONSTRAINED_BY permission at D3")
+        print("Updated: read, write, delete, create with CONSTRAINED_BY permission at D3")
 
         list_constraints = next(d for d in list_prim.depths if d.level == DepthLevel.CONSTRAINTS)
         list_constraints.relata.append(
@@ -1260,7 +1260,7 @@ def main(repository: PrimitiveRepository) -> None:
             )
         )
         repo.save_primitive(list_prim)
-        print(f"Updated: list with CONSTRAINED_BY permission at D3")
+        print("Updated: list with CONSTRAINED_BY permission at D3")
 
         move_constraints = next(d for d in move.depths if d.level == DepthLevel.CONSTRAINTS)
         move_constraints.relata.append(
@@ -1277,7 +1277,7 @@ def main(repository: PrimitiveRepository) -> None:
             )
         )
         repo.save_primitive(move)
-        print(f"Updated: move with CONSTRAINED_BY permission at D3")
+        print("Updated: move with CONSTRAINED_BY permission at D3")
 
         copy_constraints = next(d for d in copy.depths if d.level == DepthLevel.CONSTRAINTS)
         copy_constraints.relata.append(
@@ -1294,7 +1294,7 @@ def main(repository: PrimitiveRepository) -> None:
             )
         )
         repo.save_primitive(copy)
-        print(f"Updated: copy with CONSTRAINED_BY permission at D3")
+        print("Updated: copy with CONSTRAINED_BY permission at D3")
 
         print("\nDone. Seeded 15 primitives.")
 

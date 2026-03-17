@@ -228,11 +228,13 @@ Each call runs the following sequence:
 1. **Resolve concepts** — map names to canonical primitives via the graph
 2. **Ground** — verify the subgraph meets depth requirements (graph-derived + optional `min_depth` floor)
 3. **Fire `on_trace`** — surface the epistemic result to the caller
-4. **If not grounded** — return the `GroundingResult` immediately; the function does not execute
-5. **Evaluate policies** — check all `APPLIES_TO` relata for applicable policy gates
-6. **If PENDING** — call `on_policy` for confirmation; block if declined or no handler
-7. **If BLOCK** — return the `PolicyResult`; the function does not execute
-8. **Execute** — call the original function and return its result
+4. **If not grounded and `on_learn` is present** — enter the auto-learning loop (see [Auto-Learning](#auto-learning))
+5. **Fire `on_trace` again** — surface the post-learning epistemic result
+6. **If still not grounded** — return the `GroundingResult` immediately; the function does not execute
+7. **Evaluate policies** — check all `APPLIES_TO` relata for applicable policy gates
+8. **If PENDING** — call `on_policy` for confirmation; block if declined or no handler
+9. **If BLOCK** — return the `PolicyResult`; the function does not execute
+10. **Execute** — call the original function and return its result
 
 ### Parameters
 
@@ -241,8 +243,10 @@ vre_guard(
     vre,                 # VRE instance
     concepts,            # list[str] or Callable(*args, **kwargs) -> list[str]
     cardinality=None,    # str | None or Callable(*args, **kwargs) -> str | None
+    min_depth=None,      # DepthLevel | None — enforces a minimum depth floor
     on_trace=None,       # Callable[[GroundingResult], None]
     on_policy=None,      # Callable[[str], bool]
+    on_learn=None,       # LearningCallback — auto-learning loop for knowledge gaps
 )
 ```
 
@@ -304,7 +308,7 @@ VRE Epistemic Check
 │   └── REQUIRES    →  filesystem (target D3)
 ├── ◈ file   ● ● ● ●
 │   └── CONSTRAINED_BY  →  permission  (target D3)
-└── ✓ Grounded at D3 — EPISTEMIC PERMISSION GRANTED
+└── ✓ Grounded — EPISTEMIC PERMISSION GRANTED
 ```
 
 Green dots (`●`) represent grounded depth levels. A red `✗` at a depth level indicates a gap. Relata flagged with `✗` indicate relational gaps where the target does not meet the required depth.
@@ -334,6 +338,93 @@ If `on_policy` is not provided and a policy requires confirmation, the guard ret
 <img width="1968" height="1592" alt="image" src="https://github.com/user-attachments/assets/81257f0f-4273-4235-85ca-dcb50c21439b" />
 
 <img width="1392" height="714" alt="image" src="https://github.com/user-attachments/assets/8b701635-d4ca-4511-98e3-cda82a5dde38" />
+
+### `on_learn`
+
+Called when grounding fails and the guard enters the auto-learning loop. See [Auto-Learning](#auto-learning) for details.
+
+---
+
+## Auto-Learning
+
+When grounding fails and an `on_learn` callback is present, VRE enters an iterative learning loop that transforms knowledge gaps into graph growth. Rather than simply blocking the action, VRE surfaces structured templates for each gap, invokes the callback to fill them, and persists accepted knowledge back to the graph — then re-grounds to see if the action is now justified.
+
+This is VRE's answer to its primary adoption bottleneck: manual graph authoring. The graph grows through use.
+
+### How it works
+
+1. **Gap detected** — grounding check reveals one or more knowledge gaps
+2. **Template created** — VRE generates a structured candidate template based on the gap type
+3. **Callback invoked** — the integrator's `on_learn` callback receives the template, the full grounding result, and the specific gap. The callback fills the template (via LLM, user input, or any other mechanism) and returns a decision.
+4. **Persistence** — accepted or modified candidates are persisted to the graph with provenance tracking
+5. **Re-ground** — VRE re-checks grounding. The gap landscape may have shifted — new gaps may have appeared, existing ones may be resolved. The loop continues until grounded, all gaps are addressed, or the user rejects.
+
+### Candidate types
+
+Each gap type has a corresponding candidate model. Candidates carry only what's *new* — all context (primitive IDs, existing depths, required depths) lives on the gap itself.
+
+| Gap Type | Candidate | What the agent fills in |
+|---|---|---|
+| `ExistenceGap` | `ExistenceCandidate` | D1 identity for a new concept (D0 is auto-generated) |
+| `DepthGap` | `DepthCandidate` | Missing depth levels with properties |
+| `RelationalGap` | `RelationalCandidate` | Missing depth levels on the edge target |
+| `ReachabilityGap` | `ReachabilityCandidate` | Edge placement: target name, relation type, source/target depth levels |
+
+`ExistenceCandidate`, `DepthCandidate`, and `RelationalCandidate` all use `ProposedDepth` — the agent-facing depth model:
+
+```python
+from vre.learning.models import ProposedDepth
+
+ProposedDepth(
+    level=DepthLevel.CAPABILITIES,
+    properties={"operations": ["read", "write"], "attributes": ["size", "permissions"]},
+)
+```
+
+`ProposedDepth` carries only `level` and `properties` — descriptive attributes intrinsic to the concept at that depth. Relata and provenance are structural concerns handled by the engine during persistence.
+
+### Decisions and provenance
+
+The callback returns one of four decisions, and provenance is derived from what actually happened:
+
+| Decision | Effect | Provenance |
+|---|---|---|
+| `ACCEPTED` | Persist as proposed | `learned` |
+| `MODIFIED` | Persist after user refinement | `conversational` |
+| `SKIPPED` | Intentionally dismissed — loop continues to next gap | — |
+| `REJECTED` | Discard — stops the learning loop entirely | — |
+
+`SKIPPED` is particularly important for reachability gaps: the absence of an edge can itself be an enforcement mechanism. If a concept *should not* be connected, the user skips rather than placing an edge.
+
+### Two-phase edge placement
+
+Reachability candidates focus solely on edge placement — they declare *where* the edge goes, not what depths need to exist. If the source or target lacks the declared depth level, the engine automatically synthesizes a `DepthGap` and invokes the callback to learn the missing depths *before* placing the edge. If depth learning is rejected, the edge placement is abandoned.
+
+This keeps each candidate type focused on its single concern while handling cascading dependencies naturally.
+
+### The `LearningCallback` ABC
+
+```python
+from vre.learning.callback import LearningCallback
+from vre.learning.models import LearningCandidate, CandidateDecision
+
+class MyLearner(LearningCallback):
+    def __call__(self, candidate, grounding, gap) -> tuple[LearningCandidate | None, CandidateDecision]:
+        # Fill the template, present to user, return (filled, decision)
+        ...
+```
+
+`LearningCallback` is an abstract base class with `__call__` as the only required method. It also supports context manager lifecycle via `__enter__` and `__exit__` (with default no-op implementations) — `learn_all` wraps the session in `with callback:`, allowing callbacks to manage state across a learning session without the guard knowing about callback internals.
+
+### Demo implementation
+
+The demo's `DemoLearner` uses ChatOllama structured output to fill templates and Rich to present proposals:
+
+1. The user is prompted to enter learning mode (once per session, via `__enter__`/`__exit__` lifecycle)
+2. The LLM fills the candidate template using the epistemic trace as context
+3. The proposal is rendered as a Rich panel showing all proposed knowledge
+4. The user chooses: accept, modify (provide feedback → LLM re-proposes), skip, or reject
+5. Accepted knowledge is persisted and grounding is re-checked
 
 ---
 
@@ -372,6 +463,7 @@ from vre.guard import vre_guard
     cardinality=get_cardinality,  # inspects flags/globs → "single" or "multiple"
     on_trace=on_trace,         # renders epistemic tree to terminal
     on_policy=on_policy,       # Rich Confirm.ask prompt
+    on_learn=on_learn,         # auto-learning callback for knowledge gaps
 )
 def shell_tool(command: str) -> str:
     result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=sandbox)
@@ -483,22 +575,18 @@ What a detailed graph adds is not stronger enforcement, but better context. More
 
 When a mechanical failure occurs during execution — permission denied, missing dependency, invalid path — the failure reveals a constraint that was not modeled. The agent reasoned correctly within its knowledge boundary; the failure exposes a gap *beyond* that boundary.
 
-A future meta-epistemic layer will treat execution failures as candidates for graph growth: the agent proposes the missing relatum (e.g. `create --[CONSTRAINED_BY]--> permission`), seeks human validation, and persists the new knowledge. Depth was honest before the failure and more complete after. No contradiction — just growth.
-
-Provenance will travel with each piece of learned knowledge — `authored`, `learned`, or `conversational` — so the audit trail lives inside the epistemic structure itself rather than in a separate log.
-
-The learning through failure paradigm is already emerging naturally, it just needs to be codified. The below image was taken as I was conducting tests for this README. Without being prompted, the demo agent continued to try and execute an ungrounded command with missing graph Primitives and eventually ceded, but not before proposing a solution for the knowledge gaps it was encountering.
-
-<img width="3210" height="1522" alt="image" src="https://github.com/user-attachments/assets/c9d0ea91-d0e9-471a-9f5e-e05fdcea60a9" />
-
-
-### Meta-epistemic discussion mode
-
-Structured conversation about the agent's epistemic state: asking why a concept is unknown, providing domain knowledge to populate a depth, or refining relata through dialogue. User input in this mode becomes a source for graph population rather than a trigger for action.
+This is distinct from the [auto-learning loop](#auto-learning), which addresses gaps discovered *before* execution. Learning through failure would be triggered *after* execution — the graph said "go ahead" but reality disagreed. The agent proposes the missing relatum (e.g. `create --[CONSTRAINED_BY]--> permission`), seeks human validation, and persists the new knowledge. Depth was honest before the failure and more complete after. No contradiction — just growth.
 
 ### VRE Networks
 
 An agentic network of agents that share grounded knowledge across different epistemic graphs while applying the same enforcement mechanisms. Agents in the network expose and consume epistemic subgraphs from peer VRE instances, preserving grounding guarantees across trust boundaries. A concept grounded at D3 in one agent's graph carries its epistemic justification with it — the network does not collapse knowledge into a shared mutable store, but federates it while keeping each agent's epistemic contract intact.
+
+### Epistemic Memory
+
+A new class of memory that stores not just information but the agent's epistemic relationship to that information.
+Memories are indexed by concept and depth, and can be queried by the agent to inform its reasoning process. 
+Memories will decay or be reinforced based on usage and grounding history and affect the agent's confidence in 
+related concepts.
 
 ---
 
@@ -520,10 +608,10 @@ An agentic network of agents that share grounded knowledge across different epis
 
 ```
 src/vre/
-  __init__.py              # VRE public interface
-  guard.py                 # vre_guard decorator
+  __init__.py              # VRE public interface (check, learn, learn_all, check_policy)
+  guard.py                 # vre_guard decorator (grounding → learning → policy → execution)
   core/
-    models.py              # Primitive, Depth, Relatum, RelationType, DepthLevel, gaps
+    models.py              # Primitive, Depth, Relatum, RelationType, DepthLevel, gaps, Provenance
     graph.py               # PrimitiveRepository (Neo4j)
     grounding/
       resolver.py          # ConceptResolver — spaCy lemmatization + name lookup
@@ -534,6 +622,11 @@ src/vre/
       gate.py              # PolicyGate — evaluates violations against a trace
       callback.py          # PolicyCallContext, PolicyCallback protocol
       wizard.py            # Interactive policy attachment CLI
+  learning/
+    callback.py            # LearningCallback ABC — __call__, __enter__, __exit__
+    models.py              # Candidate models, CandidateDecision, LearningResult
+    templates.py           # TemplateFactory — gap → structured candidate template
+    engine.py              # LearningEngine — template → callback → validate → persist
   builtins/
     shell.py               # SHELL_ALIASES + parse_bash_primitives()
   integrations/
@@ -548,7 +641,8 @@ demo/
   main.py                  # Entry point — argparse + agent setup
   agent.py                 # ToolAgent — LangChain + Ollama streaming loop
   tools.py                 # shell_tool with vre_guard applied
-  callbacks.py             # on_trace (Rich tree), on_policy (Rich Confirm)
+  callbacks.py             # on_trace (Rich tree), on_policy (Rich Confirm), make_on_learn
+  learner.py               # DemoLearner — ChatOllama structured output + Rich UI
   repl.py                  # Streaming REPL with Rich Live display
 ```
 

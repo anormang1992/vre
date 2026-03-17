@@ -77,7 +77,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
         ],
     )
     repo.save_primitive(os_prim)
-    print(f"  operating_system  D0–D3  (substrate)")
+    print("  operating_system  D0–D3  (substrate)")
     return os_prim
 
 
@@ -144,7 +144,7 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(filesystem)
-    print(f"  filesystem        D0–D3  (substrate)")
+    print("  filesystem        D0–D3  (substrate)")
     return filesystem
 
 
@@ -208,7 +208,7 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(path)
-    print(f"  path              D0–D3  (structural)")
+    print("  path              D0–D3  (structural)")
     return path
 
 
@@ -276,7 +276,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(permission)
-    print(f"  permission        D0–D3  (structural)")
+    print("  permission        D0–D3  (structural)")
     return permission
 
 
@@ -370,7 +370,7 @@ def seed_directory(
         ],
     )
     repo.save_primitive(directory)
-    print(f"  directory         D0–D3  (entity, fully grounded)")
+    print("  directory         D0–D3  (entity, fully grounded)")
     return directory
 
 
@@ -409,7 +409,7 @@ def seed_file(repo: PrimitiveRepository, path: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(file)
-    print(f"  file              D0–D1  (shallow → RelationalGap when targeted at D2)")
+    print("  file              D0–D1  (shallow → RelationalGap when targeted at D2)")
     return file
 
 
@@ -462,7 +462,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(read)
-    print(f"  read              D0–D2  (safe action, APPLIES_TO@D2 → file)")
+    print("  read              D0–D2  (safe action, APPLIES_TO@D2 → file)")
     return read
 
 
@@ -514,7 +514,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
         ],
     )
     repo.save_primitive(list_prim)
-    print(f"  list              D0–D2  (safe action, APPLIES_TO@D2 → directory)")
+    print("  list              D0–D2  (safe action, APPLIES_TO@D2 → directory)")
     return list_prim
 
 
@@ -559,7 +559,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
         ],
     )
     repo.save_primitive(delete)
-    print(f"  delete            D0–D2  (destructive, APPLIES_TO@D3 omitted → ReachabilityGap)")
+    print("  delete            D0–D2  (destructive, APPLIES_TO@D3 omitted → ReachabilityGap)")
     return delete
 
 
@@ -619,7 +619,7 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
         ],
     )
     repo.save_primitive(create)
-    print(f"  create            D0–D1+D3  (destructive, APPLIES_TO@D3 gated — D2 missing)")
+    print("  create            D0–D1+D3  (destructive, APPLIES_TO@D3 gated — D2 missing)")
     return create
 
 
@@ -645,10 +645,10 @@ def main(repository: PrimitiveRepository) -> None:
         file = seed_file(repo, path)
 
         # Actions
-        read = seed_read(repo, file)
-        list_prim = seed_list(repo, directory)
-        delete = seed_delete(repo, file, directory)
-        create = seed_create(repo, file, directory)
+        seed_read(repo, file)
+        seed_list(repo, directory)
+        seed_delete(repo, file, directory)
+        seed_create(repo, file, directory)
 
         # Add INCLUDES relata to filesystem now that file and directory exist.
         fs_caps = next(d for d in filesystem.depths if d.level == DepthLevel.CAPABILITIES)
@@ -667,7 +667,7 @@ def main(repository: PrimitiveRepository) -> None:
             ),
         ])
         repo.save_primitive(filesystem)
-        print(f"\n  Updated: filesystem with INCLUDES → file, directory")
+        print("\n  Updated: filesystem with INCLUDES → file, directory")
 
         print("""
 Done. Seeded 10 primitives.
