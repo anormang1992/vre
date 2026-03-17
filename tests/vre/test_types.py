@@ -19,7 +19,7 @@ from vre.core.models import (
     RelationType,
 )
 from vre.core.grounding import GroundingResult
-from vre.core.policy import PolicyResult
+from vre.core.policy import PolicyAction, PolicyResult
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -244,15 +244,15 @@ def test_grounding_str_primitive_with_no_depths():
 # ── PolicyResult.__str__ ──────────────────────────────────────────────────────
 
 def test_policy_str_pass():
-    result = PolicyResult(action="PASS")
+    result = PolicyResult(action=PolicyAction.PASS)
     assert str(result) == "[VRE Policy] PASSED"
 
 
 def test_policy_str_pending():
-    result = PolicyResult(action="PENDING", confirmation_message="Confirm this action?")
+    result = PolicyResult(action=PolicyAction.PENDING, confirmation_message="Confirm this action?")
     assert str(result) == "[VRE Policy] PENDING — Confirm this action?"
 
 
 def test_policy_str_block():
-    result = PolicyResult(action="BLOCK", reason="Forbidden operation")
+    result = PolicyResult(action=PolicyAction.BLOCK, reason="Forbidden operation")
     assert str(result) == "[VRE Policy] BLOCKED — Forbidden operation"

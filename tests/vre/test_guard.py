@@ -5,7 +5,7 @@ Unit tests for vre.guard — vre_guard decorator.
 from unittest.mock import MagicMock
 
 from vre.core.grounding import GroundingResult
-from vre.core.policy import PolicyResult
+from vre.core.policy import PolicyAction, PolicyResult
 from vre.learning.callback import LearningCallback
 from vre.learning.models import CandidateDecision
 
@@ -24,7 +24,7 @@ def _mock_vre(grounding: GroundingResult, policy: PolicyResult | None = None):
     """Return a MagicMock VRE wired with the given grounding and policy."""
     mock = MagicMock()
     mock.check.return_value = grounding
-    mock.check_policy.return_value = policy or PolicyResult(action="PASS")
+    mock.check_policy.return_value = policy or PolicyResult(action=PolicyAction.PASS)
     return mock
 
 
@@ -136,7 +136,7 @@ def test_vre_guard_blocks_when_pending_and_no_handler():
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action="PENDING", confirmation_message="Confirm this action?"),
+        PolicyResult(action=PolicyAction.PENDING, confirmation_message="Confirm this action?"),
     )
 
     @vre_guard(mock_vre, concepts=["file"])
@@ -145,7 +145,7 @@ def test_vre_guard_blocks_when_pending_and_no_handler():
 
     result = my_fn()
     assert isinstance(result, PolicyResult)
-    assert result.action == "BLOCK"
+    assert result.action == PolicyAction.BLOCK
 
 
 def test_vre_guard_calls_fn_when_policy_confirmed():
@@ -154,7 +154,7 @@ def test_vre_guard_calls_fn_when_policy_confirmed():
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action="PENDING", confirmation_message="Confirm?"),
+        PolicyResult(action=PolicyAction.PENDING, confirmation_message="Confirm?"),
     )
 
     @vre_guard(mock_vre, concepts=["file"], on_policy=lambda msg: True)
@@ -171,7 +171,7 @@ def test_vre_guard_blocks_on_block_policy():
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action="BLOCK", reason="Forbidden"),
+        PolicyResult(action=PolicyAction.BLOCK, reason="Forbidden"),
     )
 
     @vre_guard(mock_vre, concepts=["file"])
@@ -180,7 +180,7 @@ def test_vre_guard_blocks_on_block_policy():
 
     result = my_fn()
     assert isinstance(result, PolicyResult)
-    assert result.action == "BLOCK"
+    assert result.action == PolicyAction.BLOCK
     assert result.reason == "Forbidden"
 
 
@@ -367,7 +367,7 @@ def test_vre_guard_on_learn_invokes_learn_all_when_not_grounded():
     grounded_result = _grounding(grounded=True)
     mock_vre = _mock_vre(_grounding(grounded=False, gaps=[MagicMock()]))
     mock_vre.learn_all.return_value = grounded_result
-    mock_vre.check_policy.return_value = PolicyResult(action="PASS")
+    mock_vre.check_policy.return_value = PolicyResult(action=PolicyAction.PASS)
 
     learner = _StubLearner()
 
@@ -388,7 +388,7 @@ def test_vre_guard_on_learn_fires_on_trace_after_learning():
     grounded_result = _grounding(grounded=True)
     mock_vre = _mock_vre(_grounding(grounded=False, gaps=[MagicMock()]))
     mock_vre.learn_all.return_value = grounded_result
-    mock_vre.check_policy.return_value = PolicyResult(action="PASS")
+    mock_vre.check_policy.return_value = PolicyResult(action=PolicyAction.PASS)
 
     learner = _StubLearner()
 
@@ -427,7 +427,7 @@ def test_vre_guard_on_policy_decline_returns_block():
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action="PENDING", confirmation_message="Are you sure?"),
+        PolicyResult(action=PolicyAction.PENDING, confirmation_message="Are you sure?"),
     )
 
     @vre_guard(mock_vre, concepts=["file"], on_policy=lambda msg: False)
@@ -436,5 +436,5 @@ def test_vre_guard_on_policy_decline_returns_block():
 
     result = my_fn()
     assert isinstance(result, PolicyResult)
-    assert result.action == "BLOCK"
+    assert result.action == PolicyAction.BLOCK
     assert result.reason == "User declined"

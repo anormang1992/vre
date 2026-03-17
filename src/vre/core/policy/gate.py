@@ -7,7 +7,7 @@ PolicyGate — evaluates policy violations against an epistemic trace.
 
 from vre.core.models import EpistemicResponse, RelationType
 from vre.core.policy.callback import PolicyCallContext
-from vre.core.policy.models import Cardinality, Policy, PolicyResult, PolicyViolation
+from vre.core.policy.models import Cardinality, Policy, PolicyAction, PolicyResult, PolicyViolation
 
 
 class PolicyGate:
@@ -26,14 +26,14 @@ class PolicyGate:
         """
         violations = self._collect_violations(response, cardinality, call_context)
         if not violations:
-            return PolicyResult(action="PASS")
+            return PolicyResult(action=PolicyAction.PASS)
         pending = [v for v in violations if v.requires_confirmation]
         if pending:
             return PolicyResult(
-                action="PENDING",
+                action=PolicyAction.PENDING,
                 confirmation_message=pending[0].message,
             )
-        return PolicyResult(action="PASS")  # informational-only violations don't block
+        return PolicyResult(action=PolicyAction.PASS)  # informational-only violations don't block
 
     def _collect_violations(
         self,

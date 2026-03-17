@@ -18,7 +18,7 @@ Usage::
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
 from vre.core.models import DepthLevel, Provenance, ProvenanceSource
-from vre.core.policy import Cardinality, PolicyResult
+from vre.core.policy import Cardinality, PolicyAction, PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
 from vre.learning import (
@@ -39,6 +39,7 @@ __all__ = [
     "Provenance",
     "ProvenanceSource",
     "Cardinality",
+    "PolicyAction",
     "PolicyResult",
     "PolicyCallContext",
     "PolicyGate",
@@ -151,7 +152,7 @@ class VRE:
             grounding = self._engine.ground(concepts, self._resolver)
 
         if grounding.trace is None:
-            return PolicyResult(action="PASS")
+            return PolicyResult(action=PolicyAction.PASS)
 
         card_enum = Cardinality.SINGLE
         if cardinality is not None:
