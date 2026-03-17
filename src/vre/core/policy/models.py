@@ -17,6 +17,16 @@ if TYPE_CHECKING:
     from vre.core.policy.callback import PolicyCallback
 
 
+class PolicyAction(str, Enum):
+    """
+    Outcome of a policy evaluation — PASS, PENDING, or BLOCK.
+    """
+
+    PASS = "PASS"
+    PENDING = "PENDING"
+    BLOCK = "BLOCK"
+
+
 class Cardinality(str, Enum):
     """
     Cardinality hint passed to policy evaluation — "single" or "multiple" target.
@@ -69,11 +79,9 @@ class PolicyViolation(BaseModel):
 class PolicyResult(BaseModel):
     """
     Result of a VRE policy evaluation.
-
-    `action` is one of "PASS", "PENDING", or "BLOCK".
     """
 
-    action: str
+    action: PolicyAction
     reason: str | None = None
     confirmation_message: str | None = None
 
@@ -81,10 +89,10 @@ class PolicyResult(BaseModel):
         """
         Render the policy result as a human-readable status string.
         """
-        if self.action == "PASS":
+        if self.action == PolicyAction.PASS:
             return "[VRE Policy] PASSED"
-        if self.action == "PENDING":
+        if self.action == PolicyAction.PENDING:
             return f"[VRE Policy] PENDING — {self.confirmation_message}"
-        if self.action == "BLOCK":
+        if self.action == PolicyAction.BLOCK:
             return f"[VRE Policy] BLOCKED — {self.reason}"
         return f"[VRE Policy] {self.action}"

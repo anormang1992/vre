@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vre.core.grounding import GroundingResult
-from vre.core.policy import PolicyResult
+from vre.core.policy import PolicyAction, PolicyResult
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -212,7 +212,7 @@ class TestRunHook:
 
         grounding = GroundingResult(grounded=True, resolved=["Read"], gaps=[])
         policy = PolicyResult(
-            action="PENDING",
+            action=PolicyAction.PENDING,
             confirmation_message="Read access requires confirmation.",
         )
 

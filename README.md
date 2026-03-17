@@ -333,7 +333,7 @@ def on_policy(message: str) -> bool:
     return Confirm.ask(f"[yellow]⚠  Policy gate:[/] {message}")
 ```
 
-If `on_policy` is not provided and a policy requires confirmation, the guard returns `PolicyResult(action="BLOCK", reason="Confirmation required, no handler")` and the function does not execute.
+If `on_policy` is not provided and a policy requires confirmation, the guard returns `PolicyResult(action=PolicyAction.BLOCK, reason="Confirmation required, no handler")` and the function does not execute.
 
 <img width="1968" height="1592" alt="image" src="https://github.com/user-attachments/assets/81257f0f-4273-4235-85ca-dcb50c21439b" />
 

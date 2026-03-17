@@ -15,7 +15,7 @@ from vre.core.models import (
     Relatum,
     RelationType,
 )
-from vre.core.policy import Cardinality, Policy, parse_policy
+from vre.core.policy import Cardinality, Policy, PolicyAction, parse_policy
 from vre.core.policy.gate import PolicyGate
 
 
@@ -85,7 +85,7 @@ def test_no_policies_proceed():
     primitive = _make_primitive_with_applies_to("create", [])
     response = _make_step_result(primitive)
     result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == "PASS"
+    assert result.action == PolicyAction.PASS
 
 
 def test_step_cardinality_single_no_trigger():
@@ -98,7 +98,7 @@ def test_step_cardinality_single_no_trigger():
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
     result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == "PASS"
+    assert result.action == PolicyAction.PASS
 
 
 def test_step_cardinality_multiple_triggers():
@@ -111,7 +111,7 @@ def test_step_cardinality_multiple_triggers():
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
     result = PolicyGate().evaluate(response, Cardinality.MULTIPLE)
-    assert result.action == "PENDING"
+    assert result.action == PolicyAction.PENDING
     assert result.confirmation_message is not None
     assert "BulkDelete" in result.confirmation_message or "delete" in result.confirmation_message
 
@@ -126,8 +126,8 @@ def test_policy_trigger_cardinality_none_always_fires():
     primitive = _make_primitive_with_applies_to("write", [policy])
     response = _make_step_result(primitive)
 
-    assert PolicyGate().evaluate(response, Cardinality.SINGLE).action == "PENDING"
-    assert PolicyGate().evaluate(response, Cardinality.MULTIPLE).action == "PENDING"
+    assert PolicyGate().evaluate(response, Cardinality.SINGLE).action == PolicyAction.PENDING
+    assert PolicyGate().evaluate(response, Cardinality.MULTIPLE).action == PolicyAction.PENDING
 
 
 def test_no_callback_fires_violation():
@@ -140,7 +140,7 @@ def test_no_callback_fires_violation():
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
     result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == "PENDING"
+    assert result.action == PolicyAction.PENDING
     assert result.confirmation_message is not None
 
 
@@ -170,7 +170,7 @@ def test_non_applies_to_relata_ignored():
     primitive = Primitive(name="create", depths=[depth])
     response = _make_step_result(primitive)
     result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == "PASS"
+    assert result.action == PolicyAction.PASS
 
 
 def test_requires_confirmation_false_never_triggers():
@@ -184,4 +184,4 @@ def test_requires_confirmation_false_never_triggers():
     primitive = _make_primitive_with_applies_to("list", [policy])
     response = _make_step_result(primitive)
     result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == "PASS"
+    assert result.action == PolicyAction.PASS

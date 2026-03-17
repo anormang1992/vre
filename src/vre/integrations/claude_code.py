@@ -189,7 +189,7 @@ def _run_hook() -> None:
 
         config = json.loads(_VRE_CONFIG_PATH.read_text())
 
-        from vre import VRE
+        from vre import VRE, PolicyAction
         from vre.core.graph import PrimitiveRepository
 
         with PrimitiveRepository(
@@ -203,10 +203,10 @@ def _run_hook() -> None:
 
             policy = vre.check_policy(grounding)
 
-        if policy.action == "PENDING":
+        if policy.action == PolicyAction.PENDING:
             _ask(policy.confirmation_message or "This action requires confirmation.")
 
-        if policy.action == "BLOCK":
+        if policy.action == PolicyAction.BLOCK:
             _block(str(policy))
 
         _allow()

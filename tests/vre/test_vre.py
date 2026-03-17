@@ -17,7 +17,7 @@ from vre.core.models import (
     RelationType,
     ResolvedSubgraph,
 )
-from vre.core.policy import Cardinality, Policy
+from vre.core.policy import Cardinality, Policy, PolicyAction
 from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyResult
 from vre.learning.callback import LearningCallback
@@ -145,25 +145,25 @@ class TestCheckPolicyCardinality:
         """Passing cardinality="multiple" triggers a MULTIPLE-scoped policy."""
         vre = self._setup(Cardinality.MULTIPLE)
         result = vre.check_policy(["write", "file"], cardinality="multiple")
-        assert result.action == "PENDING"
+        assert result.action == PolicyAction.PENDING
 
     def test_cardinality_single_does_not_trigger_multiple_scoped_policy(self):
         """Passing cardinality="single" skips a MULTIPLE-scoped policy → PASS."""
         vre = self._setup(Cardinality.MULTIPLE)
         result = vre.check_policy(["write", "file"], cardinality="single")
-        assert result.action == "PASS"
+        assert result.action == PolicyAction.PASS
 
     def test_cardinality_none_triggers_always_on_policy(self):
         """trigger_cardinality=None means the policy always fires regardless of cardinality."""
         vre = self._setup(trigger_cardinality=None)
-        assert vre.check_policy(["write", "file"], cardinality="single").action == "PENDING"
-        assert vre.check_policy(["write", "file"], cardinality="multiple").action == "PENDING"
+        assert vre.check_policy(["write", "file"], cardinality="single").action == PolicyAction.PENDING
+        assert vre.check_policy(["write", "file"], cardinality="multiple").action == PolicyAction.PENDING
 
     def test_unknown_cardinality_string_falls_back_to_single(self):
         """Unrecognised cardinality string → treated as SINGLE, not an error."""
         vre = self._setup(Cardinality.MULTIPLE)
         result = vre.check_policy(["write", "file"], cardinality="bulk_delete_everything")
-        assert result.action == "PASS"  # falls back to SINGLE, MULTIPLE policy skipped
+        assert result.action == PolicyAction.PASS  # falls back to SINGLE, MULTIPLE policy skipped
 
 
 class TestVRECheck:
@@ -208,7 +208,7 @@ class TestVRECheck:
         vre = _make_vre_with_stub([file_p])
         result = vre.check_policy(["file"])
         assert isinstance(result, PolicyResult)
-        assert result.action in ("PASS", "PENDING", "BLOCK")
+        assert result.action in (PolicyAction.PASS, PolicyAction.PENDING, PolicyAction.BLOCK)
 
     def test_check_empty_concepts_returns_not_grounded(self):
         """check([]) returns grounded=False with no gaps."""
@@ -225,7 +225,7 @@ class TestVRECheck:
         grounding = vre.check(["file"])
         result = vre.check_policy(grounding)
         assert isinstance(result, PolicyResult)
-        assert result.action == "PASS"
+        assert result.action == PolicyAction.PASS
 
     def test_check_policy_returns_pass_when_no_trace(self):
         """check_policy returns PASS when GroundingResult has no trace."""
@@ -233,7 +233,7 @@ class TestVRECheck:
         vre = _make_vre_with_stub([file_p])
         grounding = GroundingResult(grounded=True, resolved=["file"], gaps=[], trace=None)
         result = vre.check_policy(grounding)
-        assert result.action == "PASS"
+        assert result.action == PolicyAction.PASS
 
 
 # ---------------------------------------------------------------------------

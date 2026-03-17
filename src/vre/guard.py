@@ -31,7 +31,7 @@ import functools
 from typing import TYPE_CHECKING, Callable
 
 from vre.core.models import DepthLevel
-from vre.core.policy import PolicyResult
+from vre.core.policy import PolicyAction, PolicyResult
 from vre.core.policy.callback import PolicyCallContext
 
 if TYPE_CHECKING:
@@ -123,15 +123,15 @@ def vre_guard(
                 policy = vre.check_policy(grounding, resolved_cardinality, context)
 
                 match policy.action:
-                    case "PENDING":
+                    case PolicyAction.PENDING:
                         if on_policy:
                             if on_policy(policy.confirmation_message or ""):
                                 result = fn(*args, **kwargs)
                             else:
-                                result = PolicyResult(action="BLOCK", reason="User declined")
+                                result = PolicyResult(action=PolicyAction.BLOCK, reason="User declined")
                         else:
-                            result = PolicyResult(action="BLOCK", reason="Confirmation required, no handler")
-                    case "BLOCK":
+                            result = PolicyResult(action=PolicyAction.BLOCK, reason="Confirmation required, no handler")
+                    case PolicyAction.BLOCK:
                         result = policy
                     case _:
                         result = fn(*args, **kwargs)
