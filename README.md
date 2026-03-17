@@ -416,6 +416,23 @@ class MyLearner(LearningCallback):
 
 `LearningCallback` is an abstract base class with `__call__` as the only required method. It also supports context manager lifecycle via `__enter__` and `__exit__` (with default no-op implementations) — `learn_all` wraps the session in `with callback:`, allowing callbacks to manage state across a learning session without the guard knowing about callback internals.
 
+### Example
+
+The following example uses the `seed_gaps` script and attempts to create and write to a file. The learning loop flows through several knowledge gaps and agent-user conversational turns to resolve the gaps: 
+1. Existence Gap (write did not exist in the graph)
+2. Reachability Gap (no edges connecting write and file)
+3. Depth Gap(s) (Both write and file were missing the depths required by the edge placement)
+
+<img width="3372" height="906" alt="image" src="https://github.com/user-attachments/assets/2c73380d-dbf9-4acd-8f74-f492c46f468a" />
+
+<img width="3410" height="1520" alt="image" src="https://github.com/user-attachments/assets/23a7fe9c-8ae5-490d-b7c7-7638abd0c90b" />
+
+<img width="3406" height="850" alt="image" src="https://github.com/user-attachments/assets/8b31127f-bd50-4549-aa70-4d0bef281633" />
+
+<img width="3404" height="1498" alt="image" src="https://github.com/user-attachments/assets/cd7852f3-df99-4a83-8070-a5293d4332c4" />
+
+Of special note, is that the agent correctly identified additional relata that should be attached to the File primitive; however, because the current iteration only defines `name` and `properties` for the `ProposedDepth`, the agent tried to record the relata in the properties object. This indicates that the agent is indeed reasoning from within the epistemic envelope defined by the grounding trace and is using neighboring primitives in the subgraph to try and enrich its own proposals. An issue has been captured to formalize this behavior in the future by expanding the `ProposedDepth` model schema to include `proposed_relata`.
+
 ### Demo implementation
 
 The demo's `DemoLearner` uses ChatOllama structured output to fill templates and Rich to present proposals:
