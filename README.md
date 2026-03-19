@@ -211,6 +211,85 @@ if policy.action == "BLOCK":
 
 An optional `on_policy` callback handles violations that require human confirmation. It receives only the confirmation-required violations and returns `True` to proceed or `False` to block. Violations with `requires_confirmation=False` are hard blocks — `on_policy` is never consulted for those.
 
+### Policy Callbacks
+
+A `PolicyCallback` is a callable attached to a `Policy` that runs *during* evaluation to make domain-specific pass/fail decisions. This is distinct from `on_policy`, which handles human confirmation *after* violations are collected. A policy callback determines whether a violation fires at all.
+
+The callback receives a `PolicyCallContext` containing the tool name, the full grounding result, and the original function arguments. It returns a `PolicyCallbackResult` — `passed=True` suppresses the violation, `passed=False` fires it.
+
+#### Writing a callback
+
+```python
+from vre.core.policy.callback import PolicyCallback, PolicyCallContext
+from vre.core.policy.models import PolicyCallbackResult
+
+
+class BlockProtectedFiles:
+    """Block deletion of files matching 'protected*'."""
+
+    def __call__(self, context: PolicyCallContext) -> PolicyCallbackResult:
+        # Extract the command from the guarded function's arguments
+        command = context.call_args[0] if context.call_args else ""
+        targets = [t for t in command.split()[1:] if not t.startswith("-")]
+
+        for target in targets:
+            if target.startswith("protected"):
+                return PolicyCallbackResult(
+                    passed=False,
+                    message=f"'{target}' is a protected file.",
+                )
+
+        return PolicyCallbackResult(passed=True, message="No protected files affected.")
+```
+
+When `passed=True`, the policy is satisfied and no violation is created — the action proceeds without interruption. When `passed=False`, the violation fires and follows the normal policy flow: hard block if `requires_confirmation=False`, or deferred to `on_policy` for human confirmation if `requires_confirmation=True`.
+
+#### Attaching a callback to a policy
+
+Callbacks are registered on a `Policy` via a dotted import path. The path is resolved at evaluation time:
+
+```python
+from vre.core.policy.models import Policy, Cardinality
+
+Policy(
+    name="protected_file_guard",
+    requires_confirmation=False,                          # hard block — no confirmation prompt
+    trigger_cardinality=None,                             # fires on any cardinality
+    callback="myproject.policies.BlockProtectedFiles",    # dotted path to the callable
+    confirmation_message="Deletion of {action} blocked by protected file policy.",
+)
+```
+
+When this policy is attached to a `delete --[APPLIES_TO]--> file` relatum in the graph, every delete operation targeting files will invoke `BlockProtectedFiles`. If the callback returns `passed=False`, the action is blocked immediately (since `requires_confirmation=False`). If the callback returns `passed=True`, no violation fires and the action proceeds.
+
+#### Evaluation flow
+
+Policy callbacks participate in a layered evaluation:
+
+1. **Cardinality filter** — if the policy specifies a `trigger_cardinality`, it only fires when the operation's cardinality matches
+2. **Callback evaluation** — if a callback is registered, it runs with the full call context. `passed=True` suppresses the violation entirely
+3. **Violation collection** — unsuppressed policies produce `PolicyViolation` objects
+4. **Hard blocks vs confirmation** — violations with `requires_confirmation=False` are immediate blocks. Those with `requires_confirmation=True` are deferred to the `on_policy` handler
+
+This means a single relatum can carry multiple policies with different callbacks — one that checks file patterns, another that checks time-of-day, another that checks user role — and each independently decides whether its violation fires.
+
+#### Demo example
+
+The demo ships with a `protected_file_delete` callback (`demo/policies.py`) that inspects `rm` commands across three detection modes: literal filename match, glob expansion against the filesystem, and recursive directory inspection. It demonstrates how a callback can make nuanced, context-aware decisions by inspecting both the command arguments and the actual filesystem state:
+
+```python
+# Registered on the delete → file APPLIES_TO relatum via seed_all.py
+Policy(
+    name="protected_file_delete",
+    requires_confirmation=False,
+    trigger_cardinality=None,
+    callback="demo.policies.protected_file_delete",
+    confirmation_message="Deletion of {action} blocked — protected files at risk.",
+)
+```
+
+When an agent runs `rm *.txt` in a directory containing `protected_config.txt`, the callback expands the glob, detects the protected file, and returns `passed=False` — blocking the deletion before it reaches the shell.
+
 ---
 
 ## The `vre_guard` Decorator
