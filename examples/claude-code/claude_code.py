@@ -19,13 +19,12 @@ relying on a static command-to-concept map.
 
 Setup::
 
-    from vre.integrations.claude_code import install
-    install("neo4j://localhost:7687", "neo4j", "password")
+    python examples/claude-code/claude_code.py install \
+        --uri neo4j://localhost:7687 --user neo4j --password password
 
 Removal::
 
-    from vre.integrations.claude_code import uninstall
-    uninstall()
+    python examples/claude-code/claude_code.py uninstall
 
 Hook protocol::
 
@@ -45,7 +44,7 @@ _SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 _VRE_CONFIG_PATH = Path.home() / ".vre" / "config.json"
 
 
-_MODULE = "vre.integrations.claude_code"
+_HOOK_MARKER = "examples/claude-code/claude_code.py"
 
 # Matches a leading `# vre:concept1,concept2` comment line.
 _VRE_PREFIX_RE = re.compile(r"^#\s*vre:\s*(.+)")
@@ -65,19 +64,21 @@ prefix now."""
 
 def _hook_command() -> str:
     """
-    Build the hook command string using the current interpreter's absolute path.
+    Build the hook command string using the current interpreter and this script's
+    absolute path.
 
     This ensures the hook runs in the same virtualenv where VRE is installed,
     regardless of what `python` resolves to in Claude Code's shell.
     """
-    return f"{shlex.quote(sys.executable)} -m {_MODULE}"
+    script = Path(__file__).resolve()
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
 
 
 def _is_vre_hook(hook_entry: dict) -> bool:
     """
     Check whether a hook entry belongs to VRE, regardless of interpreter path.
     """
-    return _MODULE in json.dumps(hook_entry)
+    return _HOOK_MARKER in json.dumps(hook_entry)
 
 
 _EXIT_ALLOW = 0
@@ -278,4 +279,25 @@ def _run_hook() -> None:
 
 
 if __name__ == "__main__":
-    _run_hook()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="VRE Claude Code hook")
+    sub = parser.add_subparsers(dest="command")
+
+    inst = sub.add_parser("install", help="Install the VRE PreToolUse hook")
+    inst.add_argument("--uri", required=True)
+    inst.add_argument("--user", required=True)
+    inst.add_argument("--password", required=True)
+    inst.add_argument("--database", default="neo4j")
+
+    sub.add_parser("uninstall", help="Remove the VRE PreToolUse hook")
+
+    args = parser.parse_args()
+
+    if args.command == "install":
+        install(args.uri, args.user, args.password, args.database)
+    elif args.command == "uninstall":
+        uninstall()
+    else:
+        # No subcommand — invoked as hook by Claude Code
+        _run_hook()

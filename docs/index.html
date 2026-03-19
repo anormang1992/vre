@@ -1029,27 +1029,11 @@ const NODES = [
             <span class="tg">✓ Grounded — EPISTEMIC PERMISSION GRANTED</span>
           </div>
         </div>
-        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
-          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
-            CLAUDE CODE INTEGRATION
-          </strong>
-        </p>
-        <p>
-          VRE ships with a <code>PreToolUse</code> hook for Claude Code that
-          uses a two-pass protocol: the first call blocks and asks Claude to
-          identify the conceptual primitives; the second call carries a
-          <code># vre:concept1,concept2</code> prefix that the hook extracts,
-          grounds, and strips via <code>updatedInput</code> before execution.
-        </p>
-        <div class="code-block">
-          <span class="ck">from</span> vre.integrations.claude_code <span class="ck">import</span> install<br><br>
-          install(<span class="cs">"neo4j://localhost:7687"</span>, <span class="cs">"neo4j"</span>, <span class="cs">"password"</span>)
-        </div>
-        <p>
-          Claude proposes the concepts itself — no static mapping needed.
-          When blocked, it reads the epistemic trace, identifies exact gap types,
-          and adjusts. A frontier model, structurally constrained by a graph
-          it cannot modify.
+        <p style="margin-top:1.5rem">
+          VRE does not own concept extraction, cardinality detection, or trace rendering.
+          The integrator decides how to bridge their agent's actions to VRE's epistemic
+          contract. The <code>examples/</code> directory ships working integrations for
+          Claude Code and LangChain + Ollama.
         </p>
       `
     }

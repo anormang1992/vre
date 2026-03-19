@@ -2,7 +2,7 @@
 VRE Demo Agent — entry point.
 
 Usage:
-    python -m demo.main [--neo4j-uri ...] [--model ...] [--sandbox ...]
+    python -m examples.langchain_ollama.main [--neo4j-uri ...] [--model ...] [--sandbox ...]
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from langchain_core.tools import StructuredTool
 from vre import VRE
 from vre.core.graph import PrimitiveRepository
 
-from demo.agent import make_agent
-from demo.callbacks import ConceptExtractor, get_cardinality, make_on_learn, on_policy, on_trace
-from demo.repl import run
-from demo.tools import init_tools
+from examples.langchain_ollama.agent import make_agent
+from examples.langchain_ollama.callbacks import ConceptExtractor, get_cardinality, make_on_learn, on_policy, on_trace
+from examples.langchain_ollama.repl import run
+from examples.langchain_ollama.tools import init_tools
 
 
 def main() -> None:
@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--neo4j-user", default="neo4j")
     parser.add_argument("--neo4j-password", default="password")
     parser.add_argument("--model", default="qwen3.5:latest")
-    parser.add_argument("--sandbox", default="demo/workspace")
+    parser.add_argument("--sandbox", default="examples/langchain_ollama/workspace")
     parser.add_argument("--concepts-model", default="qwen2.5-coder:7b")
     args = parser.parse_args()
 

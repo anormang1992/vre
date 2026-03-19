@@ -275,7 +275,7 @@ This means a single relatum can carry multiple policies with different callbacks
 
 #### Demo example
 
-The demo ships with a `protected_file_delete` callback (`demo/policies.py`) that inspects `rm` commands across three detection modes: literal filename match, glob expansion against the filesystem, and recursive directory inspection. It demonstrates how a callback can make nuanced, context-aware decisions by inspecting both the command arguments and the actual filesystem state:
+The demo ships with a `protected_file_delete` callback (`examples/langchain_ollama/policies.py`) that inspects `rm` commands across three detection modes: literal filename match, glob expansion against the filesystem, and recursive directory inspection. It demonstrates how a callback can make nuanced, context-aware decisions by inspecting both the command arguments and the actual filesystem state:
 
 ```python
 # Registered on the delete → file APPLIES_TO relatum via seed_all.py
@@ -283,7 +283,7 @@ Policy(
     name="protected_file_delete",
     requires_confirmation=False,
     trigger_cardinality=None,
-    callback="demo.policies.protected_file_delete",
+    callback="examples.langchain_ollama.policies.protected_file_delete",
     confirmation_message="Deletion of {action} blocked — protected files at risk.",
 )
 ```
@@ -337,7 +337,7 @@ vre_guard(
 **`concepts`** can be static or dynamic. Static is appropriate when a function always touches the same concept domain. Dynamic is appropriate when the concepts depend on the actual arguments — for example, a shell tool that must inspect the command string to know what it touches. Any callable that accepts the same arguments as the decorated function and returns `list[str]` works:
 
 ```python
-concepts = ConceptExtractor()   # LLM-based — see demo/callbacks.py
+concepts = ConceptExtractor()   # LLM-based — see examples/langchain_ollama/callbacks.py
 
 @vre_guard(vre, concepts=concepts)
 def shell_tool(command: str) -> str:
@@ -541,13 +541,13 @@ The demo's `DemoLearner` uses ChatOllama structured output to fill templates and
 The demo ships a complete LangChain + Ollama agent that exercises all of VRE's enforcement layers against a sandboxed filesystem.
 
 ```bash
-poetry run python -m demo.main \
+poetry run python -m examples.langchain_ollama.main \
   --neo4j-uri neo4j://localhost:7687 \
   --neo4j-user neo4j \
   --neo4j-password password \
   --model qwen3:8b \
   --concepts-model qwen2.5-coder:7b \
-  --sandbox demo/workspace
+  --sandbox examples/langchain_ollama/workspace
 ```
 
 The agent exposes a single `shell_tool` — a sandboxed subprocess executor — guarded by `vre_guard`. Every shell command the LLM decides to run is intercepted before execution:
@@ -562,7 +562,7 @@ The agent exposes a single `shell_tool` — a sandboxed subprocess executor — 
 
 ### Concept extraction
 
-The demo uses `ConceptExtractor` (`demo/callbacks.py`) — a callable class that sends each command segment to a local Ollama model and collects the conceptual primitives it identifies. The prompt includes few-shot flag-to-concept examples (e.g. `rm -rf dir/` → delete + directory + file) and an explicit instruction to never return flag names as primitives.
+The demo uses `ConceptExtractor` (`examples/langchain_ollama/callbacks.py`) — a callable class that sends each command segment to a local Ollama model and collects the conceptual primitives it identifies. The prompt includes few-shot flag-to-concept examples (e.g. `rm -rf dir/` → delete + directory + file) and an explicit instruction to never return flag names as primitives.
 
 `ConceptExtractor` is constructed once at startup and reused across calls. It splits compound commands (pipes, `&&`, `;`) into segments and extracts concepts from each independently. The model is configurable via `--concepts-model` (default `qwen2.5-coder:7b`).
 
@@ -571,7 +571,7 @@ The demo uses `ConceptExtractor` (`demo/callbacks.py`) — a callable class that
 ### Wiring it together
 
 ```python
-# demo/tools.py
+# examples/langchain_ollama/tools.py
 from vre.guard import vre_guard
 
 concepts = ConceptExtractor()  # LLM-based concept extraction (Ollama)
@@ -617,10 +617,9 @@ VRE ships with a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-cod
 
 ### Install the hook
 
-```python
-from vre.integrations.claude_code import install
-
-install("neo4j://localhost:7687", "neo4j", "password")
+```bash
+python examples/claude-code/claude_code.py install \
+  --uri neo4j://localhost:7687 --user neo4j --password password
 ```
 
 This does two things:
@@ -659,10 +658,8 @@ The hook fails open when the VRE config file is absent. Empty commands are allow
 
 ### Remove the hook
 
-```python
-from vre.integrations.claude_code import uninstall
-
-uninstall()
+```bash
+python examples/claude-code/claude_code.py uninstall
 ```
 
 This removes the VRE hook entry from `~/.claude/settings.json` and leaves `~/.vre/config.json` in place.
@@ -753,22 +750,23 @@ src/vre/
     models.py              # Candidate models, CandidateDecision, LearningResult
     templates.py           # TemplateFactory — gap → structured candidate template
     engine.py              # LearningEngine — template → callback → validate → persist
-  integrations/
-    claude_code.py         # Claude Code PreToolUse hook — two-pass concept protocol
 
 scripts/
   clear_graph.py           # Clear all primitives from the Neo4j graph
   seed_all.py              # Seed fully grounded graph (16 primitives)
   seed_gaps.py             # Seed gap-demonstration graph (10 primitives)
 
-demo/
-  main.py                  # Entry point — argparse + agent setup
-  agent.py                 # ToolAgent — LangChain + Ollama streaming loop
-  tools.py                 # shell_tool with vre_guard applied
-  callbacks.py             # ConceptExtractor, on_trace, on_policy, get_cardinality, make_on_learn
-  policies.py              # Demo PolicyCallback — protected file deletion guard
-  learner.py               # DemoLearner — ChatOllama structured output + Rich UI
-  repl.py                  # Streaming REPL with Rich Live display
+examples/
+  claude-code/
+    claude_code.py         # Claude Code PreToolUse hook — two-pass concept protocol
+  langchain_ollama/
+    main.py                # Entry point — argparse + agent setup
+    agent.py               # ToolAgent — LangChain + Ollama streaming loop
+    tools.py               # shell_tool with vre_guard applied
+    callbacks.py           # ConceptExtractor, on_trace, on_policy, get_cardinality, make_on_learn
+    policies.py            # Demo PolicyCallback — protected file deletion guard
+    learner.py             # DemoLearner — ChatOllama structured output + Rich UI
+    repl.py                # Streaming REPL with Rich Live display
 ```
 
 ---

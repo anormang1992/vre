@@ -14,7 +14,7 @@ from langchain_ollama import ChatOllama
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from demo.repl import console
+from examples.langchain_ollama.repl import console
 from vre.learning.callback import LearningCallback
 from vre.learning.models import (
     CandidateDecision,

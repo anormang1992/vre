@@ -14,8 +14,8 @@ from pydantic import BaseModel
 from rich.prompt import Confirm
 from rich.tree import Tree
 
-from demo.learner import DemoLearner
-from demo.repl import console
+from examples.langchain_ollama.learner import DemoLearner
+from examples.langchain_ollama.repl import console
 from vre.core.policy.models import PolicyViolation
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ class ConceptExtractor:
 
     Mirrors the DemoLearner pattern: ChatOllama chain constructed once in
     __init__ and reused across calls. Callable via __call__ so it can be
-    passed directly as vre_guard's ``concepts`` parameter.
+    passed directly as vre_guard's `concepts` parameter.
     """
 
     def __init__(self, model: str = "qwen2.5-coder:7b") -> None:
