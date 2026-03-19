@@ -27,10 +27,12 @@ def init_tools(
         on_policy=on_policy,
         on_learn=on_learn,
     )
-    def shell_tool(command: str) -> str:
-        """Execute a shell command inside the sandbox directory."""
+    def shell_tool(command: str, cwd: str = sandbox) -> str:
+        """
+        Execute a shell command inside the sandbox directory.
+        """
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, cwd=sandbox
+            command, shell=True, capture_output=True, text=True, cwd=cwd
         )
         return result.stdout + result.stderr
 

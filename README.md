@@ -200,12 +200,16 @@ This is particularly useful for planning-mode interactions: the agent receives s
 ```python
 policy = vre.check_policy(["delete", "file"], cardinality="multiple")
 
-# policy.action is "PASS", "PENDING", or "BLOCK"
-if policy.action == "PENDING":
-    print(policy.confirmation_message)
+# policy.action is "PASS" or "BLOCK"
+if policy.action == "BLOCK":
+    print(policy.reason)
+    for v in policy.violations:
+        print(f"  - {v.message}")
 ```
 
 `cardinality` hints whether the operation targets a single entity (`"single"`) or many (`"multiple"`, e.g. recursive or glob). Policies on relata can be scoped to fire only for one cardinality or always.
+
+An optional `on_policy` callback handles violations that require human confirmation. It receives only the confirmation-required violations and returns `True` to proceed or `False` to block. Violations with `requires_confirmation=False` are hard blocks — `on_policy` is never consulted for those.
 
 ---
 
@@ -232,9 +236,10 @@ Each call runs the following sequence:
 5. **Fire `on_trace` again** — surface the post-learning epistemic result
 6. **If still not grounded** — return the `GroundingResult` immediately; the function does not execute
 7. **Evaluate policies** — check all `APPLIES_TO` relata for applicable policy gates
-8. **If PENDING** — call `on_policy` for confirmation; block if declined or no handler
-9. **If BLOCK** — return the `PolicyResult`; the function does not execute
-10. **Execute** — call the original function and return its result
+8. **If hard blocks** — return `PolicyResult(BLOCK)` immediately; `on_policy` is not consulted
+9. **If confirmation required** — call `on_policy` with pending violations; block if declined or no handler
+10. **If BLOCK** — return the `PolicyResult`; the function does not execute
+11. **Execute** — call the original function and return its result
 
 ### Parameters
 
@@ -245,7 +250,7 @@ vre_guard(
     cardinality=None,    # str | None or Callable(*args, **kwargs) -> str | None
     min_depth=None,      # DepthLevel | None — enforces a minimum depth floor
     on_trace=None,       # Callable[[GroundingResult], None]
-    on_policy=None,      # Callable[[str], bool]
+    on_policy=None,      # Callable[[list[PolicyViolation]], bool]
     on_learn=None,       # LearningCallback — auto-learning loop for knowledge gaps
 )
 ```
@@ -317,20 +322,27 @@ Green dots (`●`) represent grounded depth levels. A red `✗` at a depth level
 
 ### `on_policy`
 
-Called when a policy gate returns `PENDING` — meaning a policy on an `APPLIES_TO` relatum fired and requires human confirmation. Receives the policy's confirmation message. Returns `True` to allow execution, `False` to block.
+Called when policy evaluation produces violations that require human confirmation (`requires_confirmation=True`). Receives only the confirmation-required violations — hard blocks (`requires_confirmation=False`) are handled before `on_policy` is ever consulted. Returns `True` to proceed, `False` to block.
 
 ```python
-def on_policy(message: str) -> bool:
-    return input(f"Policy gate: {message} [y/N]: ").strip().lower() == "y"
+from vre.core.policy.models import PolicyViolation
+
+def on_policy(violations: list[PolicyViolation]) -> bool:
+    for v in violations:
+        answer = input(f"Policy gate: {v.message} [y/N]: ").strip().lower()
+        if answer != "y":
+            return False
+    return True
 ```
 
 The demo uses Rich's `Confirm.ask`:
 
 ```python
-from rich.prompt import Confirm
-
-def on_policy(message: str) -> bool:
-    return Confirm.ask(f"[yellow]⚠  Policy gate:[/] {message}")
+def on_policy(violations: list[PolicyViolation]) -> bool:
+    for v in violations:
+        if not Confirm.ask(f"[yellow]⚠  Policy gate:[/] {v.message}"):
+            return False
+    return True
 ```
 
 If `on_policy` is not provided and a policy requires confirmation, the guard returns `PolicyResult(action=PolicyAction.BLOCK, reason="Confirmation required, no handler")` and the function does not execute.
@@ -537,9 +549,9 @@ When Claude Code invokes a Bash command:
 1. The hook reads the command from stdin and maps it to VRE concepts via `parse_bash_primitives` (`rm foo.txt` → `["delete", "file"]`)
 2. Those concepts are grounded against the graph
 3. **If not grounded** — the hook exits with code 2 and writes the full grounding trace to stderr, which Claude Code feeds back to the model as context. The command does not execute.
-4. **If a policy fires (`PENDING`)** — the hook returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval prompt. The user sees the policy's confirmation message and decides directly.
-5. **If a policy blocks (`BLOCK`)** — the hook exits with code 2 and the policy result is fed to the model.
-6. **If grounded with no policy** — the hook exits with code 0 and `permissionDecision: "allow"`. The command proceeds.
+4. **If confirmation-required violations exist** — the hook returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval prompt. All confirmation messages are listed so the user can make an informed decision.
+5. **If hard blocks or user declines** — the hook exits with code 2 and the policy result is fed to the model.
+6. **If grounded with no policy violations** — the hook exits with code 0 and `permissionDecision: "allow"`. The command proceeds.
 
 The hook fails open: if no VRE concepts are recognized in the command, or if the VRE config file is absent, the command is allowed through. Unknown commands are never silently blocked.
 
@@ -635,8 +647,8 @@ src/vre/
       engine.py            # GroundingEngine — depth-gated query, gap detection
       models.py            # GroundingResult
     policy/
-      models.py            # Policy, Cardinality, PolicyResult
-      gate.py              # PolicyGate — evaluates violations against a trace
+      models.py            # Policy, Cardinality, PolicyResult, PolicyViolation, PolicyCallbackResult
+      gate.py              # PolicyGate — collects violations from a trace
       callback.py          # PolicyCallContext, PolicyCallback protocol
       wizard.py            # Interactive policy attachment CLI
   learning/
@@ -659,6 +671,7 @@ demo/
   agent.py                 # ToolAgent — LangChain + Ollama streaming loop
   tools.py                 # shell_tool with vre_guard applied
   callbacks.py             # on_trace (Rich tree), on_policy (Rich Confirm), make_on_learn
+  policies.py              # Demo PolicyCallback — protected file deletion guard
   learner.py               # DemoLearner — ChatOllama structured output + Rich UI
   repl.py                  # Streaming REPL with Rich Live display
 ```

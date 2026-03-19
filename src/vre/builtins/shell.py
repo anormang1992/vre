@@ -94,4 +94,10 @@ def parse_bash_primitives(command: str) -> list[str]:
         key = token.lower().rsplit("/", 1)[-1]
         primitives.update(SHELL_ALIASES.get(key, []))
 
+    if not primitives:
+        # No recognised aliases — return the base command name so VRE
+        # surfaces it as an existence gap rather than silently returning nothing.
+        base_command = tokens[0].lower().rsplit("/", 1)[-1]
+        primitives.add(base_command)
+
     return list(primitives)

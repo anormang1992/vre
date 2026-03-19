@@ -56,6 +56,7 @@ def _is_vre_hook(hook_entry: dict) -> bool:
     """
     return _MODULE in json.dumps(hook_entry)
 
+
 _EXIT_ALLOW = 0
 _EXIT_BLOCK = 2
 
@@ -163,9 +164,10 @@ def _run_hook() -> None:
     followed by policy evaluation.
 
     - Ungrounded: exit 2, grounding trace to stderr (fed to Claude).
-    - Policy PENDING: defers to Claude Code's TUI approval prompt so
-      the human can accept or reject the action directly.
-    - Policy BLOCK: exit 2, policy result to stderr.
+    - Policy BLOCK with confirmation-required violations: defers to
+      Claude Code's TUI approval prompt so the human can accept or
+      reject the action directly.
+    - Policy BLOCK (hard violations): exit 2, policy result to stderr.
     - Grounded and no policy: exit 0 with permissionDecision "allow".
 
     Fails open (allows) when no concepts are recognised or when the
@@ -203,11 +205,17 @@ def _run_hook() -> None:
 
             policy = vre.check_policy(grounding)
 
-        if policy.action == PolicyAction.PENDING:
-            _ask(policy.confirmation_message or "This action requires confirmation.")
-
         if policy.action == PolicyAction.BLOCK:
-            _block(str(policy))
+            confirmation_violations = [
+                v for v in policy.violations if v.requires_confirmation
+            ]
+            if confirmation_violations:
+                reason = "\n".join(
+                    f"- {v.message}" for v in confirmation_violations
+                )
+                _ask(reason)
+            else:
+                _block(str(policy))
 
         _allow()
     except SystemExit:

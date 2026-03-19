@@ -25,8 +25,9 @@ def test_chmod_maps_to_permission_file():
     assert sorted(parse_bash_primitives("chmod 755 script.sh")) == ["file", "permission"]
 
 
-def test_unknown_command_returns_empty():
-    assert parse_bash_primitives("unknowncmd arg1 arg2") == []
+def test_unknown_command_returns_base_command():
+    """Unrecognised command returns the base command name as a fallback concept."""
+    assert parse_bash_primitives("unknowncmd arg1 arg2") == ["unknowncmd"]
 
 
 def test_empty_string_returns_empty():

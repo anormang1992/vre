@@ -878,6 +878,12 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                                 trigger_cardinality=Cardinality.MULTIPLE,
                                 confirmation_message="Bulk file deletion requires user approval. Proceed?",
                             ),
+                            Policy(
+                                name="ProtectedFileDeletePolicy",
+                                requires_confirmation=True,
+                                callback="demo.policies.protected_file_delete",
+                                confirmation_message="Deletion may affect protected files. Proceed?",
+                            ),
                         ],
                     ),
                     Relatum(

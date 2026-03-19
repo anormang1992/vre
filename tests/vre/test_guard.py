@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyAction, PolicyResult
+from vre.core.policy.models import PolicyViolation, Policy
 from vre.learning.callback import LearningCallback
 from vre.learning.models import CandidateDecision
 
@@ -26,6 +27,13 @@ def _mock_vre(grounding: GroundingResult, policy: PolicyResult | None = None):
     mock.check.return_value = grounding
     mock.check_policy.return_value = policy or PolicyResult(action=PolicyAction.PASS)
     return mock
+
+
+def _violation(message="Confirm?", requires_confirmation=True) -> PolicyViolation:
+    return PolicyViolation(
+        policy=Policy(name="Test", requires_confirmation=requires_confirmation),
+        message=message,
+    )
 
 
 # ── ungrounded path ───────────────────────────────────────────────────────────
@@ -130,13 +138,17 @@ def test_vre_guard_grounding_called_once():
 
 # ── single-phase: policy gates ────────────────────────────────────────────────
 
-def test_vre_guard_blocks_when_pending_and_no_handler():
-    """PENDING policy with no on_policy handler → returns PolicyResult(BLOCK)."""
+def test_vre_guard_blocks_when_no_handler():
+    """BLOCK policy with no on_policy handler → returns PolicyResult(BLOCK)."""
     from vre.guard import vre_guard
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action=PolicyAction.PENDING, confirmation_message="Confirm this action?"),
+        PolicyResult(
+            action=PolicyAction.BLOCK,
+            reason="Confirmation required, no handler",
+            violations=[_violation()],
+        ),
     )
 
     @vre_guard(mock_vre, concepts=["file"])
@@ -148,16 +160,16 @@ def test_vre_guard_blocks_when_pending_and_no_handler():
     assert result.action == PolicyAction.BLOCK
 
 
-def test_vre_guard_calls_fn_when_policy_confirmed():
-    """PENDING policy with on_policy=True handler → function executes."""
+def test_vre_guard_calls_fn_when_policy_passes():
+    """PASS policy (on_policy handled inside check_policy) → function executes."""
     from vre.guard import vre_guard
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action=PolicyAction.PENDING, confirmation_message="Confirm?"),
+        PolicyResult(action=PolicyAction.PASS, violations=[_violation()]),
     )
 
-    @vre_guard(mock_vre, concepts=["file"], on_policy=lambda msg: True)
+    @vre_guard(mock_vre, concepts=["file"], on_policy=lambda violations: True)
     def my_fn():
         return "executed"
 
@@ -182,6 +194,23 @@ def test_vre_guard_blocks_on_block_policy():
     assert isinstance(result, PolicyResult)
     assert result.action == PolicyAction.BLOCK
     assert result.reason == "Forbidden"
+
+
+def test_vre_guard_passes_on_policy_through_to_check_policy():
+    """on_policy is forwarded to vre.check_policy()."""
+    from vre.guard import vre_guard
+
+    handler = lambda violations: True  # noqa: E731
+    mock_vre = _mock_vre(_grounding())
+
+    @vre_guard(mock_vre, concepts=["file"], on_policy=handler)
+    def my_fn():
+        return "executed"
+
+    my_fn()
+    mock_vre.check_policy.assert_called_once()
+    call_kwargs = mock_vre.check_policy.call_args
+    assert call_kwargs.kwargs.get("on_policy") is handler
 
 
 # ── single-phase: different fns are independent ───────────────────────────────
@@ -313,8 +342,8 @@ def test_vre_guard_callable_cardinality_passed_to_check_policy():
 
     my_fn()
     mock_vre.check_policy.assert_called_once()
-    _, call_args, _ = mock_vre.check_policy.mock_calls[0]
-    assert call_args[1] == "multiple"  # second positional arg is cardinality
+    call_args = mock_vre.check_policy.call_args
+    assert call_args[0][1] == "multiple"  # second positional arg is cardinality
 
 
 # ── min_depth passthrough ────────────────────────────────────────────────────
@@ -422,15 +451,19 @@ def test_vre_guard_on_learn_returns_grounding_when_still_not_grounded():
 
 
 def test_vre_guard_on_policy_decline_returns_block():
-    """When on_policy returns False, returns PolicyResult(BLOCK, 'User declined')."""
+    """When on_policy returns False (inside check_policy), returns PolicyResult(BLOCK)."""
     from vre.guard import vre_guard
 
     mock_vre = _mock_vre(
         _grounding(),
-        PolicyResult(action=PolicyAction.PENDING, confirmation_message="Are you sure?"),
+        PolicyResult(
+            action=PolicyAction.BLOCK,
+            reason="User declined",
+            violations=[_violation()],
+        ),
     )
 
-    @vre_guard(mock_vre, concepts=["file"], on_policy=lambda msg: False)
+    @vre_guard(mock_vre, concepts=["file"], on_policy=lambda violations: False)
     def my_fn():
         return "executed"
 

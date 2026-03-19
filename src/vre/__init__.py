@@ -15,10 +15,12 @@ Usage::
     print(result.grounded, result.resolved)
 """
 
+from typing import Callable
+
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
 from vre.core.models import DepthLevel, Provenance, ProvenanceSource
-from vre.core.policy import Cardinality, PolicyAction, PolicyResult
+from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult, PolicyViolation
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
 from vre.learning import (
@@ -40,7 +42,9 @@ __all__ = [
     "ProvenanceSource",
     "Cardinality",
     "PolicyAction",
+    "PolicyCallbackResult",
     "PolicyResult",
+    "PolicyViolation",
     "PolicyCallContext",
     "PolicyGate",
     "CandidateDecision",
@@ -133,6 +137,7 @@ class VRE:
         concepts: list[str] | GroundingResult,
         cardinality: str | None = None,
         call_context: PolicyCallContext | None = None,
+        on_policy: Callable[[list[PolicyViolation]], bool] | None = None,
     ) -> PolicyResult:
         """
         Evaluate policies for the given concepts.
@@ -144,7 +149,12 @@ class VRE:
         kwargs of the decorated function so that policy callbacks can make
         domain-specific decisions. Omit when calling outside a guarded context.
 
-        Returns PolicyResult with action PASS, PENDING, or BLOCK.
+        `on_policy` is an optional handler consulted when any violation has
+        `requires_confirmation=True`. It receives all violations and returns
+        a single bool — True to proceed, False to block. When absent, the
+        fail-safe is BLOCK.
+
+        Returns PolicyResult with action PASS or BLOCK (never PENDING).
         """
         if isinstance(concepts, GroundingResult):
             grounding = concepts
@@ -162,5 +172,41 @@ class VRE:
                 pass  # unknown string → fall back to SINGLE
 
         gate = PolicyGate()
-        return gate.evaluate(grounding.trace, card_enum, call_context)
+        violations = gate.evaluate(grounding.trace, card_enum, call_context)
 
+        if not violations:
+            policy_result = PolicyResult(action=PolicyAction.PASS)
+        else:
+            hard_blocks = [v for v in violations if not v.requires_confirmation]
+            pending = [v for v in violations if v.requires_confirmation]
+
+            # Hard blocks do not consult on_policy — they are immediate BLOCKs with their own messages
+            if hard_blocks:
+                messages = "; ".join(v.message for v in hard_blocks)
+                policy_result = PolicyResult(
+                    action=PolicyAction.BLOCK,
+                    reason=messages,
+                    violations=violations,
+                )
+            else:
+                # Only confirmation-required violations remain — consult on_policy
+                if on_policy is not None:
+                    if on_policy(pending):
+                        policy_result = PolicyResult(
+                            action=PolicyAction.PASS,
+                            violations=pending,
+                        )
+                    else:
+                        policy_result = PolicyResult(
+                            action=PolicyAction.BLOCK,
+                            reason="User declined",
+                            violations=pending,
+                        )
+                else:
+                    policy_result = PolicyResult(
+                        action=PolicyAction.BLOCK,
+                        reason="Confirmation required, no handler",
+                        violations=pending,
+                    )
+
+        return policy_result

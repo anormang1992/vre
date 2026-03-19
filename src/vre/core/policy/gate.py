@@ -7,36 +7,15 @@ PolicyGate — evaluates policy violations against an epistemic trace.
 
 from vre.core.models import EpistemicResponse, RelationType
 from vre.core.policy.callback import PolicyCallContext
-from vre.core.policy.models import Cardinality, Policy, PolicyAction, PolicyResult, PolicyViolation
+from vre.core.policy.models import Cardinality, PolicyCallbackResult, PolicyViolation
 
 
 class PolicyGate:
     """
-    Evaluates policies attached to an epistemic trace and returns a PolicyResult.
+    Evaluates policies attached to an epistemic trace and returns violations.
     """
-
-    def evaluate(
-        self,
-        response: EpistemicResponse,
-        cardinality: Cardinality = Cardinality.SINGLE,
-        call_context: PolicyCallContext | None = None,
-    ) -> PolicyResult:
-        """
-        Evaluate all policies in the trace and return PASS, PENDING, or BLOCK.
-        """
-        violations = self._collect_violations(response, cardinality, call_context)
-        if not violations:
-            return PolicyResult(action=PolicyAction.PASS)
-        pending = [v for v in violations if v.requires_confirmation]
-        if pending:
-            return PolicyResult(
-                action=PolicyAction.PENDING,
-                confirmation_message=pending[0].message,
-            )
-        return PolicyResult(action=PolicyAction.PASS)  # informational-only violations don't block
-
+    @staticmethod
     def _collect_violations(
-        self,
         response: EpistemicResponse,
         cardinality: Cardinality,
         call_context: PolicyCallContext | None = None,
@@ -51,31 +30,37 @@ class PolicyGate:
                     if relatum.relation_type != RelationType.APPLIES_TO:
                         continue
                     for policy in relatum.policies:
-                        if not self._triggers(policy, cardinality):
+                        if policy.trigger_cardinality is not None and policy.trigger_cardinality != cardinality:
                             continue
                         cb = policy.resolve_callback()
-                        if cb is not None and call_context is not None and not cb(call_context):
-                            continue
+                        cb_result: PolicyCallbackResult | None = None
+                        if cb is not None and call_context is not None:
+                            cb_result = cb(call_context)
+                            if cb_result.passed:
+                                continue  # action passed the policy — no violation
+
                         try:
                             message = policy.confirmation_message.format(
                                 action=primitive.name
                             )
                         except (KeyError, ValueError):
                             message = policy.confirmation_message
+
                         violations.append(PolicyViolation(
                             policy=policy,
-                            requires_confirmation=policy.requires_confirmation,
                             message=message,
+                            callback_result=cb_result,
                         ))
+
         return violations
 
-    @staticmethod
-    def _triggers(policy: Policy, cardinality: Cardinality) -> bool:
+    def evaluate(
+        self,
+        response: EpistemicResponse,
+        cardinality: Cardinality = Cardinality.SINGLE,
+        call_context: PolicyCallContext | None = None,
+    ) -> list[PolicyViolation]:
         """
-        Return True if the policy should fire for the given cardinality.
+        Evaluate all policies in the trace and return triggered violations.
         """
-        if not policy.requires_confirmation:
-            return False
-        if policy.trigger_cardinality is None:
-            return True
-        return policy.trigger_cardinality == cardinality
+        return self._collect_violations(response, cardinality, call_context)
