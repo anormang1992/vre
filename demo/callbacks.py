@@ -13,16 +13,17 @@ from rich.tree import Tree
 from demo.learner import DemoLearner
 from demo.repl import console
 from vre.builtins.shell import parse_bash_primitives
+from vre.core.policy.models import PolicyViolation
 
 if TYPE_CHECKING:
     from vre.core.grounding.models import GroundingResult
 
 
-def get_concepts(command: str) -> list[str]:
+def get_concepts(command: str, **kwargs) -> list[str]:
     return parse_bash_primitives(command)
 
 
-def get_cardinality(command: str) -> str:
+def get_cardinality(command: str, **kwargs) -> str:
     flags = {"-r", "-R", "-rf", "--recursive", "*"}
     tokens = set(command.split())
     has_glob = any("*" in token for token in tokens)
@@ -125,8 +126,17 @@ def on_trace(grounding: "GroundingResult") -> None:
     console.print(tree)
 
 
-def on_policy(message: str) -> bool:
-    return Confirm.ask(f"[yellow]⚠  Policy gate:[/] {message}")
+def on_policy(violations: list[PolicyViolation]) -> bool:
+    """
+    Prompt the user interactively for each confirmation-required policy violation.
+
+    Returns True if the user confirms all violations, False if any is declined.
+    The first declined violation short-circuits the loop.
+    """
+    for v in violations:
+        if not Confirm.ask(f"[yellow]⚠  Policy gate:[/] {v.message}"):
+            return False
+    return True
 
 
 def make_on_learn(model: str = "qwen3:8b") -> DemoLearner:

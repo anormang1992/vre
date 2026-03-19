@@ -15,7 +15,7 @@ from vre.core.models import (
     Relatum,
     RelationType,
 )
-from vre.core.policy import Cardinality, Policy, PolicyAction, parse_policy
+from vre.core.policy import Cardinality, Policy, PolicyCallbackResult, parse_policy
 from vre.core.policy.gate import PolicyGate
 
 
@@ -81,15 +81,15 @@ def test_policy_defaults():
 
 
 def test_no_policies_proceed():
-    """Relatum with no policies → PASS."""
+    """Relatum with no policies → no violations."""
     primitive = _make_primitive_with_applies_to("create", [])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == PolicyAction.PASS
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert len(violations) == 0
 
 
 def test_step_cardinality_single_no_trigger():
-    """SINGLE cardinality does not trigger a policy that requires MULTIPLE → PASS."""
+    """SINGLE cardinality does not trigger a policy that requires MULTIPLE → no violations."""
     policy = Policy(
         name="BulkDelete",
         trigger_cardinality=Cardinality.MULTIPLE,
@@ -97,12 +97,12 @@ def test_step_cardinality_single_no_trigger():
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == PolicyAction.PASS
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert len(violations) == 0
 
 
 def test_step_cardinality_multiple_triggers():
-    """MULTIPLE cardinality triggers a policy scoped to MULTIPLE → PENDING."""
+    """MULTIPLE cardinality triggers a policy scoped to MULTIPLE → violation produced."""
     policy = Policy(
         name="BulkDelete",
         trigger_cardinality=Cardinality.MULTIPLE,
@@ -110,14 +110,13 @@ def test_step_cardinality_multiple_triggers():
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.MULTIPLE)
-    assert result.action == PolicyAction.PENDING
-    assert result.confirmation_message is not None
-    assert "BulkDelete" in result.confirmation_message or "delete" in result.confirmation_message
+    violations = PolicyGate().evaluate(response, Cardinality.MULTIPLE)
+    assert len(violations) == 1
+    assert "delete" in violations[0].message
 
 
 def test_policy_trigger_cardinality_none_always_fires():
-    """trigger_cardinality=None fires for both SINGLE and MULTIPLE → PENDING."""
+    """trigger_cardinality=None fires for both SINGLE and MULTIPLE → violations."""
     policy = Policy(
         name="AlwaysConfirm",
         trigger_cardinality=None,
@@ -126,12 +125,12 @@ def test_policy_trigger_cardinality_none_always_fires():
     primitive = _make_primitive_with_applies_to("write", [policy])
     response = _make_step_result(primitive)
 
-    assert PolicyGate().evaluate(response, Cardinality.SINGLE).action == PolicyAction.PENDING
-    assert PolicyGate().evaluate(response, Cardinality.MULTIPLE).action == PolicyAction.PENDING
+    assert len(PolicyGate().evaluate(response, Cardinality.SINGLE)) == 1
+    assert len(PolicyGate().evaluate(response, Cardinality.MULTIPLE)) == 1
 
 
 def test_no_callback_fires_violation():
-    """A policy with no callback fires the violation → PENDING."""
+    """A policy with no callback fires the violation."""
     policy = Policy(
         name="NoCallback",
         callback=None,
@@ -139,9 +138,9 @@ def test_no_callback_fires_violation():
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == PolicyAction.PENDING
-    assert result.confirmation_message is not None
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert len(violations) == 1
+    assert violations[0].message is not None
 
 
 def test_confirmation_message_formatted():
@@ -152,12 +151,12 @@ def test_confirmation_message_formatted():
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.confirmation_message == "About to delete — proceed?"
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert violations[0].message == "About to delete — proceed?"
 
 
 def test_non_applies_to_relata_ignored():
-    """CONSTRAINED_BY relata with policies are not evaluated by the gate → PASS."""
+    """CONSTRAINED_BY relata with policies are not evaluated by the gate → no violations."""
     policy = Policy(name="ShouldBeIgnored")
     target_id = uuid4()
     relatum = Relatum(
@@ -169,12 +168,12 @@ def test_non_applies_to_relata_ignored():
     depth = Depth(level=DepthLevel.CAPABILITIES, relata=[relatum])
     primitive = Primitive(name="create", depths=[depth])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == PolicyAction.PASS
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert len(violations) == 0
 
 
-def test_requires_confirmation_false_never_triggers():
-    """A policy with requires_confirmation=False never produces a violation → PASS."""
+def test_requires_confirmation_false_produces_violations():
+    """A policy with requires_confirmation=False still produces violations (no longer filtered)."""
     policy = Policy(
         name="Informational",
         requires_confirmation=False,
@@ -183,5 +182,79 @@ def test_requires_confirmation_false_never_triggers():
     )
     primitive = _make_primitive_with_applies_to("list", [policy])
     response = _make_step_result(primitive)
-    result = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert result.action == PolicyAction.PASS
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert len(violations) == 1
+    assert violations[0].requires_confirmation is False
+
+
+def test_callback_passed_true_suppresses_violation():
+    """Callback returning passed=True — action passes the policy, no violation."""
+    policy = Policy(
+        name="WithCallback",
+        callback="tests.vre.test_policies._cb_pass",
+        confirmation_message="Confirm {action}.",
+    )
+    primitive = _make_primitive_with_applies_to("write", [policy])
+    response = _make_step_result(primitive)
+
+    from vre.core.policy.callback import PolicyCallContext
+    from vre.core.grounding import GroundingResult
+
+    ctx = PolicyCallContext(
+        tool_name="test_fn",
+        grounding=GroundingResult(grounded=True, resolved=["write"], gaps=[]),
+        call_args=(),
+        call_kwargs={},
+    )
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE, ctx)
+    assert len(violations) == 0
+
+
+def test_callback_passed_false_fires_violation():
+    """Callback returning passed=False — action fails the policy, violation carries result."""
+    policy = Policy(
+        name="WithCallback",
+        callback="tests.vre.test_policies._cb_fail",
+        confirmation_message="Confirm {action}.",
+    )
+    primitive = _make_primitive_with_applies_to("write", [policy])
+    response = _make_step_result(primitive)
+
+    from vre.core.policy.callback import PolicyCallContext
+    from vre.core.grounding import GroundingResult
+
+    ctx = PolicyCallContext(
+        tool_name="test_fn",
+        grounding=GroundingResult(grounded=True, resolved=["write"], gaps=[]),
+        call_args=(),
+        call_kwargs={},
+    )
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE, ctx)
+    assert len(violations) == 1
+    assert violations[0].callback_result is not None
+    assert violations[0].callback_result.passed is False
+
+
+def test_multiple_policies_on_same_relatum_all_collected():
+    """Multiple policies on the same relatum are all collected."""
+    p1 = Policy(name="Policy1", confirmation_message="First.")
+    p2 = Policy(name="Policy2", confirmation_message="Second.")
+    primitive = _make_primitive_with_applies_to("delete", [p1, p2])
+    response = _make_step_result(primitive)
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
+    assert len(violations) == 2
+    names = {v.policy.name for v in violations}
+    assert names == {"Policy1", "Policy2"}
+
+
+# ---------------------------------------------------------------------------
+# Callback fixtures (importable by dotted path)
+# ---------------------------------------------------------------------------
+
+
+def _cb_pass(context) -> PolicyCallbackResult:
+    return PolicyCallbackResult(passed=True, message="Allowed by callback")
+
+
+def _cb_fail(context) -> PolicyCallbackResult:
+    return PolicyCallbackResult(passed=False, message="Failed by callback")

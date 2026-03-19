@@ -17,13 +17,28 @@ if TYPE_CHECKING:
     from vre.core.policy.callback import PolicyCallback
 
 
+class PolicyCallbackResult(BaseModel):
+    """
+    Result returned by a PolicyCallback.
+
+    Attributes
+    ----------
+    passed:
+        True if the action passes the policy (no violation), False if it fails (violation fires).
+    message:
+        Optional human-readable message providing context about the decision.
+    """
+
+    passed: bool
+    message: str | None = None
+
+
 class PolicyAction(str, Enum):
     """
-    Outcome of a policy evaluation — PASS, PENDING, or BLOCK.
+    Outcome of a policy evaluation — PASS or BLOCK.
     """
 
     PASS = "PASS"
-    PENDING = "PENDING"
     BLOCK = "BLOCK"
 
 
@@ -49,8 +64,9 @@ class Policy(BaseModel):
         Resolve the dotted-path callback string to a callable.
 
         The returned callable must conform to the PolicyCallback Protocol:
-        it receives a PolicyCallContext and returns bool. Return False to
-        suppress the violation; True (or no callback) means the policy fires.
+        it receives a PolicyCallContext and returns PolicyCallbackResult.
+        A result with passed=True suppresses the violation; passed=False
+        (or no callback) means the policy fires.
         """
         if self.callback is None:
             return None
@@ -72,8 +88,15 @@ class PolicyViolation(BaseModel):
     """
 
     policy: Policy
-    requires_confirmation: bool
     message: str
+    callback_result: PolicyCallbackResult | None = None
+
+    @property
+    def requires_confirmation(self) -> bool:
+        """
+        Whether the originating policy requires human confirmation.
+        """
+        return self.policy.requires_confirmation
 
 
 class PolicyResult(BaseModel):
@@ -83,7 +106,7 @@ class PolicyResult(BaseModel):
 
     action: PolicyAction
     reason: str | None = None
-    confirmation_message: str | None = None
+    violations: list[PolicyViolation] = Field(default_factory=list)
 
     def __str__(self) -> str:
         """
@@ -91,8 +114,4 @@ class PolicyResult(BaseModel):
         """
         if self.action == PolicyAction.PASS:
             return "[VRE Policy] PASSED"
-        if self.action == PolicyAction.PENDING:
-            return f"[VRE Policy] PENDING — {self.confirmation_message}"
-        if self.action == PolicyAction.BLOCK:
-            return f"[VRE Policy] BLOCKED — {self.reason}"
-        return f"[VRE Policy] {self.action}"
+        return f"[VRE Policy] BLOCKED — {self.reason}"

@@ -248,11 +248,22 @@ def test_policy_str_pass():
     assert str(result) == "[VRE Policy] PASSED"
 
 
-def test_policy_str_pending():
-    result = PolicyResult(action=PolicyAction.PENDING, confirmation_message="Confirm this action?")
-    assert str(result) == "[VRE Policy] PENDING — Confirm this action?"
-
-
 def test_policy_str_block():
     result = PolicyResult(action=PolicyAction.BLOCK, reason="Forbidden operation")
     assert str(result) == "[VRE Policy] BLOCKED — Forbidden operation"
+
+
+def test_policy_str_block_with_violations():
+    from vre.core.policy.models import PolicyViolation, Policy
+    violation = PolicyViolation(
+        policy=Policy(name="TestPolicy"),
+        message="Confirm delete?",
+    )
+    result = PolicyResult(
+        action=PolicyAction.BLOCK,
+        reason="User declined",
+        violations=[violation],
+    )
+    s = str(result)
+    assert "BLOCKED" in s
+    assert "User declined" in s

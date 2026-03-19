@@ -17,9 +17,8 @@ from vre.core.models import (
     RelationType,
     ResolvedSubgraph,
 )
-from vre.core.policy import Cardinality, Policy, PolicyAction
+from vre.core.policy import Cardinality, Policy, PolicyAction, PolicyResult
 from vre.core.grounding import GroundingResult
-from vre.core.policy import PolicyResult
 from vre.learning.callback import LearningCallback
 from vre.learning.models import (
     CandidateDecision,
@@ -142,10 +141,11 @@ class TestCheckPolicyCardinality:
         return vre
 
     def test_cardinality_multiple_triggers_multiple_scoped_policy(self):
-        """Passing cardinality="multiple" triggers a MULTIPLE-scoped policy."""
+        """Passing cardinality="multiple" triggers a MULTIPLE-scoped policy → BLOCK (no handler)."""
         vre = self._setup(Cardinality.MULTIPLE)
         result = vre.check_policy(["write", "file"], cardinality="multiple")
-        assert result.action == PolicyAction.PENDING
+        assert result.action == PolicyAction.BLOCK
+        assert len(result.violations) == 1
 
     def test_cardinality_single_does_not_trigger_multiple_scoped_policy(self):
         """Passing cardinality="single" skips a MULTIPLE-scoped policy → PASS."""
@@ -154,10 +154,10 @@ class TestCheckPolicyCardinality:
         assert result.action == PolicyAction.PASS
 
     def test_cardinality_none_triggers_always_on_policy(self):
-        """trigger_cardinality=None means the policy always fires regardless of cardinality."""
+        """trigger_cardinality=None means the policy always fires regardless of cardinality → BLOCK."""
         vre = self._setup(trigger_cardinality=None)
-        assert vre.check_policy(["write", "file"], cardinality="single").action == PolicyAction.PENDING
-        assert vre.check_policy(["write", "file"], cardinality="multiple").action == PolicyAction.PENDING
+        assert vre.check_policy(["write", "file"], cardinality="single").action == PolicyAction.BLOCK
+        assert vre.check_policy(["write", "file"], cardinality="multiple").action == PolicyAction.BLOCK
 
     def test_unknown_cardinality_string_falls_back_to_single(self):
         """Unrecognised cardinality string → treated as SINGLE, not an error."""
@@ -203,12 +203,12 @@ class TestVRECheck:
         assert depth_gaps[0].required_depth == DepthLevel.IMPLICATIONS
 
     def test_check_policy_returns_policy_result(self):
-        """VRE.check_policy returns a PolicyResult with action PASS, PENDING, or BLOCK."""
+        """VRE.check_policy returns a PolicyResult with action PASS or BLOCK."""
         file_p = _make_fully_grounded("file")
         vre = _make_vre_with_stub([file_p])
         result = vre.check_policy(["file"])
         assert isinstance(result, PolicyResult)
-        assert result.action in (PolicyAction.PASS, PolicyAction.PENDING, PolicyAction.BLOCK)
+        assert result.action in (PolicyAction.PASS, PolicyAction.BLOCK)
 
     def test_check_empty_concepts_returns_not_grounded(self):
         """check([]) returns grounded=False with no gaps."""
@@ -234,6 +234,92 @@ class TestVRECheck:
         grounding = GroundingResult(grounded=True, resolved=["file"], gaps=[], trace=None)
         result = vre.check_policy(grounding)
         assert result.action == PolicyAction.PASS
+
+
+class TestCheckPolicyOrchestration:
+    """Tests for the on_policy orchestration in VRE.check_policy()."""
+
+    def _setup_with_policy(self, requires_confirmation=True):
+        target = _make_fully_grounded("file")
+        policy = Policy(
+            name="TestPolicy",
+            requires_confirmation=requires_confirmation,
+            confirmation_message="Confirm {action}?",
+        )
+        src = _make_primitive_with_policy("write", target, policy)
+        vre = _make_vre_with_stub([src, target])
+        return vre
+
+    def test_on_policy_true_returns_pass(self):
+        """on_policy returning True → PASS with violations for observability."""
+        vre = self._setup_with_policy(requires_confirmation=True)
+        result = vre.check_policy(
+            ["write", "file"],
+            on_policy=lambda violations: True,
+        )
+        assert result.action == PolicyAction.PASS
+        assert len(result.violations) == 1
+
+    def test_on_policy_false_returns_block(self):
+        """on_policy returning False → BLOCK."""
+        vre = self._setup_with_policy(requires_confirmation=True)
+        result = vre.check_policy(
+            ["write", "file"],
+            on_policy=lambda violations: False,
+        )
+        assert result.action == PolicyAction.BLOCK
+        assert result.reason == "User declined"
+        assert len(result.violations) == 1
+
+    def test_no_on_policy_confirmation_required_returns_block(self):
+        """No on_policy handler + confirmation required → BLOCK (fail-safe)."""
+        vre = self._setup_with_policy(requires_confirmation=True)
+        result = vre.check_policy(["write", "file"])
+        assert result.action == PolicyAction.BLOCK
+        assert "no handler" in result.reason.lower()
+
+    def test_requires_confirmation_false_hard_block(self):
+        """requires_confirmation=False violations → BLOCK without consulting on_policy."""
+        vre = self._setup_with_policy(requires_confirmation=False)
+        called = []
+        result = vre.check_policy(
+            ["write", "file"],
+            on_policy=lambda v: called.append(True) or True,
+        )
+        assert result.action == PolicyAction.BLOCK
+        assert len(result.violations) == 1
+        assert called == []  # on_policy should NOT have been called
+
+    def test_on_policy_receives_all_violations(self):
+        """on_policy receives all violations at once."""
+        target = _make_fully_grounded("file")
+        p1 = Policy(name="P1", confirmation_message="First.")
+        p2 = Policy(name="P2", confirmation_message="Second.")
+        relatum = Relatum(
+            relation_type=RelationType.APPLIES_TO,
+            target_id=target.id,
+            target_depth=DepthLevel.CONSTRAINTS,
+            policies=[p1, p2],
+        )
+        src = Primitive(name="write", depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY),
+            Depth(level=DepthLevel.CAPABILITIES, relata=[relatum]),
+            Depth(level=DepthLevel.CONSTRAINTS),
+        ])
+        vre = _make_vre_with_stub([src, target])
+
+        received = []
+
+        def handler(violations):
+            received.extend(violations)
+            return True
+
+        result = vre.check_policy(["write", "file"], on_policy=handler)
+        assert result.action == PolicyAction.PASS
+        assert len(received) == 2
+        names = {v.policy.name for v in received}
+        assert names == {"P1", "P2"}
 
 
 # ---------------------------------------------------------------------------

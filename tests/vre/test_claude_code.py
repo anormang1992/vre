@@ -13,6 +13,7 @@ import pytest
 
 from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyAction, PolicyResult
+from vre.core.policy.models import Policy, PolicyViolation
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -191,7 +192,7 @@ class TestRunHook:
 
         assert exc.value.code == 2
 
-    def test_defers_pending_policy_to_tui(self, tmp_path, monkeypatch, capsys):
+    def test_defers_confirmation_required_policy_to_tui(self, tmp_path, monkeypatch, capsys):
         config = tmp_path / ".vre" / "config.json"
         config.parent.mkdir(parents=True)
         config.write_text(json.dumps({
@@ -211,9 +212,14 @@ class TestRunHook:
         )
 
         grounding = GroundingResult(grounded=True, resolved=["Read"], gaps=[])
+        violation = PolicyViolation(
+            policy=Policy(name="ReadPolicy", requires_confirmation=True),
+            message="Read access requires confirmation.",
+        )
         policy = PolicyResult(
-            action=PolicyAction.PENDING,
-            confirmation_message="Read access requires confirmation.",
+            action=PolicyAction.BLOCK,
+            reason="Confirmation required, no handler",
+            violations=[violation],
         )
 
         mock_repo = MagicMock()

@@ -10,12 +10,14 @@ PolicyCallback and accept a PolicyCallContext argument.
 Example::
 
     from vre.core.policy.callback import PolicyCallback, PolicyCallContext
+    from vre.core.policy.models import PolicyCallbackResult
 
     class AllowTempWrites:
-        def __call__(self, context: PolicyCallContext) -> bool:
-            # Return False to suppress the violation, True to let it fire.
+        def __call__(self, context: PolicyCallContext) -> PolicyCallbackResult:
             path = context.call_kwargs.get("path", "")
-            return not path.startswith("/tmp")
+            if path.startswith("/tmp"):
+                return PolicyCallbackResult(passed=True, message="Temp writes allowed")
+            return PolicyCallbackResult(passed=False)
 """
 
 from typing import Any, Protocol
@@ -23,6 +25,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from vre.core.grounding import GroundingResult
+from vre.core.policy.models import PolicyCallbackResult
 
 
 class PolicyCallContext(BaseModel):
@@ -53,18 +56,19 @@ class PolicyCallback(Protocol):
     """
     Protocol for policy callback callables.
 
-    A callback receives the full call context and returns a bool:
+    A callback receives the full call context and returns a PolicyCallbackResult:
 
-    - `True`  — the policy violation fires (confirmation required)
-    - `False` — the violation is suppressed (callback vetoed it)
+    - `passed=True`  — the action passes the policy (no violation)
+    - `passed=False` — the action fails the policy (violation fires)
 
     Implement this Protocol to write custom, domain-specific policy logic.
     """
 
-    def __call__(self, context: PolicyCallContext) -> bool:
+    def __call__(self, context: PolicyCallContext) -> PolicyCallbackResult:
         """
         Evaluate the policy against the given call context.
 
-        Return False to suppress the violation, True to let it fire.
+        Return PolicyCallbackResult(passed=True) if the action passes,
+        PolicyCallbackResult(passed=False) if the action fails the policy.
         """
         ...

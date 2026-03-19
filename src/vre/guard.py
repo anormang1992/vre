@@ -20,8 +20,7 @@ Each call runs grounding → policy → execution in a single pass:
 2. `on_trace` is fired (if provided) with the `GroundingResult`.
 3. If grounding fails, returns `GroundingResult` immediately — the function
    is *not* called.
-4. Policy is evaluated. If PENDING: `on_policy` is consulted (or blocked if
-   absent). If BLOCK: returns `PolicyResult`.
+4. Policy is evaluated. If BLOCK: returns `PolicyResult`.
 5. Otherwise, the original function is called and its return value is returned.
 """
 
@@ -31,8 +30,9 @@ import functools
 from typing import TYPE_CHECKING, Callable
 
 from vre.core.models import DepthLevel
-from vre.core.policy import PolicyAction, PolicyResult
+from vre.core.policy import PolicyAction
 from vre.core.policy.callback import PolicyCallContext
+from vre.core.policy.models import PolicyViolation
 
 if TYPE_CHECKING:
     from vre import VRE
@@ -52,7 +52,7 @@ def vre_guard(
     cardinality: CardinalityInput = None,
     min_depth: DepthLevel | None = None,
     on_trace: Callable[["GroundingResult"], None] | None = None,
-    on_policy: Callable[[str], bool] | None = None,
+    on_policy: Callable[[list[PolicyViolation]], bool] | None = None,
     on_learn: "LearningCallback | None" = None,
 ) -> Callable:
     """
@@ -76,8 +76,9 @@ def vre_guard(
         Optional callback called with the GroundingResult after grounding
         (both grounded and ungrounded).
     on_policy:
-        Optional callback called with the confirmation message when a policy
-        requires confirmation. Should return True to proceed, False to block.
+        Optional callback called with the list of PolicyViolation when any
+        violation requires confirmation. Should return True to proceed,
+        False to block.
     on_learn:
         Optional learning callback invoked when grounding fails. Enters the
         auto-learning loop: surfaces gap templates, collects agent/user
@@ -120,21 +121,14 @@ def vre_guard(
                     call_kwargs=kwargs,
                 )
 
-                policy = vre.check_policy(grounding, resolved_cardinality, context)
+                policy = vre.check_policy(
+                    grounding, resolved_cardinality, context, on_policy=on_policy,
+                )
 
-                match policy.action:
-                    case PolicyAction.PENDING:
-                        if on_policy:
-                            if on_policy(policy.confirmation_message or ""):
-                                result = fn(*args, **kwargs)
-                            else:
-                                result = PolicyResult(action=PolicyAction.BLOCK, reason="User declined")
-                        else:
-                            result = PolicyResult(action=PolicyAction.BLOCK, reason="Confirmation required, no handler")
-                    case PolicyAction.BLOCK:
-                        result = policy
-                    case _:
-                        result = fn(*args, **kwargs)
+                if policy.action == PolicyAction.BLOCK:
+                    result = policy
+                else:
+                    result = fn(*args, **kwargs)
 
             return result
 

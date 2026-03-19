@@ -879,7 +879,8 @@ const NODES = [
           <strong>learning loop</strong> to resolve gaps → re-ground and fire
           <strong>on_trace</strong> again → if still not grounded,
           <strong>block</strong> and return gaps → evaluate
-          <strong>policies</strong> on APPLIES_TO relata → if PENDING, call
+          <strong>policies</strong> on APPLIES_TO relata → if hard blocks,
+          <strong>block</strong> immediately → if confirmation required, call
           <strong>on_policy</strong> for human confirmation → if approved,
           <strong>execute</strong> the original function.
         </p>
@@ -952,7 +953,7 @@ const NODES = [
           &nbsp;&nbsp;&nbsp;&nbsp;cardinality=<span class="ck">None</span>,&nbsp;<span class="cc"># str | Callable → str | None</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;min_depth=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># DepthLevel | None — floor override</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;on_trace=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[GroundingResult], None]</span><br>
-          &nbsp;&nbsp;&nbsp;&nbsp;on_policy=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[str], bool]</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;on_policy=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[list[PolicyViolation]], bool]</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;on_learn=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># LearningCallback | None</span><br>
           )
         </div>
@@ -967,7 +968,7 @@ const NODES = [
             <strong>on_trace</strong> — callback after grounding, receives the full epistemic trace.
           </li>
           <li>
-              <strong>on_policy</strong> — called when a policy gate requires human confirmation.
+              <strong>on_policy</strong> — called with confirmation-required violations for human approval.
           </li>
           <li>
             <strong>on_learn</strong> — a <code>LearningCallback</code> that enables the auto-learning loop when grounding fails.
