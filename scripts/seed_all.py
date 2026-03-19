@@ -881,7 +881,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                             Policy(
                                 name="ProtectedFileDeletePolicy",
                                 requires_confirmation=True,
-                                callback="demo.policies.protected_file_delete",
+                                callback="examples.langchain_ollama.policies.protected_file_delete",
                                 confirmation_message="Deletion may affect protected files. Proceed?",
                             ),
                         ],
