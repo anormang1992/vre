@@ -978,8 +978,8 @@ const NODES = [
           <span class="cc"># Static concepts</span><br>
           <span class="cdc">@vre_guard</span>(vre, concepts=[<span class="cs">"delete"</span>, <span class="cs">"file"</span>])<br>
           <span class="ck">def</span> <span class="cfn">delete_file</span>(path: <span class="cfn">str</span>) -> <span class="cfn">str</span>: ...<br><br>
-          <span class="cc"># Dynamic concepts from shell command</span><br>
-          <span class="cdc">@vre_guard</span>(vre, concepts=parse_bash_primitives)<br>
+          <span class="cc"># Dynamic concepts via callable</span><br>
+          <span class="cdc">@vre_guard</span>(vre, concepts=extract_concepts)<br>
           <span class="ck">def</span> <span class="cfn">shell_tool</span>(command: <span class="cfn">str</span>) -> <span class="cfn">str</span>: ...
         </div>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
@@ -1036,17 +1036,20 @@ const NODES = [
         </p>
         <p>
           VRE ships with a <code>PreToolUse</code> hook for Claude Code that
-          intercepts every Bash command before execution. Ungrounded commands
-          are blocked and gaps are surfaced directly to the model.
+          uses a two-pass protocol: the first call blocks and asks Claude to
+          identify the conceptual primitives; the second call carries a
+          <code># vre:concept1,concept2</code> prefix that the hook extracts,
+          grounds, and strips via <code>updatedInput</code> before execution.
         </p>
         <div class="code-block">
           <span class="ck">from</span> vre.integrations.claude_code <span class="ck">import</span> install<br><br>
           install(<span class="cs">"neo4j://localhost:7687"</span>, <span class="cs">"neo4j"</span>, <span class="cs">"password"</span>)
         </div>
         <p>
-          When blocked, Opus reads the trace, identifies exact gap types, and
-          proposes graph additions without having been <strong>prompted</strong>.
-          A frontier model, structurally constrained by a graph it cannot modify.
+          Claude proposes the concepts itself — no static mapping needed.
+          When blocked, it reads the epistemic trace, identifies exact gap types,
+          and adjusts. A frontier model, structurally constrained by a graph
+          it cannot modify.
         </p>
       `
     }

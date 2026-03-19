@@ -5,22 +5,112 @@ auto-learning via meta-epistemic dialogue with the agent.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_ollama.chat_models import ChatOllama
+from pydantic import BaseModel
 from rich.prompt import Confirm
 from rich.tree import Tree
 
 from demo.learner import DemoLearner
 from demo.repl import console
-from vre.builtins.shell import parse_bash_primitives
 from vre.core.policy.models import PolicyViolation
 
 if TYPE_CHECKING:
     from vre.core.grounding.models import GroundingResult
 
 
-def get_concepts(command: str, **kwargs) -> list[str]:
-    return parse_bash_primitives(command)
+_SYSTEM_PROMPT = """
+You are a shell command expert. Your task is to identify the conceptual primitives
+touched by the given shell command.
+"""
+
+# Splits a command string on unquoted |, &&, or ; into individual segments.
+_COMPOUND_PATTERN = r"""((?:[^"'|;&]|"[^"]*"|'[^']*'|&(?!&))*)(?:\||\&\&|;|$)"""
+
+
+class CandidateConcepts(BaseModel):
+    """Structured output containing the list of concept names."""
+
+    concepts: list[str]
+
+
+class ConceptExtractor:
+    """
+    LLM-based concept extraction from shell commands.
+
+    Mirrors the DemoLearner pattern: ChatOllama chain constructed once in
+    __init__ and reused across calls. Callable via __call__ so it can be
+    passed directly as vre_guard's ``concepts`` parameter.
+    """
+
+    def __init__(self, model: str = "qwen2.5-coder:7b") -> None:
+        self._llm = ChatOllama(
+            model=model, temperature=0.0
+        ).with_structured_output(CandidateConcepts)
+
+    @staticmethod
+    def _format_prompt(command: str) -> str:
+        return f"""
+            Shell command: {command}
+            
+            Identify the conceptual primitives this command touches.
+            
+            Primitives are the conceptual entities required to reason about the effects
+            of the command. This includes ACTIONS, TARGETS, and concepts implied by flags.
+            
+            - Actions: read, write, delete, create, move, copy, list, execute, modify, etc.
+            - Targets: file, directory, process, network, permission, etc.
+            
+            Flag-to-concept examples:
+            - `rm -rf dir/` → delete + directory + file
+            - `cp -a src/ dst/` → copy + file + directory + permission
+            - `chmod +x script.sh` → modify + permission + file + execute
+            - `find . -name "*.py" -delete` → list + delete + file + directory
+            
+            Flags themselves are NOT primitives, but they change semantic intent or
+            introduce additional concepts as shown above.
+
+            Do NOT return flag names (recursive, force, verbose, interactive, etc.)
+            as primitives. Map what the flag *does* to the concepts it affects.
+            
+            Return only the list of required conceptual primitives.
+        """
+
+    @staticmethod
+    def _normalize_primitives(concepts: set[str]) -> list[str]:
+        normalized = set()
+        for c in concepts:
+            clean = c.lower().strip().replace(" ", "_")
+            normalized.add(clean)
+        return list(normalized)
+
+    def __call__(self, command: str, **kwargs) -> list[str]:
+        segments = [
+            m.group(1).strip()
+            for m in re.finditer(_COMPOUND_PATTERN, command)
+        ]
+        commands = [s for s in segments if s]
+
+        primitives: set[str] = set()
+        for cmd in commands:
+            prompt = self._format_prompt(cmd)
+            messages = [
+                SystemMessage(content=_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+            try:
+                result = self._llm.invoke(messages)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"LLM invocation failed — is Ollama running with the "
+                    f"configured model? (original: {exc})"
+                ) from exc
+            primitives.update(result.concepts)
+
+        return self._normalize_primitives(primitives)
 
 
 def get_cardinality(command: str, **kwargs) -> str:

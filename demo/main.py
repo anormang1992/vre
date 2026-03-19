@@ -16,7 +16,7 @@ from vre import VRE
 from vre.core.graph import PrimitiveRepository
 
 from demo.agent import make_agent
-from demo.callbacks import get_concepts, get_cardinality, make_on_learn, on_policy, on_trace
+from demo.callbacks import ConceptExtractor, get_cardinality, make_on_learn, on_policy, on_trace
 from demo.repl import run
 from demo.tools import init_tools
 
@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--neo4j-password", default="password")
     parser.add_argument("--model", default="qwen3.5:latest")
     parser.add_argument("--sandbox", default="demo/workspace")
+    parser.add_argument("--concepts-model", default="qwen2.5-coder:7b")
     args = parser.parse_args()
 
     os.makedirs(args.sandbox, exist_ok=True)
@@ -35,11 +36,12 @@ def main() -> None:
     repo = PrimitiveRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
     vre = VRE(repo)
 
+    concepts = ConceptExtractor(model=args.concepts_model)
     on_learn = make_on_learn(model=args.model)
     shell_fn = init_tools(
         vre,
         args.sandbox,
-        get_concepts,
+        concepts,
         get_cardinality,
         on_trace,
         on_policy,
