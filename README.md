@@ -334,17 +334,17 @@ vre_guard(
 )
 ```
 
-**`concepts`** can be static or dynamic. Static is appropriate when a function always touches the same concept domain. Dynamic is appropriate when the concepts depend on the actual arguments — for example, a shell tool that must inspect the command string to know what it touches:
+**`concepts`** can be static or dynamic. Static is appropriate when a function always touches the same concept domain. Dynamic is appropriate when the concepts depend on the actual arguments — for example, a shell tool that must inspect the command string to know what it touches. Any callable that accepts the same arguments as the decorated function and returns `list[str]` works:
 
 ```python
-from vre.builtins.shell import parse_bash_primitives
+concepts = ConceptExtractor()   # LLM-based — see demo/callbacks.py
 
-@vre_guard(vre, concepts=parse_bash_primitives)
+@vre_guard(vre, concepts=concepts)
 def shell_tool(command: str) -> str:
     ...
 ```
 
-`parse_bash_primitives` is called with the same arguments as `shell_tool`. It maps common shell executables (`rm`, `mkdir`, `cat`, etc.) to their VRE concept names.
+VRE does not own concept extraction. The integrator decides how to map tool arguments to primitives — an LLM call, a static alias table, a rule engine, or any combination. VRE only requires the result: a list of concept names to ground.
 
 **`cardinality`** can also be static or dynamic. When dynamic, it receives the same arguments as the decorated function:
 
@@ -355,7 +355,7 @@ def get_cardinality(command: str) -> str:
     has_glob = any("*" in t for t in tokens)
     return "multiple" if (flags & tokens or has_glob) else "single"
 
-@vre_guard(vre, concepts=parse_bash_primitives, cardinality=get_cardinality)
+@vre_guard(vre, concepts=concepts, cardinality=get_cardinality)
 def shell_tool(command: str) -> str:
     ...
 ```
@@ -546,12 +546,13 @@ poetry run python -m demo.main \
   --neo4j-user neo4j \
   --neo4j-password password \
   --model qwen3:8b \
+  --concepts-model qwen2.5-coder:7b \
   --sandbox demo/workspace
 ```
 
 The agent exposes a single `shell_tool` — a sandboxed subprocess executor — guarded by `vre_guard`. Every shell command the LLM decides to run is intercepted before execution:
 
-1. The command is parsed to extract VRE concepts (`touch foo.txt` → `["create", "file"]`)
+1. A `ConceptExtractor` sends the command to a local LLM to identify conceptual primitives (`touch foo.txt` → `["create", "file"]`)
 2. Those concepts are grounded against the graph
 3. The epistemic trace is rendered to the terminal via `on_trace`
 4. Applicable policies are evaluated
@@ -559,19 +560,29 @@ The agent exposes a single `shell_tool` — a sandboxed subprocess executor — 
 
 **The agent cannot execute a command whose conceptual domain it does not understand**, and it cannot bypass policies that require human confirmation.
 
+### Concept extraction
+
+The demo uses `ConceptExtractor` (`demo/callbacks.py`) — a callable class that sends each command segment to a local Ollama model and collects the conceptual primitives it identifies. The prompt includes few-shot flag-to-concept examples (e.g. `rm -rf dir/` → delete + directory + file) and an explicit instruction to never return flag names as primitives.
+
+`ConceptExtractor` is constructed once at startup and reused across calls. It splits compound commands (pipes, `&&`, `;`) into segments and extracts concepts from each independently. The model is configurable via `--concepts-model` (default `qwen2.5-coder:7b`).
+
+`get_cardinality` is a simple rule-based function that inspects flags and globs — no LLM needed. Integrators can mix LLM and rule-based strategies for different parameters.
+
 ### Wiring it together
 
 ```python
 # demo/tools.py
 from vre.guard import vre_guard
 
+concepts = ConceptExtractor()  # LLM-based concept extraction (Ollama)
+
 @vre_guard(
     vre,
-    concepts=get_concepts,     # parses the command string → ["create", "file"]
+    concepts=concepts,            # LLM extracts primitives from command string
     cardinality=get_cardinality,  # inspects flags/globs → "single" or "multiple"
-    on_trace=on_trace,         # renders epistemic tree to terminal
-    on_policy=on_policy,       # Rich Confirm.ask prompt
-    on_learn=on_learn,         # auto-learning callback for knowledge gaps
+    on_trace=on_trace,            # renders epistemic tree to terminal
+    on_policy=on_policy,          # Rich Confirm.ask prompt
+    on_learn=on_learn,            # auto-learning callback for knowledge gaps
 )
 def shell_tool(command: str) -> str:
     result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=sandbox)
@@ -602,9 +613,7 @@ operation, the guard evaluates this policy and, if it applies, surfaces the conf
 
 ## Claude Code Integration
 
-VRE ships with a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) that intercepts every Bash tool call before 
-execution and gates it through VRE grounding and policy evaluation. Commands whose concepts are not grounded are blocked and knowledge gaps are surfaced directly to the model. Commands that trigger a policy gate
-surface a confirmation prompt via Claude Code's TUI approval dialog — human consent, not model consent.
+VRE ships with a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) that intercepts every Bash tool call before execution and gates it through VRE grounding and policy evaluation. Unlike the demo agent — which uses a local Ollama model for concept extraction — the Claude Code integration lets Claude itself propose the conceptual primitives, using a two-pass protocol.
 
 ### Install the hook
 
@@ -623,16 +632,25 @@ The hook command uses the absolute path of the current Python interpreter, so it
 
 ### How the hook works
 
-When Claude Code invokes a Bash command:
+The hook uses a **two-pass protocol** that lets Claude — the LLM — propose the concepts rather than relying on a static command-to-concept map:
 
-1. The hook reads the command from stdin and maps it to VRE concepts via `parse_bash_primitives` (`rm foo.txt` → `["delete", "file"]`)
-2. Those concepts are grounded against the graph
-3. **If not grounded** — the hook exits with code 2 and writes the full grounding trace to stderr, which Claude Code feeds back to the model as context. The command does not execute.
-4. **If confirmation-required violations exist** — the hook returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval prompt. All confirmation messages are listed so the user can make an informed decision.
-5. **If hard blocks or user declines** — the hook exits with code 2 and the policy result is fed to the model.
-6. **If grounded with no policy violations** — the hook exits with code 0 and `permissionDecision: "allow"`. The command proceeds.
+**Pass 1 — concept request:**
 
-The hook fails open: if no VRE concepts are recognized in the command, or if the VRE config file is absent, the command is allowed through. Unknown commands are never silently blocked.
+1. Claude invokes a Bash command (e.g. `rm -rf foo/`)
+2. The hook sees no `# vre:` prefix and blocks (exit 2), writing an instruction to stderr asking Claude to identify the conceptual primitives and retry with a `# vre:concept1,concept2` prefix
+
+**Pass 2 — epistemic check:**
+
+3. Claude reasons about the command, identifies primitives, and retries: `# vre:delete,file,directory\nrm -rf foo/`
+4. The hook extracts the concepts from the prefix and grounds them against the graph
+5. **If not grounded** — the hook exits with code 2 and writes the full grounding trace to stderr, which Claude Code feeds back to the model as context. The command does not execute.
+6. **If confirmation-required violations exist** — the hook returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval prompt. All confirmation messages are listed so the user can make an informed decision.
+7. **If hard blocks or user declines** — the hook exits with code 2 and the policy result is fed to the model.
+8. **If grounded with no policy violations** — the hook exits with code 0, `permissionDecision: "allow"`, and `updatedInput` with the `# vre:` prefix stripped. The executed command is clean.
+
+The `# vre:` line is a shell comment — inert if executed directly. The hook uses Claude Code's `updatedInput` mechanism to strip it before the command runs, so the actual executed command never contains the prefix.
+
+The hook fails open when the VRE config file is absent. Empty commands are allowed through without a concept request.
 
 <img width="1638" height="788" alt="Screenshot 2026-03-04 at 10 34 15 AM" src="https://github.com/user-attachments/assets/d8bbf86e-fe71-4fa5-b6a2-c4865aedf291" />
 
@@ -650,8 +668,8 @@ uninstall()
 This removes the VRE hook entry from `~/.claude/settings.json` and leaves `~/.vre/config.json` in place.
 
 ### Notes
-- The current hook is designed for Bash commands. It can be extended to other tool types by adding additional hook 
-entries with different concept parsers, but for the sake of simplicity and demonstration, it only targets Bash for now.
+- The two-pass protocol adds one round-trip per novel command. Once Claude has seen the pattern, it tends to include the `# vre:` prefix proactively.
+- The current hook is designed for Bash commands. It can be extended to other tool types by adding additional hook entries with different matchers.
 
 ---
 
@@ -735,10 +753,8 @@ src/vre/
     models.py              # Candidate models, CandidateDecision, LearningResult
     templates.py           # TemplateFactory — gap → structured candidate template
     engine.py              # LearningEngine — template → callback → validate → persist
-  builtins/
-    shell.py               # SHELL_ALIASES + parse_bash_primitives()
   integrations/
-    claude_code.py         # Claude Code PreToolUse hook — install/uninstall/run
+    claude_code.py         # Claude Code PreToolUse hook — two-pass concept protocol
 
 scripts/
   clear_graph.py           # Clear all primitives from the Neo4j graph
@@ -749,7 +765,7 @@ demo/
   main.py                  # Entry point — argparse + agent setup
   agent.py                 # ToolAgent — LangChain + Ollama streaming loop
   tools.py                 # shell_tool with vre_guard applied
-  callbacks.py             # on_trace (Rich tree), on_policy (Rich Confirm), make_on_learn
+  callbacks.py             # ConceptExtractor, on_trace, on_policy, get_cardinality, make_on_learn
   policies.py              # Demo PolicyCallback — protected file deletion guard
   learner.py               # DemoLearner — ChatOllama structured output + Rich UI
   repl.py                  # Streaming REPL with Rich Live display

@@ -27,6 +27,10 @@ def _tool_payload(command: str = "") -> dict:
     return {"tool_input": {"command": command}}
 
 
+def _prefixed_command(concepts: str, command: str) -> str:
+    return f"# vre:{concepts}\n{command}"
+
+
 # ── install ──────────────────────────────────────────────────────────────────
 
 
@@ -122,6 +126,51 @@ class TestUninstall:
         uninstall()
 
 
+# ── _parse_vre_prefix ───────────────────────────────────────────────────────
+
+
+class TestParseVrePrefix:
+
+    def test_extracts_concepts_and_clean_command(self):
+        from vre.integrations.claude_code import _parse_vre_prefix
+
+        result = _parse_vre_prefix("# vre:delete,file\nrm -rf foo/")
+        assert result is not None
+        concepts, clean = result
+        assert set(concepts) == {"delete", "file"}
+        assert clean == "rm -rf foo/"
+
+    def test_returns_none_without_prefix(self):
+        from vre.integrations.claude_code import _parse_vre_prefix
+
+        assert _parse_vre_prefix("rm -rf foo/") is None
+
+    def test_normalizes_to_lowercase(self):
+        from vre.integrations.claude_code import _parse_vre_prefix
+
+        result = _parse_vre_prefix("# vre:Delete,File\nrm foo")
+        assert result is not None
+        concepts, _ = result
+        assert concepts == ["delete", "file"]
+
+    def test_handles_spaces_around_concepts(self):
+        from vre.integrations.claude_code import _parse_vre_prefix
+
+        result = _parse_vre_prefix("# vre: delete , file \nrm foo")
+        assert result is not None
+        concepts, _ = result
+        assert set(concepts) == {"delete", "file"}
+
+    def test_handles_no_newline(self):
+        from vre.integrations.claude_code import _parse_vre_prefix
+
+        result = _parse_vre_prefix("# vre:read")
+        assert result is not None
+        concepts, clean = result
+        assert concepts == ["read"]
+        assert clean == ""
+
+
 # ── _run_hook ────────────────────────────────────────────────────────────────
 
 
@@ -139,12 +188,9 @@ class TestRunHook:
         out = json.loads(capsys.readouterr().out)
         assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
 
-    def test_allows_unrecognised_concepts(self, monkeypatch, capsys):
+    def test_blocks_command_without_prefix(self, monkeypatch, capsys):
         monkeypatch.setattr(
-            "sys.stdin", _stdin(_tool_payload("some_unknown_binary --flag"))
-        )
-        monkeypatch.setattr(
-            "vre.builtins.shell.parse_bash_primitives", lambda _: []
+            "sys.stdin", _stdin(_tool_payload("rm -rf /"))
         )
 
         from vre.integrations.claude_code import _run_hook
@@ -152,9 +198,10 @@ class TestRunHook:
         with pytest.raises(SystemExit) as exc:
             _run_hook()
 
-        assert exc.value.code == 0
-        out = json.loads(capsys.readouterr().out)
-        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "# vre:" in err
+        assert "conceptual primitives" in err
 
     def test_blocks_ungrounded_concepts(self, tmp_path, monkeypatch, capsys):
         config = tmp_path / ".vre" / "config.json"
@@ -169,10 +216,8 @@ class TestRunHook:
             "vre.integrations.claude_code._VRE_CONFIG_PATH", config
         )
         monkeypatch.setattr(
-            "sys.stdin", _stdin(_tool_payload("rm -rf /"))
-        )
-        monkeypatch.setattr(
-            "vre.builtins.shell.parse_bash_primitives", lambda _: ["Delete"]
+            "sys.stdin",
+            _stdin(_tool_payload(_prefixed_command("delete,file", "rm -rf /"))),
         )
 
         grounding = GroundingResult(grounded=False, resolved=["Delete"], gaps=[])
@@ -192,6 +237,46 @@ class TestRunHook:
 
         assert exc.value.code == 2
 
+    def test_allows_grounded_with_updated_input(self, tmp_path, monkeypatch, capsys):
+        config = tmp_path / ".vre" / "config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({
+            "uri": "neo4j://localhost:7687",
+            "user": "neo4j",
+            "password": "pass",
+            "database": "neo4j",
+        }))
+        monkeypatch.setattr(
+            "vre.integrations.claude_code._VRE_CONFIG_PATH", config
+        )
+        monkeypatch.setattr(
+            "sys.stdin",
+            _stdin(_tool_payload(_prefixed_command("read,file", "cat foo.txt"))),
+        )
+
+        grounding = GroundingResult(grounded=True, resolved=["Read", "File"], gaps=[])
+        policy = PolicyResult(action=PolicyAction.PASS, reason="No violations", violations=[])
+
+        mock_repo = MagicMock()
+        mock_repo.__enter__ = MagicMock(return_value=mock_repo)
+        mock_repo.__exit__ = MagicMock(return_value=False)
+
+        mock_vre = MagicMock()
+        mock_vre.check.return_value = grounding
+        mock_vre.check_policy.return_value = policy
+
+        with patch("vre.core.graph.PrimitiveRepository", return_value=mock_repo), \
+             patch("vre.VRE", return_value=mock_vre):
+            from vre.integrations.claude_code import _run_hook
+
+            with pytest.raises(SystemExit) as exc:
+                _run_hook()
+
+        assert exc.value.code == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert out["hookSpecificOutput"]["updatedInput"]["command"] == "cat foo.txt"
+
     def test_defers_confirmation_required_policy_to_tui(self, tmp_path, monkeypatch, capsys):
         config = tmp_path / ".vre" / "config.json"
         config.parent.mkdir(parents=True)
@@ -205,10 +290,8 @@ class TestRunHook:
             "vre.integrations.claude_code._VRE_CONFIG_PATH", config
         )
         monkeypatch.setattr(
-            "sys.stdin", _stdin(_tool_payload("ls /etc"))
-        )
-        monkeypatch.setattr(
-            "vre.builtins.shell.parse_bash_primitives", lambda _: ["Read"]
+            "sys.stdin",
+            _stdin(_tool_payload(_prefixed_command("read", "ls /etc"))),
         )
 
         grounding = GroundingResult(grounded=True, resolved=["Read"], gaps=[])
@@ -240,6 +323,7 @@ class TestRunHook:
         assert exc.value.code == 0
         out = json.loads(capsys.readouterr().out)
         assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+        assert "updatedInput" not in out["hookSpecificOutput"]
 
     def test_fails_open_on_unexpected_exception(self, monkeypatch, capsys):
         monkeypatch.setattr("sys.stdin", io.StringIO("NOT JSON{{{"))
