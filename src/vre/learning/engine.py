@@ -14,6 +14,7 @@ from uuid import UUID
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding.models import GroundingResult
 from vre.core.models import (
+    CyclicRelationshipError,
     Depth,
     DepthGap,
     DepthLevel,
@@ -261,8 +262,6 @@ class LearningEngine:
         result = self._learn_missing_depths(target, candidate.target_depth_level, grounding, callback)
         if result in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
             return result
-        if result is not None:
-            target = self._repo.find_by_id(target.id)
 
         # Phase 2: place the edge
         depth_obj = next(d for d in source.depths if d.level == candidate.source_depth_level)
@@ -276,7 +275,13 @@ class LearningEngine:
         depth_obj.relata.append(new_relatum)
 
         source.depths.sort(key=lambda d: int(d.level))
-        self._repo.save_primitive(source)
+
+        try:
+            self._repo.save_primitive(source)
+        except CyclicRelationshipError:
+            depth_obj.relata.remove(new_relatum)
+            return CandidateDecision.SKIPPED
+
         return CandidateDecision.ACCEPTED
 
     def _persist(

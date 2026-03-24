@@ -39,6 +39,21 @@ class RelationType(str, Enum):
     INCLUDES = "INCLUDES"
 
 
+TRANSITIVE_RELATION_TYPES: frozenset[RelationType] = frozenset(
+    {
+        RelationType.REQUIRES,
+        RelationType.CONSTRAINED_BY,
+        RelationType.DEPENDS_ON,
+    }
+)
+
+
+class CyclicRelationshipError(ValueError):
+    """
+    Raised when an edge would create a cycle on transitive relationship types.
+    """
+
+
 class ProvenanceSource(str, Enum):
     """
     Origin category for knowledge in the epistemic graph.

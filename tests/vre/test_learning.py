@@ -5,18 +5,21 @@ Tests cover template generation, engine persistence, and the iterative
 learning loop.
 """
 
+from collections import deque
 from uuid import UUID, uuid4
 
 import pytest
 
 from vre.core.grounding.models import GroundingResult
 from vre.core.models import (
+    CyclicRelationshipError,
     Depth,
     DepthGap,
     DepthLevel,
     EpistemicQuery,
     EpistemicResponse,
     EpistemicResult,
+    EpistemicStep,
     ExistenceGap,
     Primitive,
     Provenance,
@@ -25,6 +28,7 @@ from vre.core.models import (
     Relatum,
     RelationalGap,
     RelationType,
+    TRANSITIVE_RELATION_TYPES,
 )
 from vre.learning.callback import LearningCallback
 from vre.learning.engine import LearningEngine, _make_provenance
@@ -104,6 +108,34 @@ class StubRepository:
         return self._by_id.get(id)
 
     def save_primitive(self, primitive: Primitive) -> None:
+        for depth in primitive.depths:
+            for relatum in depth.relata:
+                if relatum.relation_type not in TRANSITIVE_RELATION_TYPES:
+                    continue
+                if relatum.target_id == primitive.id:
+                    raise CyclicRelationshipError(
+                        f"Self-referential {relatum.relation_type.value} "
+                        f"on {primitive.name}"
+                    )
+                visited: set[UUID] = {relatum.target_id}
+                queue: deque[UUID] = deque([relatum.target_id])
+                while queue:
+                    current = queue.popleft()
+                    p = self._by_id.get(current)
+                    if p is None:
+                        continue
+                    for d in p.depths:
+                        for r in d.relata:
+                            if r.relation_type not in TRANSITIVE_RELATION_TYPES:
+                                continue
+                            if r.target_id == primitive.id:
+                                raise CyclicRelationshipError(
+                                    f"{relatum.relation_type.value} from "
+                                    f"{primitive.name} would create a cycle"
+                                )
+                            if r.target_id not in visited:
+                                visited.add(r.target_id)
+                                queue.append(r.target_id)
         self._by_id[primitive.id] = primitive
         self.saved.append(primitive)
 
@@ -1026,3 +1058,345 @@ class TestLearnMissingDepthsEdgeCases:
             prim, DepthLevel.CAPABILITIES, grounding, callback,
         )
         assert result == CandidateDecision.REJECTED
+
+
+# ---------------------------------------------------------------------------
+# Cycle detection
+# ---------------------------------------------------------------------------
+
+def _reachability_grounding(
+    source: Primitive,
+    target: Primitive,
+    all_primitives: list[Primitive],
+    pathway: list[EpistemicStep] | None = None,
+) -> tuple[ReachabilityGap, GroundingResult]:
+    """Build a ReachabilityGap + GroundingResult with a trace for cycle tests."""
+    gap = ReachabilityGap(primitive=source)
+    trace = EpistemicResponse(
+        query=EpistemicQuery(concept_ids=[]),
+        result=EpistemicResult(
+            primitives=all_primitives,
+            gaps=[gap],
+            pathway=pathway or [],
+        ),
+    )
+    grounding = GroundingResult(
+        grounded=False, resolved=[], gaps=[gap], trace=trace,
+    )
+    return gap, grounding
+
+
+class TestCycleDetection:
+    """Cycle detection via save_primitive → CyclicRelationshipError → SKIPPED."""
+
+    def test_self_referential_transitive_skipped(self):
+        """A→A via REQUIRES is a trivial cycle → SKIPPED."""
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        repo = StubRepository([a])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(a, a, [a])
+
+        filled = ReachabilityCandidate(
+            target_name="A",
+            relation_type=RelationType.REQUIRES,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.SKIPPED
+
+    def test_direct_cycle_skipped(self):
+        """A→B via REQUIRES exists; B→A via REQUIRES would cycle → SKIPPED."""
+        b = _primitive("B", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                relata=[Relatum(
+                    relation_type=RelationType.REQUIRES,
+                    target_id=b.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
+        ])
+        repo = StubRepository([a, b])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(b, a, [a, b])
+
+        filled = ReachabilityCandidate(
+            target_name="A",
+            relation_type=RelationType.REQUIRES,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.SKIPPED
+
+    def test_indirect_cycle_skipped(self):
+        """A→B→C via DEPENDS_ON exists; C→A would cycle → SKIPPED."""
+        c = _primitive("C", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        b = _primitive("B", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                relata=[Relatum(
+                    relation_type=RelationType.DEPENDS_ON,
+                    target_id=c.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
+        ])
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                relata=[Relatum(
+                    relation_type=RelationType.DEPENDS_ON,
+                    target_id=b.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
+        ])
+        repo = StubRepository([a, b, c])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(c, a, [a, b, c])
+
+        filled = ReachabilityCandidate(
+            target_name="A",
+            relation_type=RelationType.DEPENDS_ON,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.SKIPPED
+
+    def test_mixed_transitive_types_cycle_skipped(self):
+        """A→B via REQUIRES exists; B→A via CONSTRAINED_BY would cycle → SKIPPED."""
+        b = _primitive("B", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                relata=[Relatum(
+                    relation_type=RelationType.REQUIRES,
+                    target_id=b.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
+        ])
+        repo = StubRepository([a, b])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(b, a, [a, b])
+
+        filled = ReachabilityCandidate(
+            target_name="A",
+            relation_type=RelationType.CONSTRAINED_BY,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.SKIPPED
+
+    def test_non_transitive_cycle_allowed(self):
+        """A→B via APPLIES_TO exists; B→A via APPLIES_TO is fine → ACCEPTED."""
+        b = _primitive("B", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                relata=[Relatum(
+                    relation_type=RelationType.APPLIES_TO,
+                    target_id=b.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
+        ])
+        repo = StubRepository([a, b])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(b, a, [a, b])
+
+        filled = ReachabilityCandidate(
+            target_name="A",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.ACCEPTED
+
+    def test_non_transitive_self_ref_allowed(self):
+        """A→A via INCLUDES is fine → ACCEPTED."""
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        repo = StubRepository([a])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(a, a, [a])
+
+        filled = ReachabilityCandidate(
+            target_name="A",
+            relation_type=RelationType.INCLUDES,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.ACCEPTED
+
+    def test_valid_transitive_edge_accepted(self):
+        """A→B via REQUIRES with no path B→A → ACCEPTED."""
+        b = _primitive("B", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        a = _primitive("A", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        repo = StubRepository([a, b])
+        engine = LearningEngine(repo)
+        gap, grounding = _reachability_grounding(a, b, [a, b])
+
+        filled = ReachabilityCandidate(
+            target_name="B",
+            relation_type=RelationType.REQUIRES,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        def callback(candidate, gr, gap):
+            return filled, CandidateDecision.ACCEPTED
+
+        result = engine.learn_at(grounding, 0, callback)
+        assert result.decision == CandidateDecision.ACCEPTED
+        saved = repo.saved[0]
+        d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
+        assert len(d2.relata) == 1
+        assert d2.relata[0].target_id == b.id
+        assert d2.relata[0].relation_type == RelationType.REQUIRES
+
+
+class TestStubRepositoryCycleDetection:
+    """Defense-in-depth: save_primitive raises on transitive cycles."""
+
+    def test_save_raises_on_self_referential_transitive(self):
+        a = _primitive("A", depths=[
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                provenance=_prov(),
+                relata=[Relatum(
+                    relation_type=RelationType.REQUIRES,
+                    target_id=uuid4(),  # placeholder, overwritten below
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+            ),
+        ])
+        a.depths[0].relata[0].target_id = a.id
+        repo = StubRepository()
+        with pytest.raises(CyclicRelationshipError):
+            repo.save_primitive(a)
+
+    def test_save_raises_on_two_node_cycle(self):
+        b = _primitive("B", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        a = _primitive("A", depths=[
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                provenance=_prov(),
+                relata=[Relatum(
+                    relation_type=RelationType.REQUIRES,
+                    target_id=b.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+            ),
+        ])
+        repo = StubRepository([a])  # A→B already in repo
+        # Now try to save B with B→A
+        b_with_edge = _primitive("B", depths=[
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={},
+                provenance=_prov(),
+                relata=[Relatum(
+                    relation_type=RelationType.REQUIRES,
+                    target_id=a.id,
+                    target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_prov(),
+                )],
+            ),
+        ], id=b.id)
+        with pytest.raises(CyclicRelationshipError):
+            repo.save_primitive(b_with_edge)
