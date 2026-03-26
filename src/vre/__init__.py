@@ -19,7 +19,7 @@ from typing import Callable
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
-from vre.core.models import DepthLevel, Provenance, ProvenanceSource
+from vre.core.models import CyclicRelationshipError, DepthLevel, Provenance, ProvenanceSource
 from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult, PolicyViolation
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
@@ -33,6 +33,7 @@ from vre.learning import (
 
 __all__ = [
     "VRE",
+    "CyclicRelationshipError",
     "PrimitiveRepository",
     "ConceptResolver",
     "GroundingEngine",
@@ -92,6 +93,8 @@ class VRE:
 
         Parameters
         ----------
+        concepts:
+            List of free-form concept names to ground.
         min_depth:
             Optional integrator override — enforces a minimum depth floor
             on all root primitives. Can only raise the floor, never lower it.

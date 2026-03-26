@@ -16,6 +16,7 @@ from uuid import UUID
 from neo4j import GraphDatabase
 
 from vre.core.models import (
+    CyclicRelationshipError,
     Depth,
     DepthLevel,
     EpistemicStep,
@@ -24,11 +25,12 @@ from vre.core.models import (
     Relatum,
     RelationType,
     ResolvedSubgraph,
+    TRANSITIVE_RELATION_TYPES,
 )
 from vre.core.policy.models import parse_policy
 
 
-_TRANSITIVE_RELS = ["REQUIRES", "DEPENDS_ON", "CONSTRAINED_BY"]
+_TRANSITIVE_RELS = [rt.value for rt in TRANSITIVE_RELATION_TYPES]
 
 
 class PrimitiveRepository:
@@ -162,6 +164,51 @@ class PrimitiveRepository:
             provenance=node_prov,
         )
 
+    @staticmethod
+    def _check_transitive_cycles(
+        tx: Any,
+        source_id: str,
+        relata_params: list[dict[str, Any]],
+        transitive_types: list[str],
+    ) -> None:
+        """
+        Verify that no new transitive edge would create a cycle.
+
+        Called inside the write transaction after old edges have been deleted.
+        For each new transitive relatum, checks whether the target can already
+        reach the source via transitive edges. Raises CyclicRelationshipError
+        on the first cycle found.
+        """
+        type_union = "|".join(transitive_types)
+
+        for rp in relata_params:
+            if rp["relation_type"] not in transitive_types:
+                continue
+
+            if rp["target_id"] == source_id:
+                raise CyclicRelationshipError(
+                    f"Self-referential {rp['relation_type']} on {source_id}"
+                )
+
+            record = tx.run(
+                cast(
+                    LiteralString,
+                    "MATCH (t:Primitive {id: $target_id}) "
+                    "MATCH (s:Primitive {id: $source_id}) "
+                    f"OPTIONAL MATCH path = (t)-[:{type_union}*1..]->(s) "
+                    "RETURN path IS NOT NULL AS would_cycle "
+                    "LIMIT 1",
+                ),
+                source_id=source_id,
+                target_id=rp["target_id"],
+            ).single()
+
+            if record and record["would_cycle"]:
+                raise CyclicRelationshipError(
+                    f"{rp['relation_type']} from {source_id} to "
+                    f"{rp['target_id']} would create a cycle"
+                )
+
     def save_primitive(self, primitive: Primitive) -> None:
         """
         Persist a Primitive — full replace of depths and relata.
@@ -209,6 +256,10 @@ class PrimitiveRepository:
                     ),
                     id=str(primitive.id),
                 )
+
+            PrimitiveRepository._check_transitive_cycles(
+                tx, str(primitive.id), relata_params, _TRANSITIVE_RELS,
+            )
 
             for rp in relata_params:
                 tx.run(
