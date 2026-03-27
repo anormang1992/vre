@@ -13,8 +13,8 @@ from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding.models import GroundingResult
+from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.models import (
-    CyclicRelationshipError,
     Depth,
     DepthGap,
     DepthLevel,
@@ -74,7 +74,7 @@ def _resolve_name_to_id(name: str, grounding: GroundingResult) -> UUID:
         for p in grounding.trace.result.primitives:
             if p.name.lower() == name.lower():
                 return p.id
-    raise ValueError(f"Cannot resolve '{name}' to a primitive ID from the grounding trace")
+    raise CandidateValidationError(f"Cannot resolve '{name}' to a primitive ID from the grounding trace")
 
 
 class LearningEngine:
@@ -98,7 +98,7 @@ class LearningEngine:
         Persist a new primitive with D0 (auto-generated) and agent-provided D1.
         """
         if candidate.d1 is None:
-            raise ValueError(f"ExistenceCandidate '{candidate.name}' is missing D1 (identity)")
+            raise CandidateValidationError(f"ExistenceCandidate '{candidate.name}' is missing D1 (identity)")
 
         d0 = Depth(
             level=DepthLevel.EXISTENCE,
@@ -159,11 +159,11 @@ class LearningEngine:
         Merge new depth levels into an existing primitive and persist.
         """
         if not candidate.new_depths:
-            raise ValueError(f"DepthCandidate for '{gap.primitive.name}' has no new depths")
+            raise CandidateValidationError(f"DepthCandidate for '{gap.primitive.name}' has no new depths")
 
         existing = self._repo.find_by_id(gap.primitive.id)
         if existing is None:
-            raise ValueError(f"Primitive '{gap.primitive.name}' ({gap.primitive.id}) not found")
+            raise CandidateValidationError(f"Primitive '{gap.primitive.name}' ({gap.primitive.id}) not found")
 
         self._merge_depths(existing, candidate.new_depths, provenance)
 
@@ -174,11 +174,11 @@ class LearningEngine:
         Merge new depth levels into the target primitive and persist.
         """
         if not candidate.new_depths:
-            raise ValueError(f"RelationalCandidate for '{gap.target.name}' has no new depths")
+            raise CandidateValidationError(f"RelationalCandidate for '{gap.target.name}' has no new depths")
 
         target = self._repo.find_by_id(gap.target.id)
         if target is None:
-            raise ValueError(f"Target '{gap.target.name}' ({gap.target.id}) not found")
+            raise CandidateValidationError(f"Target '{gap.target.name}' ({gap.target.id}) not found")
 
         self._merge_depths(target, candidate.new_depths, provenance)
 
@@ -232,12 +232,12 @@ class LearningEngine:
         If depth learning is rejected or skipped, edge placement is abandoned.
         """
         if candidate.target_name is None or candidate.relation_type is None:
-            raise ValueError(
+            raise CandidateValidationError(
                 f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
                 f"target_name or relation_type"
             )
         if candidate.source_depth_level is None or candidate.target_depth_level is None:
-            raise ValueError(
+            raise CandidateValidationError(
                 f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
                 f"source_depth_level or target_depth_level"
             )
@@ -246,11 +246,11 @@ class LearningEngine:
 
         source = self._repo.find_by_id(gap.primitive.id)
         if source is None:
-            raise ValueError(f"Source '{gap.primitive.name}' ({gap.primitive.id}) not found")
+            raise CandidateValidationError(f"Source '{gap.primitive.name}' ({gap.primitive.id}) not found")
 
         target = self._repo.find_by_id(target_id)
         if target is None:
-            raise ValueError(f"Target '{candidate.target_name}' ({target_id}) not found")
+            raise CandidateValidationError(f"Target '{candidate.target_name}' ({target_id}) not found")
 
         # Phase 1: learn missing depths on source, then target
         result = self._learn_missing_depths(source, candidate.source_depth_level, grounding, callback)
@@ -280,7 +280,7 @@ class LearningEngine:
             self._repo.save_primitive(source)
         except CyclicRelationshipError:
             depth_obj.relata.remove(new_relatum)
-            return CandidateDecision.SKIPPED
+            raise
 
         return CandidateDecision.ACCEPTED
 
@@ -316,9 +316,9 @@ class LearningEngine:
         Process the gap at the given index in the grounding result.
         """
         if not grounding.gaps:
-            raise ValueError("No gaps to learn from")
+            raise CandidateValidationError("No gaps to learn from")
         if gap_index < 0 or gap_index >= len(grounding.gaps):
-            raise ValueError(f"Gap index {gap_index} out of range (0..{len(grounding.gaps) - 1})")
+            raise CandidateValidationError(f"Gap index {gap_index} out of range (0..{len(grounding.gaps) - 1})")
 
         gap = grounding.gaps[gap_index]
         candidate = TemplateFactory.from_gap(gap)

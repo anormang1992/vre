@@ -17,11 +17,14 @@ class PolicyGate:
     @staticmethod
     def _collect_violations(
         response: EpistemicResponse,
-        cardinality: Cardinality,
+        cardinality: Cardinality | None = None,
         call_context: PolicyCallContext | None = None,
     ) -> list[PolicyViolation]:
         """
         Walk all APPLIES_TO relata in the trace and collect triggered policy violations.
+
+        When cardinality is None (unknown), all policies fire — we cannot justify
+        skipping any policy without knowing the cardinality.
         """
         violations: list[PolicyViolation] = []
         for primitive in response.result.primitives:
@@ -30,7 +33,9 @@ class PolicyGate:
                     if relatum.relation_type != RelationType.APPLIES_TO:
                         continue
                     for policy in relatum.policies:
-                        if policy.trigger_cardinality is not None and policy.trigger_cardinality != cardinality:
+                        if (cardinality is not None
+                                and policy.trigger_cardinality is not None
+                                and policy.trigger_cardinality != cardinality):
                             continue
                         cb = policy.resolve_callback()
                         cb_result: PolicyCallbackResult | None = None
@@ -57,7 +62,7 @@ class PolicyGate:
     def evaluate(
         self,
         response: EpistemicResponse,
-        cardinality: Cardinality = Cardinality.SINGLE,
+        cardinality: Cardinality | None = None,
         call_context: PolicyCallContext | None = None,
     ) -> list[PolicyViolation]:
         """

@@ -159,11 +159,11 @@ class TestCheckPolicyCardinality:
         assert vre.check_policy(["write", "file"], cardinality="single").action == PolicyAction.BLOCK
         assert vre.check_policy(["write", "file"], cardinality="multiple").action == PolicyAction.BLOCK
 
-    def test_unknown_cardinality_string_falls_back_to_single(self):
-        """Unrecognised cardinality string → treated as SINGLE, not an error."""
+    def test_unknown_cardinality_string_fires_all_policies(self):
+        """Unrecognised cardinality string → None → all policies fire (safe default)."""
         vre = self._setup(Cardinality.MULTIPLE)
         result = vre.check_policy(["write", "file"], cardinality="bulk_delete_everything")
-        assert result.action == PolicyAction.PASS  # falls back to SINGLE, MULTIPLE policy skipped
+        assert result.action == PolicyAction.BLOCK  # unknown cardinality cannot skip any policy
 
 
 class TestVRECheck:

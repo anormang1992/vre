@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from vre.core.errors import ResolutionError
 from vre.core.graph import PrimitiveRepository
 
 
@@ -24,10 +25,10 @@ def _nlp():
     try:
         import spacy
         return spacy.load("en_core_web_sm")
-    except OSError:
-        raise RuntimeError(
+    except OSError as exc:
+        raise ResolutionError(
             "spaCy model not found. Run: python -m spacy download en_core_web_sm"
-        )
+        ) from exc
 
 
 def lemmatize(text: str) -> list[str]:

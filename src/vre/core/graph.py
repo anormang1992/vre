@@ -14,9 +14,15 @@ from typing import Any, LiteralString, cast
 from uuid import UUID
 
 from neo4j import GraphDatabase
+from neo4j.exceptions import Neo4jError
 
-from vre.core.models import (
+from vre.core.errors import (
     CyclicRelationshipError,
+    GraphError,
+    HydrationError,
+    PersistenceError,
+)
+from vre.core.models import (
     Depth,
     DepthLevel,
     EpistemicStep,
@@ -77,14 +83,17 @@ class PrimitiveRepository:
         """
         Create uniqueness constraint on Primitive.id.
         """
-        with self._driver.session(database=self._database) as session:
-            session.run(
-                cast(
-                    LiteralString,
-                    "CREATE CONSTRAINT primitive_id_unique IF NOT EXISTS "
-                    "FOR (p:Primitive) REQUIRE p.id IS UNIQUE",
+        try:
+            with self._driver.session(database=self._database) as session:
+                session.run(
+                    cast(
+                        LiteralString,
+                        "CREATE CONSTRAINT primitive_id_unique IF NOT EXISTS "
+                        "FOR (p:Primitive) REQUIRE p.id IS UNIQUE",
+                    )
                 )
-            )
+        except Neo4jError as exc:
+            raise GraphError(f"Failed to ensure constraints: {exc}") from exc
 
     @staticmethod
     def _depths_to_json(depths: list[Depth]) -> str:
@@ -110,59 +119,64 @@ class PrimitiveRepository:
         """
         Reconstruct a Primitive from raw Neo4j node data and its relationship records.
         """
-        raw_depths = json.loads(node_data["depths_json"])
-        depths_by_level: dict[int, Depth] = {}
-        for rd in raw_depths:
-            depth = Depth(
-                level=DepthLevel(rd["level"]),
-                properties=rd.get("properties", {}),
-                provenance=Provenance(**rd["provenance"]) if rd.get("provenance") else None,
+        try:
+            raw_depths = json.loads(node_data["depths_json"])
+            depths_by_level: dict[int, Depth] = {}
+            for rd in raw_depths:
+                depth = Depth(
+                    level=DepthLevel(rd["level"]),
+                    properties=rd.get("properties", {}),
+                    provenance=Provenance(**rd["provenance"]) if rd.get("provenance") else None,
+                )
+                depths_by_level[int(depth.level)] = depth
+
+            for rel in relationships:
+                rel_props = rel.get("rel_props", {})
+                source_depth = rel_props.get("source_depth")
+                target_depth_val = rel_props.get("target_depth")
+                metadata_json = rel_props.get("metadata_json", "{}")
+                metadata = json.loads(metadata_json) if metadata_json else {}
+
+                policies = rel_props.get("policies", "[]")
+                policies_data = json.loads(policies) if policies else []
+                policies = [parse_policy(p) for p in policies_data]
+
+                rel_prov_json = rel_props.get("provenance")
+                rel_prov = None
+                if rel_prov_json:
+                    rel_prov_data = json.loads(rel_prov_json) if isinstance(rel_prov_json, str) else rel_prov_json
+                    rel_prov = Provenance(**rel_prov_data)
+
+                relatum = Relatum(
+                    relation_type=RelationType(rel["rel_type"]),
+                    target_id=UUID(rel["target_id"]),
+                    target_depth=DepthLevel(target_depth_val),
+                    metadata=metadata,
+                    policies=policies,
+                    provenance=rel_prov,
+                )
+
+                if source_depth is not None and source_depth in depths_by_level:
+                    depths_by_level[source_depth].relata.append(relatum)
+
+            sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
+
+            node_prov_json = node_data.get("provenance")
+            node_prov = None
+            if node_prov_json:
+                node_prov_data = json.loads(node_prov_json) if isinstance(node_prov_json, str) else node_prov_json
+                node_prov = Provenance(**node_prov_data)
+
+            return Primitive(
+                id=UUID(node_data["id"]),
+                name=node_data["name"],
+                depths=sorted_depths,
+                provenance=node_prov,
             )
-            depths_by_level[int(depth.level)] = depth
-
-        for rel in relationships:
-            rel_props = rel.get("rel_props", {})
-            source_depth = rel_props.get("source_depth")
-            target_depth_val = rel_props.get("target_depth")
-            metadata_json = rel_props.get("metadata_json", "{}")
-            metadata = json.loads(metadata_json) if metadata_json else {}
-
-            policies = rel_props.get("policies", "[]")
-            policies_data = json.loads(policies) if policies else []
-            policies = [parse_policy(p) for p in policies_data]
-
-            rel_prov_json = rel_props.get("provenance")
-            rel_prov = None
-            if rel_prov_json:
-                rel_prov_data = json.loads(rel_prov_json) if isinstance(rel_prov_json, str) else rel_prov_json
-                rel_prov = Provenance(**rel_prov_data)
-
-            relatum = Relatum(
-                relation_type=RelationType(rel["rel_type"]),
-                target_id=UUID(rel["target_id"]),
-                target_depth=DepthLevel(target_depth_val),
-                metadata=metadata,
-                policies=policies,
-                provenance=rel_prov,
-            )
-
-            if source_depth is not None and source_depth in depths_by_level:
-                depths_by_level[source_depth].relata.append(relatum)
-
-        sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
-
-        node_prov_json = node_data.get("provenance")
-        node_prov = None
-        if node_prov_json:
-            node_prov_data = json.loads(node_prov_json) if isinstance(node_prov_json, str) else node_prov_json
-            node_prov = Provenance(**node_prov_data)
-
-        return Primitive(
-            id=UUID(node_data["id"]),
-            name=node_data["name"],
-            depths=sorted_depths,
-            provenance=node_prov,
-        )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise HydrationError(
+                f"Failed to hydrate primitive '{node_data.get('name', '?')}': {exc}"
+            ) from exc
 
     @staticmethod
     def _check_transitive_cycles(
@@ -284,18 +298,26 @@ class PrimitiveRepository:
                     provenance=rp["provenance"],
                 )
 
-        with self._driver.session(database=self._database) as session:
-            session.execute_write(_tx)
+        try:
+            with self._driver.session(database=self._database) as session:
+                session.execute_write(_tx)
+        except CyclicRelationshipError:
+            raise
+        except Neo4jError as exc:
+            raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
 
     def list_names(self) -> list[str]:
         """
         Return the names of all primitives in the graph, sorted alphabetically.
         """
-        with self._driver.session(database=self._database) as session:
-            result = session.run(
-                cast(LiteralString, "MATCH (p:Primitive) RETURN p.name AS name ORDER BY p.name")
-            )
-            return [record["name"] for record in result]
+        try:
+            with self._driver.session(database=self._database) as session:
+                result = session.run(
+                    cast(LiteralString, "MATCH (p:Primitive) RETURN p.name AS name ORDER BY p.name")
+                )
+                return [record["name"] for record in result]
+        except Neo4jError as exc:
+            raise GraphError(f"Failed to list primitive names: {exc}") from exc
 
     def find_by_id(self, id: UUID) -> Primitive | None:
         """
@@ -323,33 +345,38 @@ class PrimitiveRepository:
             """,
         )
 
-        with self._driver.session(database=self._database) as session:
-            record = session.run(cypher, id=str(id)).single()
-            if record is None or record["id"] is None:
-                return None
+        try:
+            with self._driver.session(database=self._database) as session:
+                record = session.run(cypher, id=str(id)).single()
+                if record is None or record["id"] is None:
+                    return None
 
-            node_data = {
-                "id": record["id"],
-                "name": record["name"],
-                "depths_json": record["depths_json"],
-                "provenance": record["provenance"],
-            }
-            relationships = [
-                {
-                    "rel_type": r["rel_type"],
-                    "target_id": r["target_id"],
-                    "rel_props": {
-                        "source_depth": r["source_depth"],
-                        "target_depth": r["target_depth"],
-                        "metadata_json": r.get("metadata_json") or "{}",
-                        "policies": r.get("policies") or "[]",
-                        "provenance": r.get("provenance"),
-                    },
+                node_data = {
+                    "id": record["id"],
+                    "name": record["name"],
+                    "depths_json": record["depths_json"],
+                    "provenance": record["provenance"],
                 }
-                for r in record["rels"]
-                if r.get("rel_type") is not None
-            ]
-            return self._hydrate_primitive(node_data, relationships)
+                relationships = [
+                    {
+                        "rel_type": r["rel_type"],
+                        "target_id": r["target_id"],
+                        "rel_props": {
+                            "source_depth": r["source_depth"],
+                            "target_depth": r["target_depth"],
+                            "metadata_json": r.get("metadata_json") or "{}",
+                            "policies": r.get("policies") or "[]",
+                            "provenance": r.get("provenance"),
+                        },
+                    }
+                    for r in record["rels"]
+                    if r.get("rel_type") is not None
+                ]
+                return self._hydrate_primitive(node_data, relationships)
+        except (GraphError, HydrationError):
+            raise
+        except Neo4jError as exc:
+            raise GraphError(f"Failed to find primitive by id '{id}': {exc}") from exc
 
     def find_by_name(self, name: str) -> Primitive | None:
         """
@@ -378,47 +405,55 @@ class PrimitiveRepository:
             """,
         )
 
-        with self._driver.session(database=self._database) as session:
-            record = session.run(cypher, name=name).single()
-            if record is None or record["id"] is None:
-                return None
+        try:
+            with self._driver.session(database=self._database) as session:
+                record = session.run(cypher, name=name).single()
+                if record is None or record["id"] is None:
+                    return None
 
-            node_data = {
-                "id": record["id"],
-                "name": record["name"],
-                "depths_json": record["depths_json"],
-                "provenance": record["provenance"],
-            }
-            relationships = [
-                {
-                    "rel_type": r["rel_type"],
-                    "target_id": r["target_id"],
-                    "rel_props": {
-                        "source_depth": r["source_depth"],
-                        "target_depth": r["target_depth"],
-                        "metadata_json": r.get("metadata_json") or "{}",
-                        "policies": r.get("policies") or "[]",
-                        "provenance": r.get("provenance"),
-                    },
+                node_data = {
+                    "id": record["id"],
+                    "name": record["name"],
+                    "depths_json": record["depths_json"],
+                    "provenance": record["provenance"],
                 }
-                for r in record["rels"]
-                if r.get("rel_type") is not None
-            ]
-            return self._hydrate_primitive(node_data, relationships)
+                relationships = [
+                    {
+                        "rel_type": r["rel_type"],
+                        "target_id": r["target_id"],
+                        "rel_props": {
+                            "source_depth": r["source_depth"],
+                            "target_depth": r["target_depth"],
+                            "metadata_json": r.get("metadata_json") or "{}",
+                            "policies": r.get("policies") or "[]",
+                            "provenance": r.get("provenance"),
+                        },
+                    }
+                    for r in record["rels"]
+                    if r.get("rel_type") is not None
+                ]
+                return self._hydrate_primitive(node_data, relationships)
+        except (GraphError, HydrationError):
+            raise
+        except Neo4jError as exc:
+            raise GraphError(f"Failed to find primitive by name '{name}': {exc}") from exc
 
     def delete_primitive(self, id: UUID) -> bool:
         """
         Delete the primitive with the given UUID and all its relationships. Returns True if deleted.
         """
-        with self._driver.session(database=self._database) as session:
-            result = session.run(
-                cast(
-                    LiteralString,
-                    "MATCH (p:Primitive {id: $id}) DETACH DELETE p RETURN count(p) AS deleted",
-                ),
-                id=str(id),
-            ).single()
-            return result is not None and result["deleted"] > 0
+        try:
+            with self._driver.session(database=self._database) as session:
+                result = session.run(
+                    cast(
+                        LiteralString,
+                        "MATCH (p:Primitive {id: $id}) DETACH DELETE p RETURN count(p) AS deleted",
+                    ),
+                    id=str(id),
+                ).single()
+                return result is not None and result["deleted"] > 0
+        except Neo4jError as exc:
+            raise PersistenceError(f"Failed to delete primitive '{id}': {exc}") from exc
 
     def resolve_subgraph(
         self,
@@ -466,53 +501,58 @@ class PrimitiveRepository:
             """,
         )
 
-        with self._driver.session(database=self._database) as session:
-            record = session.run(
-                cypher,
-                names=lowered,
-                transitive_types=_TRANSITIVE_RELS,
-            ).single()
+        try:
+            with self._driver.session(database=self._database) as session:
+                record = session.run(
+                    cypher,
+                    names=lowered,
+                    transitive_types=_TRANSITIVE_RELS,
+                ).single()
 
-            if record is None:
-                return ResolvedSubgraph(roots=[], nodes=[], edges=[])
+                if record is None:
+                    return ResolvedSubgraph(roots=[], nodes=[], edges=[])
 
-            raw_roots = record["roots"]
-            raw_nodes = record["nodes"]
-            raw_edges = record["edges"]
+                raw_roots = record["roots"]
+                raw_nodes = record["nodes"]
+                raw_edges = record["edges"]
 
-            edges_by_source: dict[str, list[dict[str, Any]]] = {}
-            for e in raw_edges:
-                sid = e["source_id"]
-                edges_by_source.setdefault(sid, []).append({
-                    "rel_type": e["rel_type"],
-                    "target_id": e["target_id"],
-                    "rel_props": {
-                        "source_depth": e["source_depth"],
-                        "target_depth": e["target_depth"],
-                        "metadata_json": e.get("metadata_json", "{}"),
-                        "policies": e.get("policies", "[]"),
-                        "provenance": e.get("provenance"),
-                    },
-                })
+                edges_by_source: dict[str, list[dict[str, Any]]] = {}
+                for e in raw_edges:
+                    sid = e["source_id"]
+                    edges_by_source.setdefault(sid, []).append({
+                        "rel_type": e["rel_type"],
+                        "target_id": e["target_id"],
+                        "rel_props": {
+                            "source_depth": e["source_depth"],
+                            "target_depth": e["target_depth"],
+                            "metadata_json": e.get("metadata_json", "{}"),
+                            "policies": e.get("policies", "[]"),
+                            "provenance": e.get("provenance"),
+                        },
+                    })
 
-            roots = [
-                self._hydrate_primitive(r, edges_by_source.get(r["id"], []))
-                for r in raw_roots
-            ]
-            nodes = [
-                self._hydrate_primitive(n, edges_by_source.get(n["id"], []))
-                for n in raw_nodes
-            ]
+                roots = [
+                    self._hydrate_primitive(r, edges_by_source.get(r["id"], []))
+                    for r in raw_roots
+                ]
+                nodes = [
+                    self._hydrate_primitive(n, edges_by_source.get(n["id"], []))
+                    for n in raw_nodes
+                ]
 
-            edges = [
-                EpistemicStep(
-                    source_id=UUID(e["source_id"]),
-                    target_id=UUID(e["target_id"]),
-                    relation_type=RelationType(e["rel_type"]),
-                    source_depth=DepthLevel(e["source_depth"]),
-                    target_depth=DepthLevel(e["target_depth"]),
-                )
-                for e in raw_edges
-            ]
+                edges = [
+                    EpistemicStep(
+                        source_id=UUID(e["source_id"]),
+                        target_id=UUID(e["target_id"]),
+                        relation_type=RelationType(e["rel_type"]),
+                        source_depth=DepthLevel(e["source_depth"]),
+                        target_depth=DepthLevel(e["target_depth"]),
+                    )
+                    for e in raw_edges
+                ]
 
-            return ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+                return ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+        except (GraphError, HydrationError):
+            raise
+        except Neo4jError as exc:
+            raise GraphError(f"Failed to resolve subgraph for {names}: {exc}") from exc

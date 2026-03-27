@@ -19,7 +19,17 @@ from typing import Callable
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
-from vre.core.models import CyclicRelationshipError, DepthLevel, Provenance, ProvenanceSource
+from vre.core.errors import (
+    CandidateValidationError,
+    CyclicRelationshipError,
+    GraphError,
+    GraphIntegrityError,
+    HydrationError,
+    PersistenceError,
+    ResolutionError,
+    VREError,
+)
+from vre.core.models import DepthLevel, Provenance, ProvenanceSource
 from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult, PolicyViolation
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
@@ -33,7 +43,14 @@ from vre.learning import (
 
 __all__ = [
     "VRE",
+    "CandidateValidationError",
     "CyclicRelationshipError",
+    "GraphError",
+    "GraphIntegrityError",
+    "HydrationError",
+    "PersistenceError",
+    "ResolutionError",
+    "VREError",
     "PrimitiveRepository",
     "ConceptResolver",
     "GroundingEngine",
@@ -167,12 +184,12 @@ class VRE:
         if grounding.trace is None:
             return PolicyResult(action=PolicyAction.PASS)
 
-        card_enum = Cardinality.SINGLE
+        card_enum: Cardinality | None = None
         if cardinality is not None:
             try:
                 card_enum = Cardinality(cardinality)
             except ValueError:
-                pass  # unknown string → fall back to SINGLE
+                card_enum = None  # unknown → fire all policies
 
         gate = PolicyGate()
         violations = gate.evaluate(grounding.trace, card_enum, call_context)
