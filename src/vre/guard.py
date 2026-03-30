@@ -27,6 +27,7 @@ Each call runs grounding → policy → execution in a single pass:
 from __future__ import annotations
 
 import functools
+import logging
 from typing import TYPE_CHECKING, Callable
 
 from vre.core.models import DepthLevel
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
 # dynamically at call time.
 ConceptsInput = list[str] | Callable[..., list[str]]
 CardinalityInput = str | None | Callable[..., str | None]
+
+logger = logging.getLogger(__name__)
 
 
 def vre_guard(
@@ -98,16 +101,19 @@ def vre_guard(
             Run grounding → learning [optional] → policy → execution on each call.
             """
             resolved_concepts = concepts(*args, **kwargs) if callable(concepts) else concepts
+            logger.info("Guard %r: grounding %d concept(s) %s", tool_name, len(resolved_concepts), resolved_concepts)
             grounding = vre.check(resolved_concepts, min_depth=min_depth)
             if on_trace:
                 on_trace(grounding)
 
             if not grounding.grounded and on_learn:
+                logger.info("Guard %r: entering learning loop (%d gaps)", tool_name, len(grounding.gaps))
                 grounding = vre.learn_all(grounding, on_learn, resolved_concepts, min_depth=min_depth)
                 if on_trace:
                     on_trace(grounding)
 
             if not grounding.grounded:
+                logger.info("Guard %r: not grounded, returning GroundingResult (%d gaps)", tool_name, len(grounding.gaps))
                 result = grounding
             else:
                 # Policy evaluation
@@ -126,8 +132,10 @@ def vre_guard(
                 )
 
                 if policy.action == PolicyAction.BLOCK:
+                    logger.info("Guard %r: policy BLOCKED — %s", tool_name, policy.reason)
                     result = policy
                 else:
+                    logger.debug("Guard %r: grounded and policy passed, executing function", tool_name)
                     result = fn(*args, **kwargs)
 
             return result

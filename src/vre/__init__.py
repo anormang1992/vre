@@ -15,6 +15,7 @@ Usage::
     print(result.grounded, result.resolved)
 """
 
+import logging
 from typing import Callable
 
 from vre.core.graph import PrimitiveRepository
@@ -40,6 +41,8 @@ from vre.learning import (
     LearningEngine,
     LearningResult,
 )
+
+logging.getLogger("vre").addHandler(logging.NullHandler())
 
 __all__ = [
     "VRE",

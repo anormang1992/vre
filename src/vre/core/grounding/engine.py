@@ -16,6 +16,7 @@ lever to enforce a stricter floor than the graph alone would require.
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
@@ -44,6 +45,9 @@ def _empty_response() -> EpistemicResponse:
         query=EpistemicQuery(concept_ids=[]),
         result=EpistemicResult(primitives=[]),
     )
+
+
+logger = logging.getLogger(__name__)
 
 
 class GroundingEngine:
@@ -124,6 +128,7 @@ class GroundingEngine:
                 visible.append(edge)
             else:
                 gated.append(edge)
+        logger.debug("Edge partition: %d visible, %d gated", len(visible), len(gated))
         return visible, gated
 
     @staticmethod
@@ -210,6 +215,10 @@ class GroundingEngine:
                 current_depth=curr,
             ))
 
+        if gaps:
+            logger.info("Detected %d gap(s): %s", len(gaps), [g.kind for g in gaps])
+        else:
+            logger.debug("No gaps detected")
         return gaps
 
     @staticmethod
@@ -274,6 +283,7 @@ class GroundingEngine:
             it below what the graph structure requires.
         """
         if not concepts:
+            logger.debug("Empty concept list, returning empty response")
             return _empty_response()
 
         subgraph = self._repo.resolve_subgraph(concepts)
@@ -282,6 +292,10 @@ class GroundingEngine:
         transient_ids = {t.id for t in transients}
         root_ids = {r.id for r in roots}
         all_nodes = list(subgraph.nodes) + transients
+        logger.debug(
+            "Query for %s: resolved %d roots (%d transient), %d nodes, %d edges",
+            concepts, len(roots), len(transients), len(all_nodes), len(subgraph.edges),
+        )
 
         id_to_prim = {n.id: n for n in all_nodes}
         visible_edges, gated_edges = self._partition_edges_by_source_depth(
@@ -309,6 +323,7 @@ class GroundingEngine:
             reachable = self._reachable_undirected(anchor.id, neighbors)
             for root in non_transient_roots:
                 if root.id != anchor.id and root.id not in reachable:
+                    logger.warning("Reachability gap: %r is isolated from other query roots", root.name)
                     gaps.append(ReachabilityGap(primitive=root))
 
         filtered = self._filter_depths(all_nodes)
@@ -333,6 +348,7 @@ class GroundingEngine:
         all concepts are grounded with no gaps.
         """
         if not concepts:
+            logger.debug("Ground called with empty concepts")
             return GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
 
         # Resolve to canonical names where possible; unknown names pass through
@@ -342,9 +358,11 @@ class GroundingEngine:
             (resolver.lookup(c, name_map) or c)
             for c in concepts
         ]
+        logger.info("Grounding %d concept(s): %s -> canonical: %s", len(concepts), concepts, canonical)
 
         response = self.query(canonical, min_depth=min_depth)
         grounded = len(response.result.gaps) == 0
+        logger.info("Grounding result: grounded=%s, gaps=%d", grounded, len(response.result.gaps))
         return GroundingResult(
             grounded=grounded,
             resolved=canonical,

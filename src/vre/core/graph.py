@@ -10,6 +10,7 @@ with embedded depth JSON; relata are stored as typed Neo4j relationships.
 """
 
 import json
+import logging
 from typing import Any, LiteralString, cast
 from uuid import UUID
 
@@ -37,6 +38,8 @@ from vre.core.policy.models import parse_policy
 
 
 _TRANSITIVE_RELS = [rt.value for rt in TRANSITIVE_RELATION_TYPES]
+
+logger = logging.getLogger(__name__)
 
 
 class PrimitiveRepository:
@@ -83,6 +86,7 @@ class PrimitiveRepository:
         """
         Create uniqueness constraint on Primitive.id.
         """
+        logger.debug("Ensuring uniqueness constraint on Primitive.id")
         try:
             with self._driver.session(database=self._database) as session:
                 session.run(
@@ -93,6 +97,7 @@ class PrimitiveRepository:
                     )
                 )
         except Neo4jError as exc:
+            logger.error("Failed to ensure Neo4j constraints: %s", exc)
             raise GraphError(f"Failed to ensure constraints: {exc}") from exc
 
     @staticmethod
@@ -174,6 +179,7 @@ class PrimitiveRepository:
                 provenance=node_prov,
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            logger.error("Hydration failed for primitive %r: %s", node_data.get("name", "?"), exc)
             raise HydrationError(
                 f"Failed to hydrate primitive '{node_data.get('name', '?')}': {exc}"
             ) from exc
@@ -200,6 +206,7 @@ class PrimitiveRepository:
                 continue
 
             if rp["target_id"] == source_id:
+                logger.warning("Self-referential %s detected on primitive %s", rp["relation_type"], source_id)
                 raise CyclicRelationshipError(
                     f"Self-referential {rp['relation_type']} on {source_id}"
                 )
@@ -218,6 +225,10 @@ class PrimitiveRepository:
             ).single()
 
             if record and record["would_cycle"]:
+                logger.warning(
+                    "Cycle detected: %s from %s to %s would create a cycle",
+                    rp["relation_type"], source_id, rp["target_id"],
+                )
                 raise CyclicRelationshipError(
                     f"{rp['relation_type']} from {source_id} to "
                     f"{rp['target_id']} would create a cycle"
@@ -244,6 +255,11 @@ class PrimitiveRepository:
                         "provenance": json.dumps(relatum.provenance.model_dump(mode="json")) if relatum.provenance else None,
                     }
                 )
+
+        logger.debug(
+            "Saving primitive %r (id=%s, depths=%d, relata=%d)",
+            primitive.name, primitive.id, len(primitive.depths), len(relata_params),
+        )
 
         rel_types = [rt.value for rt in RelationType]
 
@@ -304,6 +320,7 @@ class PrimitiveRepository:
         except CyclicRelationshipError:
             raise
         except Neo4jError as exc:
+            logger.error("Neo4j error saving primitive %r: %s", primitive.name, exc)
             raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
 
     def list_names(self) -> list[str]:
@@ -349,6 +366,7 @@ class PrimitiveRepository:
             with self._driver.session(database=self._database) as session:
                 record = session.run(cypher, id=str(id)).single()
                 if record is None or record["id"] is None:
+                    logger.debug("Primitive not found by id=%s", id)
                     return None
 
                 node_data = {
@@ -376,6 +394,7 @@ class PrimitiveRepository:
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
+            logger.error("Neo4j error finding primitive by id=%s: %s", id, exc)
             raise GraphError(f"Failed to find primitive by id '{id}': {exc}") from exc
 
     def find_by_name(self, name: str) -> Primitive | None:
@@ -409,6 +428,7 @@ class PrimitiveRepository:
             with self._driver.session(database=self._database) as session:
                 record = session.run(cypher, name=name).single()
                 if record is None or record["id"] is None:
+                    logger.debug("Primitive not found by name=%r", name)
                     return None
 
                 node_data = {
@@ -436,6 +456,7 @@ class PrimitiveRepository:
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
+            logger.error("Neo4j error finding primitive by name=%r: %s", name, exc)
             raise GraphError(f"Failed to find primitive by name '{name}': {exc}") from exc
 
     def delete_primitive(self, id: UUID) -> bool:
@@ -462,6 +483,7 @@ class PrimitiveRepository:
         """
         Single-query Cypher traversal that resolves a subgraph for the given names.
         """
+        logger.debug("Resolving subgraph for names=%s", names)
         lowered = [n.lower() for n in names]
 
         cypher = cast(
@@ -551,8 +573,13 @@ class PrimitiveRepository:
                     for e in raw_edges
                 ]
 
+                logger.debug(
+                    "Subgraph resolved: %d roots, %d nodes, %d edges",
+                    len(roots), len(nodes), len(edges),
+                )
                 return ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
+            logger.error("Neo4j error resolving subgraph for %s: %s", names, exc)
             raise GraphError(f"Failed to resolve subgraph for {names}: {exc}") from exc
