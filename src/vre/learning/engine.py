@@ -316,11 +316,14 @@ class LearningEngine:
 
         try:
             self._repo.save_primitive(source)
-        except CyclicRelationshipError as exc:
-            logger.error(
-                "Cyclic relationship error placing %s edge from %r (%s) to %s: %s",
-                candidate.relation_type.value, gap.primitive.name,
-                gap.primitive.id, target_id, exc,
+        except CyclicRelationshipError:
+            logger.exception(
+                "Cyclic relationship error placing %s edge from %r (%s) to %r (%s)",
+                candidate.relation_type.value,
+                source.name,
+                source.id,
+                target.name,
+                target.id,
             )
             depth_obj.relata.remove(new_relatum)
             raise
@@ -372,8 +375,16 @@ class LearningEngine:
             logger.info("Gap %d skipped by callback", gap_index)
             return LearningResult(decision=CandidateDecision.SKIPPED, candidate=candidate)
 
-        if decision == CandidateDecision.REJECTED or filled is None:
+        if decision == CandidateDecision.REJECTED:
             logger.info("Gap %d rejected by callback", gap_index)
+            return LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
+
+        if filled is None:
+            logger.warning(
+                "Callback for gap %d returned no candidate (decision=%s); treating as REJECTED",
+                gap_index,
+                decision.value,
+            )
             return LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
 
         logger.debug(
