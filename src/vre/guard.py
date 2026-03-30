@@ -101,7 +101,8 @@ def vre_guard(
             Run grounding → learning [optional] → policy → execution on each call.
             """
             resolved_concepts = concepts(*args, **kwargs) if callable(concepts) else concepts
-            logger.info("Guard %r: grounding %d concept(s) %s", tool_name, len(resolved_concepts), resolved_concepts)
+            logger.info("Guard %r: grounding %d concept(s)", tool_name, len(resolved_concepts))
+            logger.debug("Guard %r: concepts %s", tool_name, resolved_concepts)
             grounding = vre.check(resolved_concepts, min_depth=min_depth)
             if on_trace:
                 on_trace(grounding)

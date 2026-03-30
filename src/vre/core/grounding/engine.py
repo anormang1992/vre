@@ -358,7 +358,8 @@ class GroundingEngine:
             (resolver.lookup(c, name_map) or c)
             for c in concepts
         ]
-        logger.info("Grounding %d concept(s): %s -> canonical: %s", len(concepts), concepts, canonical)
+        logger.info("Grounding %d concept(s)", len(concepts))
+        logger.debug("Grounding concepts: %s -> canonical: %s", concepts, canonical)
 
         response = self.query(canonical, min_depth=min_depth)
         grounded = len(response.result.gaps) == 0
