@@ -11,10 +11,14 @@ similarity scoring.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from vre.core.errors import ResolutionError
 from vre.core.graph import PrimitiveRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -26,6 +30,7 @@ def _nlp():
         import spacy
         return spacy.load("en_core_web_sm")
     except OSError as exc:
+        logger.error("spaCy model 'en_core_web_sm' not found: %s", exc)
         raise ResolutionError(
             "spaCy model not found. Run: python -m spacy download en_core_web_sm"
         ) from exc
@@ -75,11 +80,14 @@ class ConceptResolver:
         """
         # Try direct lowercase match first
         if concept.lower() in name_map:
+            logger.debug("Concept %r matched directly to %r", concept, name_map[concept.lower()])
             return name_map[concept.lower()]
         # Try each lemma
         for lemma in lemmatize(concept):
             if lemma in name_map:
+                logger.debug("Concept %r matched via lemma %r to %r", concept, lemma, name_map[lemma])
                 return name_map[lemma]
+        logger.debug("Concept %r: no match found in name map", concept)
         return None
 
     def resolve(self, concepts: list[str]) -> list[str]:

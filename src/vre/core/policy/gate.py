@@ -5,9 +5,13 @@
 PolicyGate — evaluates policy violations against an epistemic trace.
 """
 
+import logging
+
 from vre.core.models import EpistemicResponse, RelationType
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.models import Cardinality, PolicyCallbackResult, PolicyViolation
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyGate:
@@ -36,12 +40,17 @@ class PolicyGate:
                         if (cardinality is not None
                                 and policy.trigger_cardinality is not None
                                 and policy.trigger_cardinality != cardinality):
+                            logger.debug(
+                                "Policy %r skipped: trigger_cardinality=%s does not match %s",
+                                policy.name, policy.trigger_cardinality, cardinality,
+                            )
                             continue
                         cb = policy.resolve_callback()
                         cb_result: PolicyCallbackResult | None = None
                         if cb is not None and call_context is not None:
                             cb_result = cb(call_context)
                             if cb_result.passed:
+                                logger.debug("Policy %r passed by callback", policy.name)
                                 continue  # action passed the policy — no violation
 
                         try:
@@ -51,6 +60,10 @@ class PolicyGate:
                         except (KeyError, ValueError):
                             message = policy.confirmation_message
 
+                        logger.info(
+                            "Policy violation: %r — %s (requires_confirmation=%s)",
+                            policy.name, message, policy.requires_confirmation,
+                        )
                         violations.append(PolicyViolation(
                             policy=policy,
                             message=message,
@@ -68,4 +81,10 @@ class PolicyGate:
         """
         Evaluate all policies in the trace and return triggered violations.
         """
-        return self._collect_violations(response, cardinality, call_context)
+        logger.debug("Evaluating policies (cardinality=%s, has_context=%s)", cardinality, call_context is not None)
+        violations = self._collect_violations(response, cardinality, call_context)
+        if violations:
+            logger.info("Policy evaluation: %d violation(s)", len(violations))
+        else:
+            logger.debug("Policy evaluation: no violations")
+        return violations
