@@ -11,8 +11,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from vre.core.grounding.models import GroundingResult
+from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.models import (
-    CyclicRelationshipError,
     Depth,
     DepthGap,
     DepthLevel,
@@ -241,7 +241,7 @@ class TestPersistExistence:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="missing D1"):
+        with pytest.raises(CandidateValidationError, match="missing D1"):
             engine.learn_at(grounding, 0, callback)
 
     def test_modified_gets_conversational_provenance(self):
@@ -305,7 +305,7 @@ class TestPersistDepth:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="no new depths"):
+        with pytest.raises(CandidateValidationError, match="no new depths"):
             engine.learn_at(grounding, 0, callback)
 
 
@@ -389,7 +389,7 @@ class TestPersistReachability:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="missing"):
+        with pytest.raises(CandidateValidationError, match="missing"):
             engine.learn_at(grounding, 0, callback)
 
     def test_learns_missing_source_depth_before_placing_edge(self):
@@ -520,7 +520,7 @@ class TestPersistReachability:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="Cannot resolve"):
+        with pytest.raises(CandidateValidationError, match="Cannot resolve"):
             engine.learn_at(grounding, 0, callback)
 
 
@@ -560,7 +560,7 @@ class TestDecisionFlow:
         engine = LearningEngine(repo)
         grounding = _grounding_result(grounded=True, gaps=[])
 
-        with pytest.raises(ValueError, match="No gaps"):
+        with pytest.raises(CandidateValidationError, match="No gaps"):
             engine.learn_at(grounding, 0, lambda c, g, gap: (None, CandidateDecision.REJECTED))
 
 
@@ -591,7 +591,7 @@ class TestLearnAt:
         gap = ExistenceGap(primitive=_primitive("Copy"))
         grounding = _grounding_result(grounded=False, gaps=[gap])
 
-        with pytest.raises(ValueError, match="out of range"):
+        with pytest.raises(CandidateValidationError, match="out of range"):
             engine.learn_at(grounding, 5, lambda c, g, gap: (None, CandidateDecision.REJECTED))
 
 
@@ -658,7 +658,7 @@ class TestPersistDepthEdgeCases:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(CandidateValidationError, match="not found"):
             engine.learn_at(grounding, 0, callback)
 
     def test_replaces_existing_depth_level(self):
@@ -755,7 +755,7 @@ class TestPersistRelationalEdgeCases:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="no new depths"):
+        with pytest.raises(CandidateValidationError, match="no new depths"):
             engine.learn_at(grounding, 0, callback)
 
     def test_target_not_found_raises(self):
@@ -776,7 +776,7 @@ class TestPersistRelationalEdgeCases:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(CandidateValidationError, match="not found"):
             engine.learn_at(grounding, 0, callback)
 
     def test_replaces_existing_depth_on_target(self):
@@ -901,7 +901,7 @@ class TestPersistReachabilityEdgeCases:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="missing"):
+        with pytest.raises(CandidateValidationError, match="missing"):
             engine.learn_at(grounding, 0, callback)
 
     def test_source_not_found_raises(self):
@@ -922,7 +922,7 @@ class TestPersistReachabilityEdgeCases:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(CandidateValidationError, match="not found"):
             engine.learn_at(grounding, 0, callback)
 
     def test_target_not_found_raises(self):
@@ -943,7 +943,7 @@ class TestPersistReachabilityEdgeCases:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(CandidateValidationError, match="not found"):
             engine.learn_at(grounding, 0, callback)
 
     def test_learns_missing_target_depth_and_refreshes(self):
@@ -1087,10 +1087,10 @@ def _reachability_grounding(
 
 
 class TestCycleDetection:
-    """Cycle detection via save_primitive → CyclicRelationshipError → SKIPPED."""
+    """Cycle detection via save_primitive → CyclicRelationshipError propagated."""
 
-    def test_self_referential_transitive_skipped(self):
-        """A→A via REQUIRES is a trivial cycle → SKIPPED."""
+    def test_self_referential_transitive_raises(self):
+        """A→A via REQUIRES is a trivial cycle → CyclicRelationshipError."""
         a = _primitive("A", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1110,11 +1110,11 @@ class TestCycleDetection:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.SKIPPED
+        with pytest.raises(CyclicRelationshipError):
+            engine.learn_at(grounding, 0, callback)
 
-    def test_direct_cycle_skipped(self):
-        """A→B via REQUIRES exists; B→A via REQUIRES would cycle → SKIPPED."""
+    def test_direct_cycle_raises(self):
+        """A→B via REQUIRES exists; B→A via REQUIRES would cycle → CyclicRelationshipError."""
         b = _primitive("B", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1149,11 +1149,11 @@ class TestCycleDetection:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.SKIPPED
+        with pytest.raises(CyclicRelationshipError):
+            engine.learn_at(grounding, 0, callback)
 
-    def test_indirect_cycle_skipped(self):
-        """A→B→C via DEPENDS_ON exists; C→A would cycle → SKIPPED."""
+    def test_indirect_cycle_raises(self):
+        """A→B→C via DEPENDS_ON exists; C→A would cycle → CyclicRelationshipError."""
         c = _primitive("C", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1203,11 +1203,11 @@ class TestCycleDetection:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.SKIPPED
+        with pytest.raises(CyclicRelationshipError):
+            engine.learn_at(grounding, 0, callback)
 
-    def test_mixed_transitive_types_cycle_skipped(self):
-        """A→B via REQUIRES exists; B→A via CONSTRAINED_BY would cycle → SKIPPED."""
+    def test_mixed_transitive_types_cycle_raises(self):
+        """A→B via REQUIRES exists; B→A via CONSTRAINED_BY would cycle → CyclicRelationshipError."""
         b = _primitive("B", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1242,8 +1242,8 @@ class TestCycleDetection:
         def callback(candidate, gr, gap):
             return filled, CandidateDecision.ACCEPTED
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.SKIPPED
+        with pytest.raises(CyclicRelationshipError):
+            engine.learn_at(grounding, 0, callback)
 
     def test_non_transitive_cycle_allowed(self):
         """A→B via APPLIES_TO exists; B→A via APPLIES_TO is fine → ACCEPTED."""

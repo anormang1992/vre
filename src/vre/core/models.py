@@ -48,11 +48,6 @@ TRANSITIVE_RELATION_TYPES: frozenset[RelationType] = frozenset(
 )
 
 
-class CyclicRelationshipError(ValueError):
-    """
-    Raised when an edge would create a cycle on transitive relationship types.
-    """
-
 
 class ProvenanceSource(str, Enum):
     """
