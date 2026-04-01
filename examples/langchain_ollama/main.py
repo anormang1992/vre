@@ -34,7 +34,7 @@ def main() -> None:
     os.makedirs(args.sandbox, exist_ok=True)
 
     repo = PrimitiveRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
-    vre = VRE(repo)
+    vre = VRE(repo, agent_key="langchain-ollama-demo-agent", agent_name="Langchain Ollama Demo Agent")
 
     concepts = ConceptExtractor(model=args.concepts_model)
     on_learn = make_on_learn(model=args.model)

@@ -3,21 +3,24 @@ Unit tests for vre.guard — vre_guard decorator.
 """
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyAction, PolicyResult
 from vre.core.policy.models import PolicyViolation, Policy
+from vre.guard import vre_guard
 from vre.learning.callback import LearningCallback
 from vre.learning.models import CandidateDecision
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _grounding(grounded=True, resolved=None, gaps=None):
+def _grounding(grounded=True, resolved=None, gaps=None, agent_id=None):
     return GroundingResult(
         grounded=grounded,
         resolved=resolved or ["file"],
         gaps=gaps or [],
+        agent_id=agent_id,
     )
 
 
@@ -120,6 +123,19 @@ def test_vre_guard_fires_on_trace_when_grounded():
     assert len(traces) == 1
     assert isinstance(traces[0], GroundingResult)
 
+
+def test_vre_guard_on_trace_receives_agent_id():
+    """on_trace receives GroundingResult with agent_id when VRE stamps it."""
+    agent_id = uuid4()
+    traces = []
+    mock_vre = _mock_vre(_grounding(agent_id=agent_id))
+
+    @vre_guard(mock_vre, concepts=["file"], on_trace=traces.append)
+    def my_fn():
+        return "executed"
+
+    my_fn()
+    assert traces[0].agent_id == agent_id
 
 
 def test_vre_guard_grounding_called_once():

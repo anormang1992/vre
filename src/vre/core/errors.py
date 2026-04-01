@@ -43,3 +43,7 @@ class ResolutionError(VREError):
 
 class CandidateValidationError(VREError):
     """A learning candidate is missing required fields or references invalid data."""
+
+
+class RegistryError(VREError):
+    """A file-based registry operation failed (read, write, or corruption)."""

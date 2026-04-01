@@ -156,6 +156,24 @@ repo = PrimitiveRepository(
 vre = VRE(repo)
 ```
 
+An optional `agent_key` associates the VRE instance with a stable agent identity. The key is resolved via a file-based registry (`~/.vre/agents.json`) so that the same key always maps to the same UUID, even across restarts. When configured, every `GroundingResult` produced by this instance carries the agent's `agent_id`.
+
+```python
+vre = VRE(repo, agent_key="my-agent", agent_name="My Agent")
+
+vre.identity.agent_id    # stable UUID, persisted across restarts
+vre.identity.name        # "My Agent"
+```
+
+`agent_name` is a human-readable label used only on first registration — subsequent calls with the same key return the existing identity. Both parameters are optional; without `agent_key`, traces are anonymous and `vre.identity` is `None`.
+
+You may also pass an optional `registry_path` to customize the location of the agent registry file.
+By default, it is `~/.vre/agents.json`.
+
+```python
+vre = VRE(repo, agent_key="my-agent", agent_name="My Agent", registry_path="/path/to/registry.json")
+```
+
 ### Checking Grounding Directly
 
 ```python
@@ -382,6 +400,7 @@ def on_trace(grounding: GroundingResult) -> None:
 - `resolved: list[str]` — canonical primitive names (or original if unresolvable)
 - `gaps: list[KnowledgeGap]` — structured gap descriptions (`ExistenceGap`, `DepthGap`, `RelationalGap`, `ReachabilityGap`)
 - `trace: EpistemicResponse | None` — the full subgraph with all primitives, depths, relata, and pathway
+- `agent_id: UUID | None` — the stable agent identifier, when the VRE instance was created with an `agent_key`
 
 The demo renders `on_trace` as a Rich tree showing each primitive with a dot-per-depth progress indicator and its relata:
 
@@ -733,6 +752,9 @@ related concepts.
 src/vre/
   __init__.py              # VRE public interface (check, learn, learn_all, check_policy)
   guard.py                 # vre_guard decorator (grounding → learning → policy → execution)
+  identity/
+    models.py              # AgentIdentity — stable UUID bound to a registration key
+    registry.py            # AgentRegistry — file-based, append-only identity persistence
   core/
     models.py              # Primitive, Depth, Relatum, RelationType, DepthLevel, gaps, Provenance
     graph.py               # PrimitiveRepository (Neo4j)
