@@ -16,6 +16,7 @@ Usage::
 """
 
 import logging
+from pathlib import Path
 from typing import Callable
 
 from vre.core.graph import PrimitiveRepository
@@ -27,6 +28,7 @@ from vre.core.errors import (
     GraphIntegrityError,
     HydrationError,
     PersistenceError,
+    RegistryError,
     ResolutionError,
     VREError,
 )
@@ -34,6 +36,7 @@ from vre.core.models import DepthLevel, Provenance, ProvenanceSource
 from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult, PolicyViolation
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
+from vre.identity import AgentIdentity, AgentRegistry
 from vre.learning import (
     CandidateDecision,
     LearningCallback,
@@ -46,12 +49,15 @@ logging.getLogger("vre").addHandler(logging.NullHandler())
 
 __all__ = [
     "VRE",
+    "AgentIdentity",
+    "AgentRegistry",
     "CandidateValidationError",
     "CyclicRelationshipError",
     "GraphError",
     "GraphIntegrityError",
     "HydrationError",
     "PersistenceError",
+    "RegistryError",
     "ResolutionError",
     "VREError",
     "PrimitiveRepository",
@@ -85,14 +91,57 @@ class VRE:
     integrators enforce a stricter floor.
     """
 
-    def __init__(self, repository: PrimitiveRepository) -> None:
+    def __init__(
+        self,
+        repository: PrimitiveRepository,
+        agent_key: str | None = None,
+        agent_name: str | None = None,
+        registry_path: str | Path | None = None,
+    ) -> None:
         """
         Initialize VRE with the given primitive repository.
+
+        Parameters
+        ----------
+        repository:
+            The Neo4j primitive repository for graph operations.
+        agent_key:
+            Optional registration key for agent identity. When provided,
+            the key is resolved via the persisted registry to a stable
+            AgentIdentity whose `agent_id` is stamped on every
+            GroundingResult produced by this instance.
+        agent_name:
+            Optional human-readable name for the agent. Only used on
+            first registration; ignored on subsequent calls with the
+            same `agent_key`.
+        registry_path:
+            Path to the agent registry JSON file. Defaults to
+            `AgentRegistry`'s built-in default when None.
         """
         self._repo = repository
         self._resolver = ConceptResolver(repository)
         self._engine = GroundingEngine(repository)
         self._learning_engine = LearningEngine(repository)
+
+        if agent_key is not None:
+            self._identity: AgentIdentity | None = AgentRegistry(registry_path).get_or_create(agent_key, name=agent_name)
+        else:
+            self._identity = None
+
+    @property
+    def identity(self) -> AgentIdentity | None:
+        """
+        The agent identity associated with this VRE instance, if any.
+        """
+        return self._identity
+
+    def _stamp_identity(self, result: GroundingResult) -> GroundingResult:
+        """
+        Set `agent_id` on the result if this instance has an identity and the result doesn't already have one.
+        """
+        if self._identity is not None and result.agent_id is None:
+            result.agent_id = self._identity.agent_id
+        return result
 
     def resolve(self, concepts: list[str]) -> list[str]:
         """
@@ -119,7 +168,7 @@ class VRE:
             Optional integrator override — enforces a minimum depth floor
             on all root primitives. Can only raise the floor, never lower it.
         """
-        return self._engine.ground(concepts, self._resolver, min_depth=min_depth)
+        return self._stamp_identity(self._engine.ground(concepts, self._resolver, min_depth=min_depth))
 
     def learn_all(
         self,
@@ -182,7 +231,7 @@ class VRE:
         if isinstance(concepts, GroundingResult):
             grounding = concepts
         else:
-            grounding = self._engine.ground(concepts, self._resolver)
+            grounding = self._stamp_identity(self._engine.ground(concepts, self._resolver))
 
         if grounding.trace is None:
             return PolicyResult(action=PolicyAction.PASS)
