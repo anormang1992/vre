@@ -16,8 +16,10 @@ Usage::
 """
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
@@ -32,7 +34,16 @@ from vre.core.errors import (
     ResolutionError,
     VREError,
 )
-from vre.core.models import DepthLevel, Provenance, ProvenanceSource
+from vre.core.models import (
+    DepthGap,
+    DepthLevel,
+    ExistenceGap,
+    PrimitiveMetrics,
+    Provenance,
+    ProvenanceSource,
+    ReachabilityGap,
+    RelationalGap,
+)
 from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult, PolicyViolation
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
@@ -46,6 +57,8 @@ from vre.learning import (
 )
 
 logging.getLogger("vre").addHandler(logging.NullHandler())
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "VRE",
@@ -65,6 +78,7 @@ __all__ = [
     "GroundingEngine",
     "GroundingResult",
     "DepthLevel",
+    "PrimitiveMetrics",
     "Provenance",
     "ProvenanceSource",
     "Cardinality",
@@ -143,6 +157,104 @@ class VRE:
             result.agent_id = self._identity.agent_id
         return result
 
+    @staticmethod
+    def _gap_primitive_ids(gaps: list) -> set[UUID]:
+        """
+        Collect the set of primitive UUIDs that are epistemically deficient.
+
+        RelationalGaps contribute only the target ID — the relationship
+        is a pure structural declaration and the source is epistemically
+        sound if the edge is visible. The failure belongs to the target
+        that lacks the required depth.
+        """
+        ids: set[UUID] = set()
+        for gap in gaps:
+            if gap.kind == "RELATIONAL":
+                ids.add(gap.target.id)
+            else:
+                ids.add(gap.primitive.id)
+        return ids
+
+    def _update_grounding_metrics(self, result: GroundingResult) -> None:
+        """
+        Update per-primitive grounding metrics after a `check` call.
+
+        For each root concept in the trace, reads current metrics from the
+        repository, increments `grounding_count` or `failure_count` based
+        on gap membership, and persists the updated metrics. Updates are
+        best-effort — failures are logged but never block the caller.
+        """
+        if not result.trace:
+            return
+
+        now = datetime.now(timezone.utc)
+        gap_ids = self._gap_primitive_ids(result.gaps)
+        resolved_lower = {r.lower() for r in result.resolved}
+
+        for prim in result.trace.result.primitives:
+            if prim.name.lower() not in resolved_lower:
+                continue
+
+            # Read current metrics from the repo — trace primitives are
+            # copies created by _filter_depths and may be stale.
+            current = self._repo.find_by_id(prim.id)
+            if current is None:
+                continue
+            metrics = current.metrics or PrimitiveMetrics()
+
+            if prim.id in gap_ids:
+                metrics.failure_count += 1
+                metrics.last_failed = now
+            else:
+                metrics.grounding_count += 1
+                metrics.last_grounded = now
+
+            try:
+                self._repo.update_metrics(current.id, metrics)
+            except Exception:
+                logger.warning("Failed to update metrics for %r", prim.name, exc_info=True)
+
+    def _update_learning_metric(
+        self,
+        gap: DepthGap | ExistenceGap | RelationalGap | ReachabilityGap,
+        decision: CandidateDecision,
+    ) -> None:
+        """
+        Update learning metrics on the primitive targeted by a gap.
+
+        Increments `learning_count` for accepted/modified decisions and
+        `rejection_count` for rejected decisions. Skipped decisions are
+        ignored. Looks up the primitive by ID first, falling back to name
+        for ExistenceGaps where the gap carries a transient ID.
+        """
+        if decision == CandidateDecision.SKIPPED:
+            return
+
+        if isinstance(gap, RelationalGap):
+            prim_id, prim_name = gap.target.id, gap.target.name
+        elif isinstance(gap, (DepthGap, ExistenceGap, ReachabilityGap)):
+            prim_id, prim_name = gap.primitive.id, gap.primitive.name
+        else:
+            return
+
+        found = self._repo.find_by_id(prim_id)
+        if found is None:
+            found = self._repo.find_by_name(prim_name)
+        if found is None:
+            return
+
+        metrics = found.metrics or PrimitiveMetrics()
+
+        if decision in (CandidateDecision.ACCEPTED, CandidateDecision.MODIFIED):
+            metrics.learning_count += 1
+        elif decision == CandidateDecision.REJECTED:
+            metrics.rejection_count += 1
+
+        try:
+            self._repo.update_metrics(found.id, metrics)
+        except Exception:
+            logger.warning("Failed to update learning metrics for %r", prim_name, exc_info=True)
+
     def resolve(self, concepts: list[str]) -> list[str]:
         """
         Resolve free-form concept names to canonical primitive names.
@@ -168,7 +280,9 @@ class VRE:
             Optional integrator override — enforces a minimum depth floor
             on all root primitives. Can only raise the floor, never lower it.
         """
-        return self._stamp_identity(self._engine.ground(concepts, self._resolver, min_depth=min_depth))
+        result = self._stamp_identity(self._engine.ground(concepts, self._resolver, min_depth=min_depth))
+        self._update_grounding_metrics(result)
+        return result
 
     def learn_all(
         self,
@@ -195,6 +309,7 @@ class VRE:
                 if gap_index is None:
                     break
                 result = self._learning_engine.learn_at(grounding, gap_index, callback)
+                self._update_learning_metric(grounding.gaps[gap_index], result.decision)
                 if result.decision == CandidateDecision.REJECTED:
                     break
                 if result.decision == CandidateDecision.SKIPPED:

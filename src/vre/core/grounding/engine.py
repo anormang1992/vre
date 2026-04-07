@@ -247,6 +247,7 @@ class GroundingEngine:
                 id=p.id,
                 name=p.name,
                 provenance=p.provenance,
+                metrics=p.metrics,
                 depths=[
                     Depth(
                         level=d.level,
@@ -302,8 +303,12 @@ class GroundingEngine:
             subgraph.edges, id_to_prim,
         )
 
-        gaps: list = self._detect_gaps(
-            all_nodes, visible_edges, gated_edges, root_ids, transient_ids,
+        gaps: list[DepthGap | ExistenceGap | RelationalGap | ReachabilityGap] = self._detect_gaps(
+            all_nodes,
+            visible_edges,
+            gated_edges,
+            root_ids,
+            transient_ids,
             min_depth=min_depth,
         )
 

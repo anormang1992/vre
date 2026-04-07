@@ -13,6 +13,7 @@ from vre.core.models import (
     DepthLevel,
     EpistemicStep,
     Primitive,
+    PrimitiveMetrics,
     Relatum,
     RelationType,
     ResolvedSubgraph,
@@ -49,9 +50,17 @@ class StubRepository:
     def find_by_id(self, id: UUID) -> Primitive | None:
         return self._by_id.get(id)
 
+    def find_by_name(self, name: str) -> Primitive | None:
+        return self._by_name.get(name.lower())
+
     def save_primitive(self, primitive: Primitive) -> None:
         self._by_id[primitive.id] = primitive
         self._by_name[primitive.name.lower()] = primitive
+
+    def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
+        prim = self._by_id.get(primitive_id)
+        if prim is not None:
+            prim.metrics = metrics
 
     def resolve_subgraph(self, names: list[str]) -> ResolvedSubgraph:
         roots = [self._by_name[n.lower()] for n in names if n.lower() in self._by_name]

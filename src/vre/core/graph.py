@@ -28,6 +28,7 @@ from vre.core.models import (
     DepthLevel,
     EpistemicStep,
     Primitive,
+    PrimitiveMetrics,
     Provenance,
     Relatum,
     RelationType,
@@ -117,6 +118,49 @@ class PrimitiveRepository:
         return json.dumps(stripped)
 
     @staticmethod
+    def _parse_json_field(value: Any) -> Any:
+        """
+        Parse a Neo4j property that may be a JSON string or already-decoded dict/list.
+        """
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @staticmethod
+    def _record_to_node_data(record: Any) -> dict[str, Any]:
+        """
+        Extract the node property dict from a Cypher record row.
+        """
+        return {
+            "id": record["id"],
+            "name": record["name"],
+            "depths_json": record["depths_json"],
+            "provenance": record["provenance"],
+            "metrics_json": record["metrics_json"],
+        }
+
+    @staticmethod
+    def _record_to_relationships(record: Any) -> list[dict[str, Any]]:
+        """
+        Extract the relationship list from a Cypher record row.
+        """
+        return [
+            {
+                "rel_type": r["rel_type"],
+                "target_id": r["target_id"],
+                "rel_props": {
+                    "source_depth": r["source_depth"],
+                    "target_depth": r["target_depth"],
+                    "metadata_json": r.get("metadata_json") or "{}",
+                    "policies": r.get("policies") or "[]",
+                    "provenance": r.get("provenance"),
+                },
+            }
+            for r in record["rels"]
+            if r.get("rel_type") is not None
+        ]
+
+    @staticmethod
     def _hydrate_primitive(
         node_data: dict[str, Any],
         relationships: list[dict[str, Any]],
@@ -149,8 +193,7 @@ class PrimitiveRepository:
                 rel_prov_json = rel_props.get("provenance")
                 rel_prov = None
                 if rel_prov_json:
-                    rel_prov_data = json.loads(rel_prov_json) if isinstance(rel_prov_json, str) else rel_prov_json
-                    rel_prov = Provenance(**rel_prov_data)
+                    rel_prov = Provenance(**PrimitiveRepository._parse_json_field(rel_prov_json))
 
                 relatum = Relatum(
                     relation_type=RelationType(rel["rel_type"]),
@@ -169,14 +212,19 @@ class PrimitiveRepository:
             node_prov_json = node_data.get("provenance")
             node_prov = None
             if node_prov_json:
-                node_prov_data = json.loads(node_prov_json) if isinstance(node_prov_json, str) else node_prov_json
-                node_prov = Provenance(**node_prov_data)
+                node_prov = Provenance(**PrimitiveRepository._parse_json_field(node_prov_json))
+
+            node_metrics_json = node_data.get("metrics_json")
+            node_metrics = None
+            if node_metrics_json:
+                node_metrics = PrimitiveMetrics(**PrimitiveRepository._parse_json_field(node_metrics_json))
 
             return Primitive(
                 id=UUID(node_data["id"]),
                 name=node_data["name"],
                 depths=sorted_depths,
                 provenance=node_prov,
+                metrics=node_metrics,
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             logger.error("Hydration failed for primitive %r: %s", node_data.get("name", "?"), exc)
@@ -264,18 +312,21 @@ class PrimitiveRepository:
         rel_types = [rt.value for rt in RelationType]
 
         node_provenance = json.dumps(primitive.provenance.model_dump(mode="json")) if primitive.provenance else None
+        node_metrics = json.dumps(primitive.metrics.model_dump(mode="json")) if primitive.metrics else None
 
         def _tx(tx: Any) -> None:
             tx.run(
                 cast(
                     LiteralString,
                     "MERGE (p:Primitive {id: $id}) "
-                    "SET p.name = $name, p.depths_json = $depths_json, p.provenance = $provenance",
+                    "SET p.name = $name, p.depths_json = $depths_json, "
+                    "p.provenance = $provenance, p.metrics_json = $metrics_json",
                 ),
                 id=str(primitive.id),
                 name=primitive.name,
                 depths_json=depths_json,
                 provenance=node_provenance,
+                metrics_json=node_metrics,
             )
 
             for rt in rel_types:
@@ -323,6 +374,26 @@ class PrimitiveRepository:
             logger.error("Neo4j error saving primitive %r: %s", primitive.name, exc)
             raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
 
+    def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
+        """
+        Update only the metrics JSON on an existing primitive node.
+        """
+        metrics_json = json.dumps(metrics.model_dump(mode="json"))
+        try:
+            with self._driver.session(database=self._database) as session:
+                session.run(
+                    cast(
+                        LiteralString,
+                        "MATCH (p:Primitive {id: $id}) "
+                        "SET p.metrics_json = $metrics_json",
+                    ),
+                    id=str(primitive_id),
+                    metrics_json=metrics_json,
+                )
+        except Neo4jError as exc:
+            logger.error("Failed to update metrics for primitive %s: %s", primitive_id, exc)
+            raise PersistenceError(f"Failed to update metrics for '{primitive_id}': {exc}") from exc
+
     def list_names(self) -> list[str]:
         """
         Return the names of all primitives in the graph, sorted alphabetically.
@@ -350,6 +421,7 @@ class PrimitiveRepository:
               p.name AS name,
               p.depths_json AS depths_json,
               p.provenance AS provenance,
+              p.metrics_json AS metrics_json,
               collect({
                 rel_type: type(r),
                 target_id: t.id,
@@ -369,28 +441,10 @@ class PrimitiveRepository:
                     logger.debug("Primitive not found by id=%s", id)
                     return None
 
-                node_data = {
-                    "id": record["id"],
-                    "name": record["name"],
-                    "depths_json": record["depths_json"],
-                    "provenance": record["provenance"],
-                }
-                relationships = [
-                    {
-                        "rel_type": r["rel_type"],
-                        "target_id": r["target_id"],
-                        "rel_props": {
-                            "source_depth": r["source_depth"],
-                            "target_depth": r["target_depth"],
-                            "metadata_json": r.get("metadata_json") or "{}",
-                            "policies": r.get("policies") or "[]",
-                            "provenance": r.get("provenance"),
-                        },
-                    }
-                    for r in record["rels"]
-                    if r.get("rel_type") is not None
-                ]
-                return self._hydrate_primitive(node_data, relationships)
+                return self._hydrate_primitive(
+                    self._record_to_node_data(record),
+                    self._record_to_relationships(record),
+                )
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
@@ -412,6 +466,7 @@ class PrimitiveRepository:
               p.name AS name,
               p.depths_json AS depths_json,
               p.provenance AS provenance,
+              p.metrics_json AS metrics_json,
               collect({
                 rel_type: type(r),
                 target_id: t.id,
@@ -431,28 +486,10 @@ class PrimitiveRepository:
                     logger.debug("Primitive not found by name=%r", name)
                     return None
 
-                node_data = {
-                    "id": record["id"],
-                    "name": record["name"],
-                    "depths_json": record["depths_json"],
-                    "provenance": record["provenance"],
-                }
-                relationships = [
-                    {
-                        "rel_type": r["rel_type"],
-                        "target_id": r["target_id"],
-                        "rel_props": {
-                            "source_depth": r["source_depth"],
-                            "target_depth": r["target_depth"],
-                            "metadata_json": r.get("metadata_json") or "{}",
-                            "policies": r.get("policies") or "[]",
-                            "provenance": r.get("provenance"),
-                        },
-                    }
-                    for r in record["rels"]
-                    if r.get("rel_type") is not None
-                ]
-                return self._hydrate_primitive(node_data, relationships)
+                return self._hydrate_primitive(
+                    self._record_to_node_data(record),
+                    self._record_to_relationships(record),
+                )
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
@@ -511,8 +548,8 @@ class PrimitiveRepository:
             OPTIONAL MATCH (src)-[r]->(tgt:Primitive)
             WHERE tgt IN nodes
             RETURN
-              [r IN roots | {id: r.id, name: r.name, depths_json: r.depths_json, provenance: r.provenance}] AS roots,
-              [n IN nodes | {id: n.id, name: n.name, depths_json: n.depths_json, provenance: n.provenance}] AS nodes,
+              [r IN roots | {id: r.id, name: r.name, depths_json: r.depths_json, provenance: r.provenance, metrics_json: r.metrics_json}] AS roots,
+              [n IN nodes | {id: n.id, name: n.name, depths_json: n.depths_json, provenance: n.provenance, metrics_json: n.metrics_json}] AS nodes,
               [e IN collect({
                   source_id: src.id, target_id: tgt.id, rel_type: type(r),
                   source_depth: r.source_depth, target_depth: r.target_depth,
