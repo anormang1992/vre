@@ -48,7 +48,6 @@ TRANSITIVE_RELATION_TYPES: frozenset[RelationType] = frozenset(
 )
 
 
-
 class ProvenanceSource(str, Enum):
     """
     Origin category for knowledge in the epistemic graph.
@@ -68,6 +67,28 @@ class Provenance(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     detail: str | None = None
+
+
+class PrimitiveMetrics(BaseModel):
+    """
+    Aggregate usage counters for a primitive node.
+    """
+
+    last_grounded: datetime | None = None
+    last_failed: datetime | None = None
+    grounding_count: int = 0
+    failure_count: int = 0
+    learning_count: int = 0
+    rejection_count: int = 0
+
+    @property
+    def last_exercised(self) -> datetime | None:
+        """
+        The most recent time this primitive was exercised in any way.
+        """
+        if self.last_grounded and self.last_failed:
+            return max(self.last_grounded, self.last_failed)
+        return self.last_grounded or self.last_failed
 
 
 class Relatum(BaseModel):
@@ -127,6 +148,7 @@ class Primitive(BaseModel):
     name: str
     depths: list[Depth] = Field(default_factory=list)
     provenance: Provenance | None = None
+    metrics: PrimitiveMetrics | None = None
 
     def validate_provenance(self) -> None:
         """
