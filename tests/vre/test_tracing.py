@@ -66,6 +66,15 @@ class StubRepository:
         if prim is not None:
             prim.metrics = metrics
 
+    def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]:
+        return {pid: self._by_id[pid].metrics for pid in primitive_ids if pid in self._by_id}
+
+    def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
+        for pid, metrics in updates.items():
+            prim = self._by_id.get(pid)
+            if prim is not None:
+                prim.metrics = metrics
+
     def resolve_subgraph(self, names: list[str]) -> ResolvedSubgraph:
         roots = [self._by_name[n.lower()] for n in names if n.lower() in self._by_name]
         visited: set[UUID] = {r.id for r in roots}

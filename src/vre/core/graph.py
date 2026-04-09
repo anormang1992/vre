@@ -394,6 +394,62 @@ class PrimitiveRepository:
             logger.error("Failed to update metrics for primitive %s: %s", primitive_id, exc)
             raise PersistenceError(f"Failed to update metrics for '{primitive_id}': {exc}") from exc
 
+    def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]:
+        """
+        Read current metrics for multiple primitives in a single query.
+        """
+        if not primitive_ids:
+            return {}
+        cypher = cast(
+            LiteralString,
+            "MATCH (p:Primitive) WHERE p.id IN $ids "
+            "RETURN p.id AS id, p.metrics_json AS metrics_json",
+        )
+        try:
+            with self._driver.session(database=self._database) as session:
+                records = session.run(cypher, ids=[str(pid) for pid in primitive_ids])
+                result: dict[UUID, PrimitiveMetrics | None] = {}
+                for record in records:
+                    pid = UUID(record["id"])
+                    raw = record["metrics_json"]
+                    if raw:
+                        try:
+                            parsed = self._parse_json_field(raw)
+                            result[pid] = PrimitiveMetrics.model_validate(parsed)
+                        except Exception as exc:
+                            raise HydrationError(
+                                f"Failed to hydrate metrics for primitive '{pid}': {exc}"
+                            ) from exc
+                    else:
+                        result[pid] = None
+                return result
+        except HydrationError:
+            raise
+        except Neo4jError as exc:
+            raise GraphError(f"Failed to batch-read metrics: {exc}") from exc
+
+    def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
+        """
+        Persist metrics for multiple primitives in a single query.
+        """
+        if not updates:
+            return
+        params = [
+            {"id": str(pid), "metrics_json": json.dumps(m.model_dump(mode="json"))}
+            for pid, m in updates.items()
+        ]
+        cypher = cast(
+            LiteralString,
+            "UNWIND $updates AS u "
+            "MATCH (p:Primitive {id: u.id}) "
+            "SET p.metrics_json = u.metrics_json",
+        )
+        try:
+            with self._driver.session(database=self._database) as session:
+                session.run(cypher, updates=params)
+        except Neo4jError as exc:
+            raise PersistenceError(f"Failed to batch-update metrics: {exc}") from exc
+
     def list_names(self) -> list[str]:
         """
         Return the names of all primitives in the graph, sorted alphabetically.
