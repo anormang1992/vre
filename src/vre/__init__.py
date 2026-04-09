@@ -55,6 +55,7 @@ from vre.learning import (
     LearningEngine,
     LearningResult,
 )
+from vre.tracing import TraceWriter, build_trace_entry
 
 logging.getLogger("vre").addHandler(logging.NullHandler())
 
@@ -111,6 +112,7 @@ class VRE:
         agent_key: str | None = None,
         agent_name: str | None = None,
         registry_path: str | Path | None = None,
+        persist_traces: bool = True,
     ) -> None:
         """
         Initialize VRE with the given primitive repository.
@@ -131,6 +133,9 @@ class VRE:
         registry_path:
             Path to the agent registry JSON file. Defaults to
             `AgentRegistry`'s built-in default when None.
+        persist_traces:
+            When True (default), grounding traces are persisted to daily
+            JSONL files under `~/.vre/traces/`.
         """
         self._repo = repository
         self._resolver = ConceptResolver(repository)
@@ -141,6 +146,9 @@ class VRE:
             self._identity: AgentIdentity | None = AgentRegistry(registry_path).get_or_create(agent_key, name=agent_name)
         else:
             self._identity = None
+
+        self._suppress_trace = False
+        self._trace_writer: TraceWriter | None = TraceWriter() if persist_traces else None
 
     @property
     def identity(self) -> AgentIdentity | None:
@@ -282,6 +290,11 @@ class VRE:
         """
         result = self._stamp_identity(self._engine.ground(concepts, self._resolver, min_depth=min_depth))
         self._update_grounding_metrics(result)
+        if self._trace_writer is not None and not self._suppress_trace:
+            try:
+                self._trace_writer.write(build_trace_entry("check", concepts, result))
+            except Exception:
+                logger.warning("Failed to persist trace for check()", exc_info=True)
         return result
 
     def learn_all(
@@ -300,23 +313,38 @@ class VRE:
         Returns the final GroundingResult.
         """
         skipped: set[int] = set()
-        with callback:
-            while not grounding.grounded and grounding.gaps:
-                gap_index = next(
-                    (i for i, g in enumerate(grounding.gaps) if i not in skipped),
-                    None,
+        learning_outcomes: list[LearningResult] = []
+        self._suppress_trace = True
+        try:
+            with callback:
+                while not grounding.grounded and grounding.gaps:
+                    gap_index = next(
+                        (i for i, g in enumerate(grounding.gaps) if i not in skipped),
+                        None,
+                    )
+                    if gap_index is None:
+                        break
+                    result = self._learning_engine.learn_at(grounding, gap_index, callback)
+                    learning_outcomes.append(result)
+                    self._update_learning_metric(grounding.gaps[gap_index], result.decision)
+                    if result.decision == CandidateDecision.REJECTED:
+                        break
+                    if result.decision == CandidateDecision.SKIPPED:
+                        skipped.add(gap_index)
+                        continue
+                    grounding = self.check(concepts, min_depth=min_depth)
+                    skipped.clear()
+        finally:
+            self._suppress_trace = False
+
+        if self._trace_writer is not None and learning_outcomes:
+            try:
+                self._trace_writer.write(
+                    build_trace_entry("learn", concepts, grounding, learning_outcomes)
                 )
-                if gap_index is None:
-                    break
-                result = self._learning_engine.learn_at(grounding, gap_index, callback)
-                self._update_learning_metric(grounding.gaps[gap_index], result.decision)
-                if result.decision == CandidateDecision.REJECTED:
-                    break
-                if result.decision == CandidateDecision.SKIPPED:
-                    skipped.add(gap_index)
-                    continue
-                grounding = self.check(concepts, min_depth=min_depth)
-                skipped.clear()
+            except Exception:
+                logger.warning("Failed to persist trace for learn_all()", exc_info=True)
+
         return grounding
 
     def check_policy(

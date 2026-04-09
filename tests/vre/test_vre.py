@@ -110,7 +110,7 @@ def _make_fully_grounded(name: str) -> Primitive:
 def _make_vre_with_stub(primitives: list[Primitive]) -> VRE:
     """Create a VRE instance with a stub repository."""
     repo = StubRepository(primitives)
-    return VRE(repo)
+    return VRE(repo, persist_traces=False)
 
 
 def _make_primitive_with_policy(
@@ -459,7 +459,7 @@ class TestAgentIdentityIntegration:
         """VRE with agent_key stamps agent_id on check() result."""
         file_p = _make_fully_grounded("file")
         repo = StubRepository([file_p])
-        vre = VRE(repo, agent_key="test-agent", registry_path=tmp_path / "agents.json")
+        vre = VRE(repo, agent_key="test-agent", registry_path=tmp_path / "agents.json", persist_traces=False)
         result = vre.check(["file"])
         assert result.agent_id is not None
         assert result.agent_id == vre.identity.agent_id
@@ -477,22 +477,22 @@ class TestAgentIdentityIntegration:
         file_p = _make_fully_grounded("file")
         path = tmp_path / "agents.json"
         repo = StubRepository([file_p])
-        vre1 = VRE(repo, agent_key="shared-agent", registry_path=path)
-        vre2 = VRE(repo, agent_key="shared-agent", registry_path=path)
+        vre1 = VRE(repo, agent_key="shared-agent", registry_path=path, persist_traces=False)
+        vre2 = VRE(repo, agent_key="shared-agent", registry_path=path, persist_traces=False)
         assert vre1.identity.agent_id == vre2.identity.agent_id
 
     def test_agent_name_stored_on_identity(self, tmp_path):
         """VRE with agent_name passes it through to the registered identity."""
         file_p = _make_fully_grounded("file")
         repo = StubRepository([file_p])
-        vre = VRE(repo, agent_key="named-agent", agent_name="My Agent", registry_path=tmp_path / "agents.json")
+        vre = VRE(repo, agent_key="named-agent", agent_name="My Agent", registry_path=tmp_path / "agents.json", persist_traces=False)
         assert vre.identity.name == "My Agent"
 
     def test_check_policy_with_agent_key_passes(self, tmp_path):
         """check_policy runs without error when VRE has an agent identity."""
         file_p = _make_fully_grounded("file")
         repo = StubRepository([file_p])
-        vre = VRE(repo, agent_key="policy-agent", registry_path=tmp_path / "agents.json")
+        vre = VRE(repo, agent_key="policy-agent", registry_path=tmp_path / "agents.json", persist_traces=False)
         # Pass concepts as list to trigger internal grounding path
         policy_result = vre.check_policy(["file"])
         assert policy_result.action == PolicyAction.PASS
