@@ -66,12 +66,24 @@ class ConceptResolver:
         Initialize the resolver with a primitive repository.
         """
         self._repo = repository
+        self._name_map_cache: dict[str, str] | None = None
+
+    def invalidate(self) -> None:
+        """
+        Clear the cached name map so the next `build_name_map` re-queries.
+        """
+        self._name_map_cache = None
 
     def build_name_map(self) -> dict[str, str]:
         """
         Map lowercased primitive names to their canonical form.
+
+        Results are cached on the instance; call `invalidate` after
+        mutations that add, rename, or remove primitives.
         """
-        return {name.lower(): name for name in self._repo.list_names()}
+        if self._name_map_cache is None:
+            self._name_map_cache = {name.lower(): name for name in self._repo.list_names()}
+        return self._name_map_cache.copy()
 
     @staticmethod
     def lookup(concept: str, name_map: dict[str, str]) -> str | None:

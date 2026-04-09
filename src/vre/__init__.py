@@ -187,9 +187,8 @@ class VRE:
         """
         Update per-primitive grounding metrics after a `check` call.
 
-        For each root concept in the trace, reads current metrics from the
-        repository, increments `grounding_count` or `failure_count` based
-        on gap membership, and persists the updated metrics. Updates are
+        Batch-reads current metrics for all resolved root concepts, computes
+        increments in-process, and batch-writes the results. Updates are
         best-effort — failures are logged but never block the caller.
         """
         if not result.trace:
@@ -199,16 +198,26 @@ class VRE:
         gap_ids = self._gap_primitive_ids(result.gaps)
         resolved_lower = {r.lower() for r in result.resolved}
 
-        for prim in result.trace.result.primitives:
-            if prim.name.lower() not in resolved_lower:
-                continue
+        target_prims = [
+            prim for prim in result.trace.result.primitives
+            if prim.name.lower() in resolved_lower
+        ]
+        if not target_prims:
+            return
 
-            # Read current metrics from the repo — trace primitives are
-            # copies created by _filter_depths and may be stale.
-            current = self._repo.find_by_id(prim.id)
-            if current is None:
+        target_ids = [p.id for p in target_prims]
+
+        try:
+            current_metrics = self._repo.batch_read_metrics(target_ids)
+        except Exception:
+            logger.warning("Failed to batch-read metrics", exc_info=True)
+            return
+
+        updates: dict[UUID, PrimitiveMetrics] = {}
+        for prim in target_prims:
+            if prim.id not in current_metrics:
                 continue
-            metrics = current.metrics or PrimitiveMetrics()
+            metrics = current_metrics[prim.id] or PrimitiveMetrics()
 
             if prim.id in gap_ids:
                 metrics.failure_count += 1
@@ -217,10 +226,13 @@ class VRE:
                 metrics.grounding_count += 1
                 metrics.last_grounded = now
 
+            updates[prim.id] = metrics
+
+        if updates:
             try:
-                self._repo.update_metrics(current.id, metrics)
+                self._repo.batch_update_metrics(updates)
             except Exception:
-                logger.warning("Failed to update metrics for %r", prim.name, exc_info=True)
+                logger.warning("Failed to batch-update metrics for %d primitives", len(updates), exc_info=True)
 
     def _update_learning_metric(
         self,
@@ -332,6 +344,7 @@ class VRE:
                     if result.decision == CandidateDecision.SKIPPED:
                         skipped.add(gap_index)
                         continue
+                    self._resolver.invalidate()
                     grounding = self.check(concepts, min_depth=min_depth)
                     skipped.clear()
         finally:
