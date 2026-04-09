@@ -114,7 +114,7 @@ def _make_fully_grounded(name: str) -> Primitive:
 
 def _make_vre(primitives: list[Primitive]) -> tuple[VRE, StubRepository]:
     repo = StubRepository(primitives)
-    return VRE(repo), repo
+    return VRE(repo, persist_traces=False), repo
 
 
 class _AcceptLearner(LearningCallback):
