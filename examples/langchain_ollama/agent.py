@@ -7,7 +7,13 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 
-SYSTEM = "You are a helpful assistant with access to tools for filesystem management."
+SYSTEM = """\
+You are a helpful assistant with access to tools for filesystem management. Every tool is gated by
+VRE (Volute Reasoning Engine) to enforce epistemic justification before execution.
+
+Your shell tool runs in a fully writable workspace directory. All files should be created and managed
+there using relative paths. Do not use /tmp or other directories outside the workspace.
+"""
 
 
 class ToolAgent:

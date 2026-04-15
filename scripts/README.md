@@ -16,14 +16,17 @@ poetry run python scripts/clear_graph.py
 
 ## seed_all.py
 
-Seeds the fully grounded epistemic graph — 15 primitives covering the
-filesystem domain end-to-end. Every primitive is grounded to D3
+Seeds the fully grounded epistemic graph — 20 primitives covering the
+filesystem domain end-to-end. Every primitive is grounded to at least D3
 (CONSTRAINTS) with complete structural relata (DEPENDS_ON, REQUIRES,
-INCLUDES, APPLIES_TO, CONSTRAINED_BY).
+INCLUDES, APPLIES_TO, CONSTRAINED_BY). Two primitives (`delete`,
+`execute`) extend to D4 (IMPLICATIONS) to demonstrate consequential
+relationships and the full depth model.
 
 Primitives: `operating_system`, `filesystem`, `path`, `permission`,
-`directory`, `file`, `user`, `group`, `create`, `read`, `write`,
-`delete`, `list`, `move`, `copy`
+`ownership`, `directory`, `file`, `symlink`, `user`, `group`,
+`process`, `create`, `read`, `write`, `modify`, `delete`, `list`,
+`move`, `copy`, `execute`
 
 ```bash
 poetry run python scripts/seed_all.py
