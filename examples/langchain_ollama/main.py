@@ -50,7 +50,7 @@ def main() -> None:
     shell_tool = StructuredTool.from_function(
         shell_fn,
         name="shell_tool",
-        description="Run a shell command in the sandbox.",
+        description="Run a shell command in the workspace directory. The workspace is fully writable — you can create, modify, delete, and execute files here. Use relative paths.",
     )
 
     agent = make_agent([shell_tool], model=args.model)
