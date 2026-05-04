@@ -829,11 +829,13 @@ reveals a constraint that was not modeled. The agent proposes the missing relatu
 (e.g. `create --[CONSTRAINED_BY]--> permission`), seeks human validation, and persists the new knowledge. Depth was
 honest before the failure and more complete after.
 
-### VRE Networks
+### Knowledge Import
 
-An agentic network of agents that share grounded knowledge across different epistemic graphs while applying the same
-enforcement mechanisms. A concept grounded at D3 in one agent's graph carries its
-epistemic justification with it — the network federates knowledge while keeping each agent's epistemic contract intact.
+A pathway for growing an agent's graph from peer-published knowledge. An agent fetches a peer's subgraph for a target
+concept and persists it locally as ordinary primitives stamped with `provenance.source = PEER` and a
+`(peer_name, imported_at)` attestation. Imports are one-shot — refresh is an explicit operator action, never a live
+link — which preserves the depth-explicit *validated trust* VRE's enforcement depends on while letting an agent grow
+its graph from a community of peers instead of authoring every concept from scratch.
 
 ### Epistemic Memory
 
