@@ -417,6 +417,10 @@ def on_trace(grounding: GroundingResult) -> None:
 - `trace: EpistemicResponse | None` — the full subgraph with all primitives, depths, relata, and pathway
 - `agent_id: UUID | None` — the stable agent identifier, when the VRE instance was created with an `agent_key`
 
+For convenience, `result.get_primitives()` and `result.get_pathway_steps()` return the trace's primitives
+and pathway steps directly (or empty lists when no trace is present), so callers don't have to drill into
+`result.trace.result.*` themselves.
+
 The reference integration renders `on_trace` as a Rich tree:
 
 ```
@@ -858,7 +862,8 @@ grounding history, and affect the agent's confidence in related concepts.
 src/vre/
 ├── __init__.py                  # VRE public interface (check, learn_all, check_policy)
 ├── guard.py                     # vre_guard decorator (grounding → learning → policy → execution)
-├── tracing.py                   # JSONL persistence of epistemic traces
+├── metrics.py                   # MetricsManager — best-effort grounding/learning metric updates
+├── tracing.py                   # TraceWriter + TraceManager — JSONL persistence + suppression
 │
 ├── identity/
 │   ├── models.py                # AgentIdentity — stable UUID bound to a registration key
@@ -881,7 +886,7 @@ src/vre/
 └── learning/
     ├── callback.py              # LearningCallback ABC
     ├── models.py                # Candidate models, CandidateDecision, LearningResult
-    ├── templates.py             # TemplateFactory — gap → structured candidate template
+    ├── templates.py             # template_for_gap — gap → structured candidate template
     └── engine.py                # LearningEngine — template → callback → validate → persist
 
 scripts/
