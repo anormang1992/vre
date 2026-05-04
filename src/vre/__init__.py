@@ -176,13 +176,11 @@ class VRE:
         increments in-process, and batch-writes the results. Updates are
         best-effort — failures are logged but never block the caller.
         """
-        target_prims: list = []
-        if result.trace:
-            resolved_lower = {r.lower() for r in result.resolved}
-            target_prims = [
-                prim for prim in result.trace.result.primitives
-                if prim.name.lower() in resolved_lower
-            ]
+        resolved_lower = {r.lower() for r in result.resolved}
+        target_prims = [
+            prim for prim in result.get_primitives()
+            if prim.name.lower() in resolved_lower
+        ]
 
         current_metrics: dict[UUID, PrimitiveMetrics | None] | None = None
         if target_prims:

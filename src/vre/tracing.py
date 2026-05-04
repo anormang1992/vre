@@ -46,9 +46,7 @@ def build_trace_entry(
     """
     gaps = [gap.model_dump(mode="json") for gap in result.gaps]
 
-    steps: list[dict[str, Any]] = []
-    if result.trace is not None:
-        steps = [step.model_dump(mode="json") for step in result.trace.result.pathway]
+    steps = [step.model_dump(mode="json") for step in result.get_pathway_steps()]
 
     serialized_outcomes: list[dict[str, Any]] | None = None
     if learning_outcomes is not None:

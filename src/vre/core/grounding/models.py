@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from vre.core.models import (
     Depth,
     EpistemicResponse,
+    EpistemicStep,
     KnowledgeGap,
     Primitive,
     Relatum,
@@ -128,6 +129,18 @@ class GroundingResult(BaseModel):
     gaps: list[Any]
     trace: EpistemicResponse | None = None
     agent_id: UUID | None = None
+
+    def get_primitives(self) -> list[Primitive]:
+        """
+        Return the primitives from the underlying trace, or [] when absent.
+        """
+        return self.trace.result.primitives if self.trace is not None else []
+
+    def get_pathway_steps(self) -> list[EpistemicStep]:
+        """
+        Return the pathway steps from the underlying trace, or [] when absent.
+        """
+        return self.trace.result.pathway if self.trace is not None else []
 
     def __str__(self) -> str:
         """

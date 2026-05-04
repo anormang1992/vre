@@ -39,7 +39,7 @@ from vre.learning.models import (
     ReachabilityCandidate,
     RelationalCandidate,
 )
-from vre.learning.templates import TemplateFactory
+from vre.learning.templates import template_for_gap
 
 
 def _make_provenance(decision: CandidateDecision) -> Provenance:
@@ -71,10 +71,9 @@ def _resolve_name_to_id(name: str, grounding: GroundingResult) -> UUID:
     """
     Resolve a primitive name to its UUID from the grounding trace.
     """
-    if grounding.trace:
-        for p in grounding.trace.result.primitives:
-            if p.name.lower() == name.lower():
-                return p.id
+    for p in grounding.get_primitives():
+        if p.name.lower() == name.lower():
+            return p.id
     raise CandidateValidationError(f"Cannot resolve '{name}' to a primitive ID from the grounding trace")
 
 
@@ -228,7 +227,7 @@ class LearningEngine:
                 required_depth=required_level,
                 current_depth=current_depth,
             )
-            template = TemplateFactory.from_gap(gap)
+            template = template_for_gap(gap)
             filled, decision = callback(template, grounding, gap)
 
             if decision in (CandidateDecision.SKIPPED, CandidateDecision.REJECTED):
@@ -369,7 +368,7 @@ class LearningEngine:
 
         gap = grounding.gaps[gap_index]
         logger.info("Learning at gap_index=%d, gap_kind=%s", gap_index, gap.kind)
-        candidate = TemplateFactory.from_gap(gap)
+        candidate = template_for_gap(gap)
         filled, decision = callback(candidate, grounding, gap)
 
         result: LearningResult

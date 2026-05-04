@@ -172,7 +172,7 @@ def on_trace(grounding: "GroundingResult") -> None:
         console.print(tree)
         return
 
-    primitives = grounding.trace.result.primitives
+    primitives = grounding.get_primitives()
     id_to_name = {p.id: p.name for p in primitives}
 
     depth_gap_map: dict = {

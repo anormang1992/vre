@@ -79,11 +79,12 @@ class ConceptResolver:
         Map lowercased primitive names to their canonical form.
 
         Results are cached on the instance; call `invalidate` after
-        mutations that add, rename, or remove primitives.
+        mutations that add, rename, or remove primitives. Returns the
+        cached dict directly — callers must not mutate it.
         """
         if self._name_map_cache is None:
             self._name_map_cache = {name.lower(): name for name in self._repo.list_names()}
-        return self._name_map_cache.copy()
+        return self._name_map_cache
 
     @staticmethod
     def lookup(concept: str, name_map: dict[str, str]) -> str | None:

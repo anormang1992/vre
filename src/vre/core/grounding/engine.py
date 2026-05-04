@@ -17,6 +17,7 @@ lever to enforce a stricter floor than the graph alone would require.
 from __future__ import annotations
 
 import logging
+from functools import cache
 from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
@@ -93,17 +94,30 @@ class GroundingEngine:
         return all_roots, transients
 
     @staticmethod
-    def _contiguous_max_depth(node: Primitive) -> DepthLevel | None:
+    @cache
+    def _max_contiguous_from_levels(present: frozenset[DepthLevel]) -> DepthLevel | None:
         """
-        Return the highest DepthLevel forming a contiguous chain from D0, or None if no depths.
+        Highest DepthLevel forming a contiguous chain from D0 in *present*, or None.
+
+        Pure function of the level set — memoized so all primitives sharing a
+        depth shape share the cached answer. Cache grows with the number of
+        distinct level-sets the process sees (typically tiny).
         """
-        present = {d.level for d in node.depths}
         result: DepthLevel | None = None
         for level in sorted(DepthLevel):
             if level not in present:
                 break
             result = level
         return result
+
+    @staticmethod
+    def _contiguous_max_depth(node: Primitive) -> DepthLevel | None:
+        """
+        Return the highest DepthLevel forming a contiguous chain from D0, or None if no depths.
+        """
+        return GroundingEngine._max_contiguous_from_levels(
+            frozenset(d.level for d in node.depths)
+        )
 
     @staticmethod
     def _partition_edges_by_source_depth(
@@ -240,23 +254,26 @@ class GroundingEngine:
     def _filter_depths(all_nodes: list[Primitive]) -> list[Primitive]:
         """
         Return copies of all_nodes with relata filtered to targets present in the collected set.
+
+        Uses model_copy(deep=True) to skip Pydantic re-validation while still
+        producing fully detached instances — downstream consumers (metrics
+        updates, tracing) can treat the result as independent of the source.
         """
         collected_ids = {n.id for n in all_nodes}
         return [
-            Primitive(
-                id=p.id,
-                name=p.name,
-                provenance=p.provenance,
-                metrics=p.metrics,
-                depths=[
-                    Depth(
-                        level=d.level,
-                        properties=d.properties,
-                        provenance=d.provenance,
-                        relata=[r for r in d.relata if r.target_id in collected_ids],
-                    )
-                    for d in p.depths
-                ],
+            p.model_copy(
+                update={
+                    "depths": [
+                        d.model_copy(
+                            update={
+                                "relata": [r for r in d.relata if r.target_id in collected_ids],
+                            },
+                            deep=True,
+                        )
+                        for d in p.depths
+                    ],
+                },
+                deep=True,
             )
             for p in all_nodes
         ]
