@@ -254,7 +254,8 @@ class LearningEngine:
         1. Learn any missing depths on source and target via the callback
         2. Place the edge once both sides have the required depths
 
-        If depth learning is rejected or skipped, edge placement is abandoned.
+        If depth learning is rejected or skipped, edge placement is abandoned
+        and the decision propagates back as the outcome.
         """
         if candidate.target_name is None or candidate.relation_type is None:
             logger.warning(
@@ -281,54 +282,54 @@ class LearningEngine:
         if target is None:
             raise CandidateValidationError(f"Target '{candidate.target_name}' ({target_id}) not found")
 
-        # Phase 1: learn missing depths on source, then target
+        # Phase 1: learn missing depths on source, then target. Either rejection
+        # or skip overrides the outcome and short-circuits phase 2.
         logger.debug(
             "Reachability two-phase: learning missing depths on source=%r, target=%r",
             source.name, target.name,
         )
-        result = self._learn_missing_depths(source, candidate.source_depth_level, grounding, callback)
-        if result in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
-            return result
-        if result is not None:
-            source = self._repo.find_by_id(source.id)
+        outcome: CandidateDecision = CandidateDecision.ACCEPTED
+        src_decision = self._learn_missing_depths(source, candidate.source_depth_level, grounding, callback)
+        if src_decision in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
+            outcome = src_decision
+        else:
+            if src_decision is not None:
+                source = self._repo.find_by_id(source.id)
+            tgt_decision = self._learn_missing_depths(target, candidate.target_depth_level, grounding, callback)
+            if tgt_decision in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
+                outcome = tgt_decision
 
-        result = self._learn_missing_depths(target, candidate.target_depth_level, grounding, callback)
-        if result in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
-            return result
-
-        # Phase 2: place the edge
-        logger.debug(
-            "Reachability two-phase: placing %s edge from %r (D%d) to %r (D%d)",
-            candidate.relation_type.value, source.name, int(candidate.source_depth_level),
-            candidate.target_name, int(candidate.target_depth_level),
-        )
-        depth_obj = next(d for d in source.depths if d.level == candidate.source_depth_level)
-
-        new_relatum = Relatum(
-            relation_type=candidate.relation_type,
-            target_id=target_id,
-            target_depth=candidate.target_depth_level,
-            provenance=provenance,
-        )
-        depth_obj.relata.append(new_relatum)
-
-        source.depths.sort(key=lambda d: int(d.level))
-
-        try:
-            self._repo.save_primitive(source)
-        except CyclicRelationshipError:
-            logger.exception(
-                "Cyclic relationship error placing %s edge from %r (%s) to %r (%s)",
-                candidate.relation_type.value,
-                source.name,
-                source.id,
-                target.name,
-                target.id,
+        if outcome == CandidateDecision.ACCEPTED:
+            # Phase 2: place the edge
+            logger.debug(
+                "Reachability two-phase: placing %s edge from %r (D%d) to %r (D%d)",
+                candidate.relation_type.value, source.name, int(candidate.source_depth_level),
+                candidate.target_name, int(candidate.target_depth_level),
             )
-            depth_obj.relata.remove(new_relatum)
-            raise
+            depth_obj = next(d for d in source.depths if d.level == candidate.source_depth_level)
+            new_relatum = Relatum(
+                relation_type=candidate.relation_type,
+                target_id=target_id,
+                target_depth=candidate.target_depth_level,
+                provenance=provenance,
+            )
+            depth_obj.relata.append(new_relatum)
+            source.depths.sort(key=lambda d: int(d.level))
+            try:
+                self._repo.save_primitive(source)
+            except CyclicRelationshipError:
+                logger.exception(
+                    "Cyclic relationship error placing %s edge from %r (%s) to %r (%s)",
+                    candidate.relation_type.value,
+                    source.name,
+                    source.id,
+                    target.name,
+                    target.id,
+                )
+                depth_obj.relata.remove(new_relatum)
+                raise
 
-        return CandidateDecision.ACCEPTED
+        return outcome
 
     def _persist(
         self,
@@ -342,15 +343,17 @@ class LearningEngine:
         Validate and persist a filled candidate to the graph.
         Returns a decision override for reachability (two-phase), or None.
         """
-        if isinstance(gap, ExistenceGap) and isinstance(candidate, ExistenceCandidate):
-            self._persist_existence(gap, candidate, provenance)
-        elif isinstance(gap, DepthGap) and isinstance(candidate, DepthCandidate):
-            self._persist_depth(gap, candidate, provenance)
-        elif isinstance(gap, RelationalGap) and isinstance(candidate, RelationalCandidate):
-            self._persist_relational(gap, candidate, provenance)
-        elif isinstance(gap, ReachabilityGap) and isinstance(candidate, ReachabilityCandidate):
-            return self._persist_reachability(gap, candidate, grounding, callback, provenance)
-        return None
+        override: CandidateDecision | None = None
+        match (gap, candidate):
+            case (ExistenceGap(), ExistenceCandidate()):
+                self._persist_existence(gap, candidate, provenance)
+            case (DepthGap(), DepthCandidate()):
+                self._persist_depth(gap, candidate, provenance)
+            case (RelationalGap(), RelationalCandidate()):
+                self._persist_relational(gap, candidate, provenance)
+            case (ReachabilityGap(), ReachabilityCandidate()):
+                override = self._persist_reachability(gap, candidate, grounding, callback, provenance)
+        return override
 
     def learn_at(
         self,

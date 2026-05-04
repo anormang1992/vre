@@ -24,7 +24,6 @@ from vre.core.graph import PrimitiveRepository
 from vre.core.grounding.models import GroundingResult
 from vre.core.grounding.resolver import ConceptResolver
 from vre.core.models import (
-    Depth,
     DepthGap,
     DepthLevel,
     EpistemicQuery,
