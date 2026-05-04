@@ -5,6 +5,7 @@
 Core epistemic models for the Volute Reasoning Engine.
 """
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from enum import Enum, IntEnum
 from typing import Annotated, Any, Literal, NamedTuple
@@ -226,6 +227,23 @@ KnowledgeGap = Annotated[
     DepthGap | ExistenceGap | RelationalGap | ReachabilityGap,
     Field(discriminator="kind"),
 ]
+
+
+def gap_primitive_ids(gaps: Iterable[KnowledgeGap]) -> set[UUID]:
+    """
+    Collect the IDs of the primitives each gap is "about".
+
+    RelationalGaps point at the target — the visible edge means the source
+    is epistemically sound; the failure belongs to the under-grounded target.
+    All other gap kinds point at .primitive.
+    """
+    ids: set[UUID] = set()
+    for gap in gaps:
+        if gap.kind == "RELATIONAL":
+            ids.add(gap.target.id)
+        else:
+            ids.add(gap.primitive.id)
+    return ids
 
 
 class EpistemicStep(BaseModel):
