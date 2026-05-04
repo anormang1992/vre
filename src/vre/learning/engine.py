@@ -12,9 +12,9 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
+from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding.models import GroundingResult
-from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.models import (
     Depth,
     DepthGap,
@@ -213,33 +213,34 @@ class LearningEngine:
         decision if learning was needed, or None if the depth already exists.
         """
         existing_levels = {d.level for d in primitive.depths}
+        result: CandidateDecision | None = None
         if required_level in existing_levels:
             logger.debug("Depth D%d already present on %r, skipping sub-learning", int(required_level), primitive.name)
-            return None
+        else:
+            current_depth = max(existing_levels, key=lambda lv: lv.value) if existing_levels else None
+            logger.debug(
+                "Synthesized DepthGap for %r: requires D%d, current=%s",
+                primitive.name, int(required_level),
+                ("D" + str(int(current_depth))) if current_depth is not None else "None",
+            )
+            gap = DepthGap(
+                primitive=primitive,
+                required_depth=required_level,
+                current_depth=current_depth,
+            )
+            template = TemplateFactory.from_gap(gap)
+            filled, decision = callback(template, grounding, gap)
 
-        current_depth = max(existing_levels, key=lambda lv: lv.value) if existing_levels else None
-        logger.debug(
-            "Synthesized DepthGap for %r: requires D%d, current=%s",
-            primitive.name, int(required_level),
-            ("D" + str(int(current_depth))) if current_depth is not None else "None",
-        )
-        gap = DepthGap(
-            primitive=primitive,
-            required_depth=required_level,
-            current_depth=current_depth,
-        )
-        template = TemplateFactory.from_gap(gap)
-        filled, decision = callback(template, grounding, gap)
-
-        if decision in (CandidateDecision.SKIPPED, CandidateDecision.REJECTED):
-            return decision
-        if filled is None:
-            logger.warning("Callback returned None for synthesized depth gap on %r, treating as REJECTED", primitive.name)
-            return CandidateDecision.REJECTED
-
-        provenance = _make_provenance(decision)
-        self._persist_depth(gap, filled, provenance)
-        return decision
+            if decision in (CandidateDecision.SKIPPED, CandidateDecision.REJECTED):
+                result = decision
+            elif filled is None:
+                logger.warning("Callback returned None for synthesized depth gap on %r, treating as REJECTED", primitive.name)
+                result = CandidateDecision.REJECTED
+            else:
+                provenance = _make_provenance(decision)
+                self._persist_depth(gap, filled, provenance)
+                result = decision
+        return result
 
     def _persist_reachability(
         self,
@@ -371,34 +372,34 @@ class LearningEngine:
         candidate = TemplateFactory.from_gap(gap)
         filled, decision = callback(candidate, grounding, gap)
 
+        result: LearningResult
         if decision == CandidateDecision.SKIPPED:
             logger.info("Gap %d skipped by callback", gap_index)
-            return LearningResult(decision=CandidateDecision.SKIPPED, candidate=candidate)
-
-        if decision == CandidateDecision.REJECTED:
+            result = LearningResult(decision=CandidateDecision.SKIPPED, candidate=candidate)
+        elif decision == CandidateDecision.REJECTED:
             logger.info("Gap %d rejected by callback", gap_index)
-            return LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
-
-        if filled is None:
+            result = LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
+        elif filled is None:
             logger.warning(
                 "Callback for gap %d returned no candidate (decision=%s); treating as REJECTED",
                 gap_index,
                 decision.value,
             )
-            return LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
+            result = LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
+        else:
+            logger.debug(
+                "Persisting %s candidate for gap %d (decision=%s)",
+                type(filled).__name__, gap_index, decision.value,
+            )
+            provenance = _make_provenance(decision)
+            override = self._persist(gap, filled, grounding, callback, provenance)
 
-        logger.debug(
-            "Persisting %s candidate for gap %d (decision=%s)",
-            type(filled).__name__, gap_index, decision.value,
-        )
-        provenance = _make_provenance(decision)
-        override = self._persist(gap, filled, grounding, callback, provenance)
-
-        # Reachability two-phase can override the decision if depth
-        # learning was rejected or skipped
-        if override in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
-            logger.info("Reachability two-phase override: %s", override.value)
-            return LearningResult(decision=override, candidate=filled)
-
-        return LearningResult(decision=decision, candidate=filled)
+            # Reachability two-phase can override the decision if depth
+            # learning was rejected or skipped
+            if override in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
+                logger.info("Reachability two-phase override: %s", override.value)
+                result = LearningResult(decision=override, candidate=filled)
+            else:
+                result = LearningResult(decision=decision, candidate=filled)
+        return result
 

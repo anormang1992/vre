@@ -90,17 +90,20 @@ class ConceptResolver:
         """
         Return canonical name for concept, or None if not found.
         """
-        # Try direct lowercase match first
-        if concept.lower() in name_map:
-            logger.debug("Concept %r matched directly to %r", concept, name_map[concept.lower()])
-            return name_map[concept.lower()]
-        # Try each lemma
-        for lemma in lemmatize(concept):
-            if lemma in name_map:
-                logger.debug("Concept %r matched via lemma %r to %r", concept, lemma, name_map[lemma])
-                return name_map[lemma]
-        logger.debug("Concept %r: no match found in name map", concept)
-        return None
+        result: str | None = None
+        lower = concept.lower()
+        if lower in name_map:
+            result = name_map[lower]
+            logger.debug("Concept %r matched directly to %r", concept, result)
+        else:
+            for lemma in lemmatize(concept):
+                if lemma in name_map:
+                    result = name_map[lemma]
+                    logger.debug("Concept %r matched via lemma %r to %r", concept, lemma, result)
+                    break
+            if result is None:
+                logger.debug("Concept %r: no match found in name map", concept)
+        return result
 
     def resolve(self, concepts: list[str]) -> list[str]:
         """

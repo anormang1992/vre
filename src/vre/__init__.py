@@ -117,25 +117,10 @@ class VRE:
         """
         Initialize VRE with the given primitive repository.
 
-        Parameters
-        ----------
-        repository:
-            The Neo4j primitive repository for graph operations.
-        agent_key:
-            Optional registration key for agent identity. When provided,
-            the key is resolved via the persisted registry to a stable
-            AgentIdentity whose `agent_id` is stamped on every
-            GroundingResult produced by this instance.
-        agent_name:
-            Optional human-readable name for the agent. Only used on
-            first registration; ignored on subsequent calls with the
-            same `agent_key`.
-        registry_path:
-            Path to the agent registry JSON file. Defaults to
-            `AgentRegistry`'s built-in default when None.
-        persist_traces:
-            When True (default), grounding traces are persisted to daily
-            JSONL files under `~/.vre/traces/`.
+        When `agent_key` is provided, it resolves via the persisted registry
+        to a stable AgentIdentity stamped on every GroundingResult; `agent_name`
+        is used only on first registration. Traces are persisted to daily JSONL
+        files under `~/.vre/traces/` when `persist_traces` is True.
         """
         self._repo = repository
         self._resolver = ConceptResolver(repository)
@@ -191,42 +176,36 @@ class VRE:
         increments in-process, and batch-writes the results. Updates are
         best-effort — failures are logged but never block the caller.
         """
-        if not result.trace:
-            return
+        target_prims: list = []
+        if result.trace:
+            resolved_lower = {r.lower() for r in result.resolved}
+            target_prims = [
+                prim for prim in result.trace.result.primitives
+                if prim.name.lower() in resolved_lower
+            ]
 
-        now = datetime.now(timezone.utc)
-        gap_ids = self._gap_primitive_ids(result.gaps)
-        resolved_lower = {r.lower() for r in result.resolved}
-
-        target_prims = [
-            prim for prim in result.trace.result.primitives
-            if prim.name.lower() in resolved_lower
-        ]
-        if not target_prims:
-            return
-
-        target_ids = [p.id for p in target_prims]
-
-        try:
-            current_metrics = self._repo.batch_read_metrics(target_ids)
-        except Exception:
-            logger.warning("Failed to batch-read metrics", exc_info=True)
-            return
+        current_metrics: dict[UUID, PrimitiveMetrics | None] | None = None
+        if target_prims:
+            try:
+                current_metrics = self._repo.batch_read_metrics([p.id for p in target_prims])
+            except Exception:
+                logger.warning("Failed to batch-read metrics", exc_info=True)
 
         updates: dict[UUID, PrimitiveMetrics] = {}
-        for prim in target_prims:
-            if prim.id not in current_metrics:
-                continue
-            metrics = current_metrics[prim.id] or PrimitiveMetrics()
-
-            if prim.id in gap_ids:
-                metrics.failure_count += 1
-                metrics.last_failed = now
-            else:
-                metrics.grounding_count += 1
-                metrics.last_grounded = now
-
-            updates[prim.id] = metrics
+        if current_metrics is not None:
+            now = datetime.now(timezone.utc)
+            gap_ids = self._gap_primitive_ids(result.gaps)
+            for prim in target_prims:
+                if prim.id not in current_metrics:
+                    continue
+                metrics = current_metrics[prim.id] or PrimitiveMetrics()
+                if prim.id in gap_ids:
+                    metrics.failure_count += 1
+                    metrics.last_failed = now
+                else:
+                    metrics.grounding_count += 1
+                    metrics.last_grounded = now
+                updates[prim.id] = metrics
 
         if updates:
             try:
@@ -247,33 +226,30 @@ class VRE:
         ignored. Looks up the primitive by ID first, falling back to name
         for ExistenceGaps where the gap carries a transient ID.
         """
-        if decision == CandidateDecision.SKIPPED:
-            return
+        prim_id: UUID | None = None
+        prim_name: str | None = None
+        if decision != CandidateDecision.SKIPPED:
+            if isinstance(gap, RelationalGap):
+                prim_id, prim_name = gap.target.id, gap.target.name
+            elif isinstance(gap, (DepthGap, ExistenceGap, ReachabilityGap)):
+                prim_id, prim_name = gap.primitive.id, gap.primitive.name
 
-        if isinstance(gap, RelationalGap):
-            prim_id, prim_name = gap.target.id, gap.target.name
-        elif isinstance(gap, (DepthGap, ExistenceGap, ReachabilityGap)):
-            prim_id, prim_name = gap.primitive.id, gap.primitive.name
-        else:
-            return
+        found = None
+        if prim_id is not None:
+            found = self._repo.find_by_id(prim_id)
+            if found is None and prim_name is not None:
+                found = self._repo.find_by_name(prim_name)
 
-        found = self._repo.find_by_id(prim_id)
-        if found is None:
-            found = self._repo.find_by_name(prim_name)
-        if found is None:
-            return
-
-        metrics = found.metrics or PrimitiveMetrics()
-
-        if decision in (CandidateDecision.ACCEPTED, CandidateDecision.MODIFIED):
-            metrics.learning_count += 1
-        elif decision == CandidateDecision.REJECTED:
-            metrics.rejection_count += 1
-
-        try:
-            self._repo.update_metrics(found.id, metrics)
-        except Exception:
-            logger.warning("Failed to update learning metrics for %r", prim_name, exc_info=True)
+        if found is not None:
+            metrics = found.metrics or PrimitiveMetrics()
+            if decision in (CandidateDecision.ACCEPTED, CandidateDecision.MODIFIED):
+                metrics.learning_count += 1
+            elif decision == CandidateDecision.REJECTED:
+                metrics.rejection_count += 1
+            try:
+                self._repo.update_metrics(found.id, metrics)
+            except Exception:
+                logger.warning("Failed to update learning metrics for %r", prim_name, exc_info=True)
 
     def resolve(self, concepts: list[str]) -> list[str]:
         """
@@ -290,15 +266,8 @@ class VRE:
         Ground concepts with graph-derived depth gating.
 
         Returns a GroundingResult with grounded=True only when all resolved
-        concepts are fully grounded with no gaps.
-
-        Parameters
-        ----------
-        concepts:
-            List of free-form concept names to ground.
-        min_depth:
-            Optional integrator override — enforces a minimum depth floor
-            on all root primitives. Can only raise the floor, never lower it.
+        concepts are fully grounded with no gaps. `min_depth` is an optional
+        integrator override that can only raise the floor, never lower it.
         """
         result = self._stamp_identity(self._engine.ground(concepts, self._resolver, min_depth=min_depth))
         self._update_grounding_metrics(result)
@@ -390,50 +359,47 @@ class VRE:
             grounding = self._stamp_identity(self._engine.ground(concepts, self._resolver))
 
         if grounding.trace is None:
-            return PolicyResult(action=PolicyAction.PASS)
-
-        card_enum: Cardinality | None = None
-        if cardinality is not None:
-            try:
-                card_enum = Cardinality(cardinality)
-            except ValueError:
-                card_enum = None  # unknown → fire all policies
-
-        gate = PolicyGate()
-        violations = gate.evaluate(grounding.trace, card_enum, call_context)
-
-        if not violations:
             policy_result = PolicyResult(action=PolicyAction.PASS)
         else:
-            hard_blocks = [v for v in violations if not v.requires_confirmation]
-            pending = [v for v in violations if v.requires_confirmation]
+            card_enum: Cardinality | None = None
+            if cardinality is not None:
+                try:
+                    card_enum = Cardinality(cardinality)
+                except ValueError:
+                    card_enum = None  # unknown → fire all policies
 
-            # Hard blocks do not consult on_policy — they are immediate BLOCKs with their own messages
-            if hard_blocks:
-                messages = "; ".join(v.message for v in hard_blocks)
-                policy_result = PolicyResult(
-                    action=PolicyAction.BLOCK,
-                    reason=messages,
-                    violations=violations,
-                )
+            gate = PolicyGate()
+            violations = gate.evaluate(grounding.trace, card_enum, call_context)
+
+            if not violations:
+                policy_result = PolicyResult(action=PolicyAction.PASS)
             else:
-                # Only confirmation-required violations remain — consult on_policy
-                if on_policy is not None:
-                    if on_policy(pending):
-                        policy_result = PolicyResult(
-                            action=PolicyAction.PASS,
-                            violations=pending,
-                        )
-                    else:
-                        policy_result = PolicyResult(
-                            action=PolicyAction.BLOCK,
-                            reason="User declined",
-                            violations=pending,
-                        )
-                else:
+                hard_blocks = [v for v in violations if not v.requires_confirmation]
+                pending = [v for v in violations if v.requires_confirmation]
+
+                # Hard blocks do not consult on_policy — they are immediate BLOCKs with their own messages
+                if hard_blocks:
+                    messages = "; ".join(v.message for v in hard_blocks)
+                    policy_result = PolicyResult(
+                        action=PolicyAction.BLOCK,
+                        reason=messages,
+                        violations=violations,
+                    )
+                elif on_policy is None:
                     policy_result = PolicyResult(
                         action=PolicyAction.BLOCK,
                         reason="Confirmation required, no handler",
+                        violations=pending,
+                    )
+                elif on_policy(pending):
+                    policy_result = PolicyResult(
+                        action=PolicyAction.PASS,
+                        violations=pending,
+                    )
+                else:
+                    policy_result = PolicyResult(
+                        action=PolicyAction.BLOCK,
+                        reason="User declined",
                         violations=pending,
                     )
 

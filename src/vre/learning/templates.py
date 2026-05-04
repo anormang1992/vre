@@ -35,12 +35,15 @@ class TemplateFactory:
 
     @staticmethod
     def from_gap(gap: KnowledgeGap) -> LearningCandidate:
+        candidate: LearningCandidate
         if isinstance(gap, ExistenceGap):
-            return ExistenceCandidate(name=gap.primitive.name)
-        if isinstance(gap, DepthGap):
-            return DepthCandidate()
-        if isinstance(gap, RelationalGap):
-            return RelationalCandidate()
-        if isinstance(gap, ReachabilityGap):
-            return ReachabilityCandidate()
-        raise ValueError(f"Unknown gap type: {type(gap)}")
+            candidate = ExistenceCandidate(name=gap.primitive.name)
+        elif isinstance(gap, DepthGap):
+            candidate = DepthCandidate()
+        elif isinstance(gap, RelationalGap):
+            candidate = RelationalCandidate()
+        elif isinstance(gap, ReachabilityGap):
+            candidate = ReachabilityCandidate()
+        else:
+            raise ValueError(f"Unknown gap type: {type(gap)}")
+        return candidate

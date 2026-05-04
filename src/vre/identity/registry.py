@@ -44,26 +44,24 @@ class AgentRegistry:
         """
         Load registry from disk. Returns empty dict if file doesn't exist.
         """
-        if not self._path.exists():
-            return {}
-
-        try:
-            raw = self._path.read_text(encoding="utf-8")
-            if not raw.strip():
-                return {}
-            data = json.loads(raw)
-            if not isinstance(data, dict):
-                raise RegistryError(
-                    f"Corrupt registry at {self._path}: expected JSON object at top level"
-                )
-            registry = {
-                key: AgentIdentity.model_validate(value) for key, value in data.items()
-            }
-            return registry
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise RegistryError(f"Corrupt registry at {self._path}: {exc}") from exc
-        except OSError as exc:
-            raise RegistryError(f"Cannot read registry at {self._path}: {exc}") from exc
+        registry: dict[str, AgentIdentity] = {}
+        if self._path.exists():
+            try:
+                raw = self._path.read_text(encoding="utf-8")
+                if raw.strip():
+                    data = json.loads(raw)
+                    if not isinstance(data, dict):
+                        raise RegistryError(
+                            f"Corrupt registry at {self._path}: expected JSON object at top level"
+                        )
+                    registry = {
+                        key: AgentIdentity.model_validate(value) for key, value in data.items()
+                    }
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise RegistryError(f"Corrupt registry at {self._path}: {exc}") from exc
+            except OSError as exc:
+                raise RegistryError(f"Cannot read registry at {self._path}: {exc}") from exc
+        return registry
 
     def _save(self, registry: dict[str, AgentIdentity]) -> None:
         """

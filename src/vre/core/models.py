@@ -27,6 +27,13 @@ class DepthLevel(IntEnum):
     IMPLICATIONS = 4
 
 
+def format_depth_label(level: "DepthLevel | None") -> str:
+    """
+    Render a DepthLevel as "D{value} {NAME}", or "none" when level is None.
+    """
+    return "none" if level is None else f"D{level.value} {level.name}"
+
+
 class RelationType(str, Enum):
     """
     Constrained relationship types between primitives.
@@ -87,8 +94,10 @@ class PrimitiveMetrics(BaseModel):
         The most recent time this primitive was exercised in any way.
         """
         if self.last_grounded and self.last_failed:
-            return max(self.last_grounded, self.last_failed)
-        return self.last_grounded or self.last_failed
+            result = max(self.last_grounded, self.last_failed)
+        else:
+            result = self.last_grounded or self.last_failed
+        return result
 
 
 class Relatum(BaseModel):
