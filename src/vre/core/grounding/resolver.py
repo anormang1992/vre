@@ -79,28 +79,32 @@ class ConceptResolver:
         Map lowercased primitive names to their canonical form.
 
         Results are cached on the instance; call `invalidate` after
-        mutations that add, rename, or remove primitives.
+        mutations that add, rename, or remove primitives. Returns the
+        cached dict directly — callers must not mutate it.
         """
         if self._name_map_cache is None:
             self._name_map_cache = {name.lower(): name for name in self._repo.list_names()}
-        return self._name_map_cache.copy()
+        return self._name_map_cache
 
     @staticmethod
     def lookup(concept: str, name_map: dict[str, str]) -> str | None:
         """
         Return canonical name for concept, or None if not found.
         """
-        # Try direct lowercase match first
-        if concept.lower() in name_map:
-            logger.debug("Concept %r matched directly to %r", concept, name_map[concept.lower()])
-            return name_map[concept.lower()]
-        # Try each lemma
-        for lemma in lemmatize(concept):
-            if lemma in name_map:
-                logger.debug("Concept %r matched via lemma %r to %r", concept, lemma, name_map[lemma])
-                return name_map[lemma]
-        logger.debug("Concept %r: no match found in name map", concept)
-        return None
+        result: str | None = None
+        lower = concept.lower()
+        if lower in name_map:
+            result = name_map[lower]
+            logger.debug("Concept %r matched directly to %r", concept, result)
+        else:
+            for lemma in lemmatize(concept):
+                if lemma in name_map:
+                    result = name_map[lemma]
+                    logger.debug("Concept %r matched via lemma %r to %r", concept, lemma, result)
+                    break
+            if result is None:
+                logger.debug("Concept %r: no match found in name map", concept)
+        return result
 
     def resolve(self, concepts: list[str]) -> list[str]:
         """

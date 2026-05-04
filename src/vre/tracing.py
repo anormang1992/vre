@@ -8,7 +8,10 @@ Enabled by default on every VRE instance. Traces are written to
 ``~/.vre/traces/YYYY-MM-DD.jsonl``. Disable with ``persist_traces=False``.
 """
 
+import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -17,6 +20,9 @@ from pydantic import BaseModel, Field
 
 from vre.core.grounding.models import GroundingResult
 from vre.learning.models import LearningResult
+
+
+logger = logging.getLogger(__name__)
 
 
 class TraceEntry(BaseModel):
@@ -46,9 +52,7 @@ def build_trace_entry(
     """
     gaps = [gap.model_dump(mode="json") for gap in result.gaps]
 
-    steps: list[dict[str, Any]] = []
-    if result.trace is not None:
-        steps = [step.model_dump(mode="json") for step in result.trace.result.pathway]
+    steps = [step.model_dump(mode="json") for step in result.get_pathway_steps()]
 
     serialized_outcomes: list[dict[str, Any]] | None = None
     if learning_outcomes is not None:
@@ -91,3 +95,65 @@ class TraceWriter:
             f.write(line)
             f.flush()
             os.fsync(f.fileno())
+
+
+class TraceManager:
+    """
+    Internal coordinator owning the TraceWriter and the in-flight suppression
+    state used by `learn_all` to skip per-iteration `check()` traces in favor
+    of a single summary trace at the end of the loop.
+
+    All write paths are best-effort: persistence failures are logged and never
+    raise to the caller.
+    """
+
+    def __init__(self, writer: TraceWriter | None) -> None:
+        self._writer = writer
+        self._suppressed = False
+
+    @contextmanager
+    def suppress(self) -> Iterator[None]:
+        """
+        Suppress writes via `write_check` for the duration of the block.
+
+        Re-entrant: nested suppress() blocks restore the prior state on exit.
+        """
+        was, self._suppressed = self._suppressed, True
+        try:
+            yield
+        finally:
+            self._suppressed = was
+
+    def _safe_write(self, entry: TraceEntry, *, label: str) -> None:
+        """
+        Persist a trace entry, swallowing and logging any writer failures.
+        """
+        try:
+            self._writer.write(entry)  # type: ignore[union-attr]
+        except Exception:
+            logger.warning("Failed to persist trace for %s()", label, exc_info=True)
+
+    def write_check(self, concepts: list[str], result: GroundingResult) -> None:
+        """
+        Persist a 'check' trace entry. No-op when no writer is configured or
+        when called inside a `suppress()` block.
+        """
+        if self._writer is not None and not self._suppressed:
+            self._safe_write(build_trace_entry("check", concepts, result), label="check")
+
+    def write_learn(
+        self,
+        concepts: list[str],
+        result: GroundingResult,
+        outcomes: list[LearningResult],
+    ) -> None:
+        """
+        Persist a 'learn' trace entry summarizing a learning loop. No-op when
+        no writer is configured. Not affected by `suppress()` — learning
+        summaries are the reason `learn_all` suppresses its inner check writes.
+        """
+        if self._writer is not None:
+            self._safe_write(
+                build_trace_entry("learn", concepts, result, outcomes),
+                label="learn_all",
+            )

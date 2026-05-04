@@ -10,43 +10,45 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from vre.core.models import EpistemicResponse
+from vre.core.models import (
+    Depth,
+    EpistemicResponse,
+    EpistemicStep,
+    KnowledgeGap,
+    Primitive,
+    Relatum,
+    format_depth_label,
+)
 
 
 # ── Private formatting helpers ────────────────────────────────────────────────
 
-def _fmt_gap(gap: Any) -> str:
+def _fmt_gap(gap: KnowledgeGap) -> str:
     """
     Format a KnowledgeGap as a human-readable string.
     """
     kind = gap.kind
     if kind == "EXISTENCE":
-        return f"EXISTENCE: '{gap.primitive.name}' is not in the knowledge graph"
-    if kind == "DEPTH":
-        curr = (
-            f"D{gap.current_depth.value} {gap.current_depth.name}"
-            if gap.current_depth is not None
-            else "none"
-        )
-        req = f"D{gap.required_depth.value} {gap.required_depth.name}"
-        return f"DEPTH: '{gap.primitive.name}' known to {curr}, requires {req}"
-    if kind == "RELATIONAL":
-        curr = (
-            f"D{gap.current_depth.value} {gap.current_depth.name}"
-            if gap.current_depth is not None
-            else "none"
-        )
-        req = f"D{gap.required_depth.value} {gap.required_depth.name}"
-        return (
+        out = f"EXISTENCE: '{gap.primitive.name}' is not in the knowledge graph"
+    elif kind == "DEPTH":
+        curr = format_depth_label(gap.current_depth)
+        req = format_depth_label(gap.required_depth)
+        out = f"DEPTH: '{gap.primitive.name}' known to {curr}, requires {req}"
+    elif kind == "RELATIONAL":
+        curr = format_depth_label(gap.current_depth)
+        req = format_depth_label(gap.required_depth)
+        out = (
             f"RELATIONAL: '{gap.source.name}' → '{gap.target.name}' "
             f"requires {req} on target, found {curr}"
         )
-    if kind == "REACHABILITY":
-        return f"REACHABILITY: '{gap.primitive.name}' is not connected to other concepts"
-    return f"UNKNOWN: {gap}"
+    elif kind == "REACHABILITY":
+        out = f"REACHABILITY: '{gap.primitive.name}' is not connected to other concepts"
+    else:
+        out = f"UNKNOWN: {gap}"
+    return out
 
 
-def _fmt_relatum(r: Any, id_to_name: dict) -> list[str]:
+def _fmt_relatum(r: Relatum, id_to_name: dict[UUID, str]) -> list[str]:
     """
     Format a single Relatum as display lines, including metadata, policy count, and provenance.
     """
@@ -65,12 +67,12 @@ def _fmt_relatum(r: Any, id_to_name: dict) -> list[str]:
     return lines
 
 
-def _fmt_depth(depth: Any, id_to_name: dict) -> list[str]:
+def _fmt_depth(depth: Depth, id_to_name: dict[UUID, str]) -> list[str]:
     """
     Format a single Depth level as display lines, including its relata.
     """
     prov_tag = f"  [{depth.provenance.source.value}]" if depth.provenance else ""
-    lines = [f"  D{depth.level.value} {depth.level.name}{prov_tag}"]
+    lines = [f"  {format_depth_label(depth.level)}{prov_tag}"]
     if depth.properties:
         lines.append("    properties:")
         for k, v in depth.properties.items():
@@ -82,7 +84,7 @@ def _fmt_depth(depth: Any, id_to_name: dict) -> list[str]:
     return lines
 
 
-def _fmt_primitive(primitive: Any, id_to_name: dict) -> list[str]:
+def _fmt_primitive(primitive: Primitive, id_to_name: dict[UUID, str]) -> list[str]:
     """
     Format a Primitive and all its depths as display lines.
     """
@@ -94,20 +96,18 @@ def _fmt_primitive(primitive: Any, id_to_name: dict) -> list[str]:
         date_str = primitive.provenance.created_at.strftime("%Y-%m-%d")
         lines.append(f"  provenance: {primitive.provenance.source.value} ({date_str})")
 
-    if not primitive.depths:
-        return lines
-
-    # Compact single-line format when all depths have no properties or relata
-    all_empty = all(not d.properties and not d.relata for d in primitive.depths)
-    if all_empty:
-        labels = [
-            f"D{d.level.value} {d.level.name}"
-            for d in sorted(primitive.depths, key=lambda d: d.level)
-        ]
-        lines.append("  " + " → ".join(labels))
-    else:
-        for depth in sorted(primitive.depths, key=lambda d: d.level):
-            lines.extend(_fmt_depth(depth, id_to_name))
+    if primitive.depths:
+        # Compact single-line format when all depths have no properties or relata
+        all_empty = all(not d.properties and not d.relata for d in primitive.depths)
+        if all_empty:
+            labels = [
+                format_depth_label(d.level)
+                for d in sorted(primitive.depths, key=lambda d: d.level)
+            ]
+            lines.append("  " + " → ".join(labels))
+        else:
+            for depth in sorted(primitive.depths, key=lambda d: d.level):
+                lines.extend(_fmt_depth(depth, id_to_name))
 
     return lines
 
@@ -129,6 +129,18 @@ class GroundingResult(BaseModel):
     gaps: list[Any]
     trace: EpistemicResponse | None = None
     agent_id: UUID | None = None
+
+    def get_primitives(self) -> list[Primitive]:
+        """
+        Return the primitives from the underlying trace, or [] when absent.
+        """
+        return self.trace.result.primitives if self.trace is not None else []
+
+    def get_pathway_steps(self) -> list[EpistemicStep]:
+        """
+        Return the pathway steps from the underlying trace, or [] when absent.
+        """
+        return self.trace.result.pathway if self.trace is not None else []
 
     def __str__(self) -> str:
         """

@@ -417,6 +417,10 @@ def on_trace(grounding: GroundingResult) -> None:
 - `trace: EpistemicResponse | None` — the full subgraph with all primitives, depths, relata, and pathway
 - `agent_id: UUID | None` — the stable agent identifier, when the VRE instance was created with an `agent_key`
 
+For convenience, `result.get_primitives()` and `result.get_pathway_steps()` return the trace's primitives
+and pathway steps directly (or empty lists when no trace is present), so callers don't have to drill into
+`result.trace.result.*` themselves.
+
 The reference integration renders `on_trace` as a Rich tree:
 
 ```
@@ -825,11 +829,13 @@ reveals a constraint that was not modeled. The agent proposes the missing relatu
 (e.g. `create --[CONSTRAINED_BY]--> permission`), seeks human validation, and persists the new knowledge. Depth was
 honest before the failure and more complete after.
 
-### VRE Networks
+### Knowledge Import
 
-An agentic network of agents that share grounded knowledge across different epistemic graphs while applying the same
-enforcement mechanisms. A concept grounded at D3 in one agent's graph carries its
-epistemic justification with it — the network federates knowledge while keeping each agent's epistemic contract intact.
+A pathway for growing an agent's graph from peer-published knowledge. An agent fetches a peer's subgraph for a target
+concept and persists it locally as ordinary primitives stamped with `provenance.source = PEER` and a
+`(peer_name, imported_at)` attestation. Imports are one-shot — refresh is an explicit operator action, never a live
+link — which preserves the depth-explicit *validated trust* VRE's enforcement depends on while letting an agent grow
+its graph from a community of peers instead of authoring every concept from scratch.
 
 ### Epistemic Memory
 
@@ -858,7 +864,8 @@ grounding history, and affect the agent's confidence in related concepts.
 src/vre/
 ├── __init__.py                  # VRE public interface (check, learn_all, check_policy)
 ├── guard.py                     # vre_guard decorator (grounding → learning → policy → execution)
-├── tracing.py                   # JSONL persistence of epistemic traces
+├── metrics.py                   # MetricsManager — best-effort grounding/learning metric updates
+├── tracing.py                   # TraceWriter + TraceManager — JSONL persistence + suppression
 │
 ├── identity/
 │   ├── models.py                # AgentIdentity — stable UUID bound to a registration key
@@ -881,7 +888,7 @@ src/vre/
 └── learning/
     ├── callback.py              # LearningCallback ABC
     ├── models.py                # Candidate models, CandidateDecision, LearningResult
-    ├── templates.py             # TemplateFactory — gap → structured candidate template
+    ├── templates.py             # template_for_gap — gap → structured candidate template
     └── engine.py                # LearningEngine — template → callback → validate → persist
 
 scripts/

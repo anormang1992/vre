@@ -70,20 +70,23 @@ class Policy(BaseModel):
         A result with passed=True suppresses the violation; passed=False
         (or no callback) means the policy fires.
         """
+        callback: PolicyCallback | None
         if self.callback is None:
-            return None
-        module_path, _, func_name = self.callback.rpartition(".")
-        if not module_path or not func_name:
-            raise VREError(
-                f"Invalid policy callback path '{self.callback}': expected 'module.attr'"
-            )
-        try:
-            module = importlib.import_module(module_path)
-            return getattr(module, func_name)
-        except (ImportError, AttributeError, ValueError) as exc:
-            raise VREError(
-                f"Failed to resolve policy callback '{self.callback}': {exc}"
-            ) from exc
+            callback = None
+        else:
+            module_path, _, func_name = self.callback.rpartition(".")
+            if not module_path or not func_name:
+                raise VREError(
+                    f"Invalid policy callback path '{self.callback}': expected 'module.attr'"
+                )
+            try:
+                module = importlib.import_module(module_path)
+                callback = getattr(module, func_name)
+            except (ImportError, AttributeError, ValueError) as exc:
+                raise VREError(
+                    f"Failed to resolve policy callback '{self.callback}': {exc}"
+                ) from exc
+        return callback
 
 
 def parse_policy(data: dict[str, Any]) -> Policy:
@@ -124,5 +127,7 @@ class PolicyResult(BaseModel):
         Render the policy result as a human-readable status string.
         """
         if self.action == PolicyAction.PASS:
-            return "[VRE Policy] PASSED"
-        return f"[VRE Policy] BLOCKED — {self.reason}"
+            msg = "[VRE Policy] PASSED"
+        else:
+            msg = f"[VRE Policy] BLOCKED — {self.reason}"
+        return msg

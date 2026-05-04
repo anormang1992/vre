@@ -2,11 +2,13 @@
 # Licensed under the Apache License, Version 2.0
 
 """
-TemplateFactory — converts knowledge gaps into structured candidate templates.
+template_for_gap — converts knowledge gaps into structured candidate templates.
 
 VRE presents the shape of what is needed; the agent fills in the content.
 Context (primitive IDs, existing depths) lives on the gap; the candidate
-carries only the new knowledge to be proposed.
+carries only the new knowledge to be proposed. ExistenceGap pre-fills the
+concept name; all other candidates start empty since context lives on the
+gap itself.
 """
 
 from vre.core.models import (
@@ -25,22 +27,20 @@ from vre.learning.models import (
 )
 
 
-class TemplateFactory:
+def template_for_gap(gap: KnowledgeGap) -> LearningCandidate:
     """
-    Converts typed knowledge gaps into candidate templates.
-
-    ExistenceGap pre-fills the concept name; all other candidates start
-    empty since context lives on the gap itself.
+    Build the candidate template that matches the given gap kind.
     """
-
-    @staticmethod
-    def from_gap(gap: KnowledgeGap) -> LearningCandidate:
-        if isinstance(gap, ExistenceGap):
-            return ExistenceCandidate(name=gap.primitive.name)
-        if isinstance(gap, DepthGap):
-            return DepthCandidate()
-        if isinstance(gap, RelationalGap):
-            return RelationalCandidate()
-        if isinstance(gap, ReachabilityGap):
-            return ReachabilityCandidate()
-        raise ValueError(f"Unknown gap type: {type(gap)}")
+    candidate: LearningCandidate
+    match gap:
+        case ExistenceGap():
+            candidate = ExistenceCandidate(name=gap.primitive.name)
+        case DepthGap():
+            candidate = DepthCandidate()
+        case RelationalGap():
+            candidate = RelationalCandidate()
+        case ReachabilityGap():
+            candidate = ReachabilityCandidate()
+        case _:
+            raise ValueError(f"Unknown gap type: {type(gap)}")
+    return candidate

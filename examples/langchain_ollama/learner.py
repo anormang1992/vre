@@ -145,15 +145,14 @@ def _fmt_existing_depths(primitive) -> str:
 
 def _fmt_available_targets(grounding: GroundingResult, source_id) -> str:
     lines = []
-    if grounding.trace:
-        for p in grounding.trace.result.primitives:
-            if p.id == source_id:
-                continue
-            lines.append(f"  {p.name}:")
-            if p.depths:
-                for d in sorted(p.depths, key=lambda d: d.level):
-                    props = ", ".join(f"{k}={v}" for k, v in d.properties.items()) if d.properties else "none"
-                    lines.append(f"    D{d.level.value} {d.level.name}: {props}")
+    for p in grounding.get_primitives():
+        if p.id == source_id:
+            continue
+        lines.append(f"  {p.name}:")
+        if p.depths:
+            for d in sorted(p.depths, key=lambda d: d.level):
+                props = ", ".join(f"{k}={v}" for k, v in d.properties.items()) if d.properties else "none"
+                lines.append(f"    D{d.level.value} {d.level.name}: {props}")
             else:
                 lines.append("    (no depths)")
     return "\n".join(lines) or "  (none)"

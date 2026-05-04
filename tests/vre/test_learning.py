@@ -40,7 +40,7 @@ from vre.learning.models import (
     ReachabilityCandidate,
     RelationalCandidate,
 )
-from vre.learning.templates import TemplateFactory
+from vre.learning.templates import template_for_gap
 
 
 # ---------------------------------------------------------------------------
@@ -144,10 +144,10 @@ class StubRepository:
 # Template tests
 # ---------------------------------------------------------------------------
 
-class TestTemplateFactory:
+class TestTemplateForGap:
     def test_existence_has_name(self):
         gap = ExistenceGap(primitive=_primitive("Copy"))
-        template = TemplateFactory.from_gap(gap)
+        template = template_for_gap(gap)
         assert isinstance(template, ExistenceCandidate)
         assert template.name == "Copy"
         assert template.d1 is None
@@ -156,7 +156,7 @@ class TestTemplateFactory:
     def test_depth_is_empty(self):
         prim = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
         gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE)
-        template = TemplateFactory.from_gap(gap)
+        template = template_for_gap(gap)
         assert isinstance(template, DepthCandidate)
         assert template.new_depths == []
         assert template.kind == "DEPTH"
@@ -168,7 +168,7 @@ class TestTemplateFactory:
             required_depth=DepthLevel.CAPABILITIES,
             current_depth=None,
         )
-        template = TemplateFactory.from_gap(gap)
+        template = template_for_gap(gap)
         assert isinstance(template, RelationalCandidate)
         assert template.new_depths == []
         assert template.kind == "RELATIONAL"
@@ -176,7 +176,7 @@ class TestTemplateFactory:
     def test_reachability_is_empty(self):
         prim = _primitive("Delete", depths=[_depth(DepthLevel.EXISTENCE)])
         gap = ReachabilityGap(primitive=prim)
-        template = TemplateFactory.from_gap(gap)
+        template = template_for_gap(gap)
         assert isinstance(template, ReachabilityCandidate)
         assert template.target_name is None
         assert template.relation_type is None
@@ -630,13 +630,13 @@ class TestLearningCallbackLifecycle:
 # Template edge cases
 # ---------------------------------------------------------------------------
 
-class TestTemplateFactoryEdgeCases:
+class TestTemplateForGapEdgeCases:
     def test_unknown_gap_type_raises(self):
         class UnknownGap:
             pass
 
         with pytest.raises(ValueError, match="Unknown gap type"):
-            TemplateFactory.from_gap(UnknownGap())
+            template_for_gap(UnknownGap())
 
 
 # ---------------------------------------------------------------------------

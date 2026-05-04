@@ -48,7 +48,7 @@ class PolicyCallContext(BaseModel):
 
     tool_name: str
     grounding: GroundingResult
-    call_args: tuple
+    call_args: tuple[Any, ...]
     call_kwargs: dict[str, Any]
 
 

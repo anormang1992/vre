@@ -5,6 +5,7 @@
 Core epistemic models for the Volute Reasoning Engine.
 """
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from enum import Enum, IntEnum
 from typing import Annotated, Any, Literal, NamedTuple
@@ -25,6 +26,13 @@ class DepthLevel(IntEnum):
     CAPABILITIES = 2
     CONSTRAINTS = 3
     IMPLICATIONS = 4
+
+
+def format_depth_label(level: "DepthLevel | None") -> str:
+    """
+    Render a DepthLevel as "D{value} {NAME}", or "none" when level is None.
+    """
+    return "none" if level is None else f"D{level.value} {level.name}"
 
 
 class RelationType(str, Enum):
@@ -87,8 +95,10 @@ class PrimitiveMetrics(BaseModel):
         The most recent time this primitive was exercised in any way.
         """
         if self.last_grounded and self.last_failed:
-            return max(self.last_grounded, self.last_failed)
-        return self.last_grounded or self.last_failed
+            result = max(self.last_grounded, self.last_failed)
+        else:
+            result = self.last_grounded or self.last_failed
+        return result
 
 
 class Relatum(BaseModel):
@@ -217,6 +227,23 @@ KnowledgeGap = Annotated[
     DepthGap | ExistenceGap | RelationalGap | ReachabilityGap,
     Field(discriminator="kind"),
 ]
+
+
+def gap_primitive_ids(gaps: Iterable[KnowledgeGap]) -> set[UUID]:
+    """
+    Collect the IDs of the primitives each gap is "about".
+
+    RelationalGaps point at the target — the visible edge means the source
+    is epistemically sound; the failure belongs to the under-grounded target.
+    All other gap kinds point at .primitive.
+    """
+    ids: set[UUID] = set()
+    for gap in gaps:
+        if gap.kind == "RELATIONAL":
+            ids.add(gap.target.id)
+        else:
+            ids.add(gap.primitive.id)
+    return ids
 
 
 class EpistemicStep(BaseModel):

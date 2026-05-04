@@ -122,9 +122,14 @@ class PrimitiveRepository:
         """
         Parse a Neo4j property that may be a JSON string or already-decoded dict/list.
         """
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
+        return json.loads(value) if isinstance(value, str) else value
+
+    @staticmethod
+    def _dump_model_json(model: Any) -> str | None:
+        """
+        Serialize an optional Pydantic model to a JSON string, or None when absent.
+        """
+        return json.dumps(model.model_dump(mode="json")) if model is not None else None
 
     @staticmethod
     def _record_to_node_data(record: Any) -> dict[str, Any]:
@@ -300,7 +305,7 @@ class PrimitiveRepository:
                         "target_depth": int(relatum.target_depth),
                         "metadata_json": json.dumps(relatum.metadata) if relatum.metadata else "{}",
                         "policies": json.dumps([p.model_dump() for p in relatum.policies]) if relatum.policies else "[]",
-                        "provenance": json.dumps(relatum.provenance.model_dump(mode="json")) if relatum.provenance else None,
+                        "provenance": self._dump_model_json(relatum.provenance),
                     }
                 )
 
@@ -311,8 +316,8 @@ class PrimitiveRepository:
 
         rel_types = [rt.value for rt in RelationType]
 
-        node_provenance = json.dumps(primitive.provenance.model_dump(mode="json")) if primitive.provenance else None
-        node_metrics = json.dumps(primitive.metrics.model_dump(mode="json")) if primitive.metrics else None
+        node_provenance = self._dump_model_json(primitive.provenance)
+        node_metrics = self._dump_model_json(primitive.metrics)
 
         def _tx(tx: Any) -> None:
             tx.run(
@@ -398,35 +403,34 @@ class PrimitiveRepository:
         """
         Read current metrics for multiple primitives in a single query.
         """
-        if not primitive_ids:
-            return {}
-        cypher = cast(
-            LiteralString,
-            "MATCH (p:Primitive) WHERE p.id IN $ids "
-            "RETURN p.id AS id, p.metrics_json AS metrics_json",
-        )
-        try:
-            with self._driver.session(database=self._database) as session:
-                records = session.run(cypher, ids=[str(pid) for pid in primitive_ids])
-                result: dict[UUID, PrimitiveMetrics | None] = {}
-                for record in records:
-                    pid = UUID(record["id"])
-                    raw = record["metrics_json"]
-                    if raw:
-                        try:
-                            parsed = self._parse_json_field(raw)
-                            result[pid] = PrimitiveMetrics.model_validate(parsed)
-                        except Exception as exc:
-                            raise HydrationError(
-                                f"Failed to hydrate metrics for primitive '{pid}': {exc}"
-                            ) from exc
-                    else:
-                        result[pid] = None
-                return result
-        except HydrationError:
-            raise
-        except Neo4jError as exc:
-            raise GraphError(f"Failed to batch-read metrics: {exc}") from exc
+        result: dict[UUID, PrimitiveMetrics | None] = {}
+        if primitive_ids:
+            cypher = cast(
+                LiteralString,
+                "MATCH (p:Primitive) WHERE p.id IN $ids "
+                "RETURN p.id AS id, p.metrics_json AS metrics_json",
+            )
+            try:
+                with self._driver.session(database=self._database) as session:
+                    records = session.run(cypher, ids=[str(pid) for pid in primitive_ids])
+                    for record in records:
+                        pid = UUID(record["id"])
+                        raw = record["metrics_json"]
+                        if raw:
+                            try:
+                                parsed = self._parse_json_field(raw)
+                                result[pid] = PrimitiveMetrics.model_validate(parsed)
+                            except Exception as exc:
+                                raise HydrationError(
+                                    f"Failed to hydrate metrics for primitive '{pid}': {exc}"
+                                ) from exc
+                        else:
+                            result[pid] = None
+            except HydrationError:
+                raise
+            except Neo4jError as exc:
+                raise GraphError(f"Failed to batch-read metrics: {exc}") from exc
+        return result
 
     def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
         """
@@ -495,17 +499,18 @@ class PrimitiveRepository:
                 record = session.run(cypher, id=str(id)).single()
                 if record is None or record["id"] is None:
                     logger.debug("Primitive not found by id=%s", id)
-                    return None
-
-                return self._hydrate_primitive(
-                    self._record_to_node_data(record),
-                    self._record_to_relationships(record),
-                )
+                    primitive = None
+                else:
+                    primitive = self._hydrate_primitive(
+                        self._record_to_node_data(record),
+                        self._record_to_relationships(record),
+                    )
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
             logger.error("Neo4j error finding primitive by id=%s: %s", id, exc)
             raise GraphError(f"Failed to find primitive by id '{id}': {exc}") from exc
+        return primitive
 
     def find_by_name(self, name: str) -> Primitive | None:
         """
@@ -540,17 +545,18 @@ class PrimitiveRepository:
                 record = session.run(cypher, name=name).single()
                 if record is None or record["id"] is None:
                     logger.debug("Primitive not found by name=%r", name)
-                    return None
-
-                return self._hydrate_primitive(
-                    self._record_to_node_data(record),
-                    self._record_to_relationships(record),
-                )
+                    primitive = None
+                else:
+                    primitive = self._hydrate_primitive(
+                        self._record_to_node_data(record),
+                        self._record_to_relationships(record),
+                    )
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
             logger.error("Neo4j error finding primitive by name=%r: %s", name, exc)
             raise GraphError(f"Failed to find primitive by name '{name}': {exc}") from exc
+        return primitive
 
     def delete_primitive(self, id: UUID) -> bool:
         """
@@ -625,54 +631,55 @@ class PrimitiveRepository:
                 ).single()
 
                 if record is None:
-                    return ResolvedSubgraph(roots=[], nodes=[], edges=[])
+                    subgraph = ResolvedSubgraph(roots=[], nodes=[], edges=[])
+                else:
+                    raw_roots = record["roots"]
+                    raw_nodes = record["nodes"]
+                    raw_edges = record["edges"]
 
-                raw_roots = record["roots"]
-                raw_nodes = record["nodes"]
-                raw_edges = record["edges"]
+                    edges_by_source: dict[str, list[dict[str, Any]]] = {}
+                    for e in raw_edges:
+                        sid = e["source_id"]
+                        edges_by_source.setdefault(sid, []).append({
+                            "rel_type": e["rel_type"],
+                            "target_id": e["target_id"],
+                            "rel_props": {
+                                "source_depth": e["source_depth"],
+                                "target_depth": e["target_depth"],
+                                "metadata_json": e.get("metadata_json", "{}"),
+                                "policies": e.get("policies", "[]"),
+                                "provenance": e.get("provenance"),
+                            },
+                        })
 
-                edges_by_source: dict[str, list[dict[str, Any]]] = {}
-                for e in raw_edges:
-                    sid = e["source_id"]
-                    edges_by_source.setdefault(sid, []).append({
-                        "rel_type": e["rel_type"],
-                        "target_id": e["target_id"],
-                        "rel_props": {
-                            "source_depth": e["source_depth"],
-                            "target_depth": e["target_depth"],
-                            "metadata_json": e.get("metadata_json", "{}"),
-                            "policies": e.get("policies", "[]"),
-                            "provenance": e.get("provenance"),
-                        },
-                    })
+                    roots = [
+                        self._hydrate_primitive(r, edges_by_source.get(r["id"], []))
+                        for r in raw_roots
+                    ]
+                    nodes = [
+                        self._hydrate_primitive(n, edges_by_source.get(n["id"], []))
+                        for n in raw_nodes
+                    ]
 
-                roots = [
-                    self._hydrate_primitive(r, edges_by_source.get(r["id"], []))
-                    for r in raw_roots
-                ]
-                nodes = [
-                    self._hydrate_primitive(n, edges_by_source.get(n["id"], []))
-                    for n in raw_nodes
-                ]
+                    edges = [
+                        EpistemicStep(
+                            source_id=UUID(e["source_id"]),
+                            target_id=UUID(e["target_id"]),
+                            relation_type=RelationType(e["rel_type"]),
+                            source_depth=DepthLevel(e["source_depth"]),
+                            target_depth=DepthLevel(e["target_depth"]),
+                        )
+                        for e in raw_edges
+                    ]
 
-                edges = [
-                    EpistemicStep(
-                        source_id=UUID(e["source_id"]),
-                        target_id=UUID(e["target_id"]),
-                        relation_type=RelationType(e["rel_type"]),
-                        source_depth=DepthLevel(e["source_depth"]),
-                        target_depth=DepthLevel(e["target_depth"]),
+                    logger.debug(
+                        "Subgraph resolved: %d roots, %d nodes, %d edges",
+                        len(roots), len(nodes), len(edges),
                     )
-                    for e in raw_edges
-                ]
-
-                logger.debug(
-                    "Subgraph resolved: %d roots, %d nodes, %d edges",
-                    len(roots), len(nodes), len(edges),
-                )
-                return ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+                    subgraph = ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
             logger.error("Neo4j error resolving subgraph for %s: %s", names, exc)
             raise GraphError(f"Failed to resolve subgraph for {names}: {exc}") from exc
+        return subgraph

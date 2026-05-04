@@ -17,13 +17,13 @@ lever to enforce a stricter floor than the graph alone would require.
 from __future__ import annotations
 
 import logging
+from functools import cache
 from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
 from vre.core.grounding.models import GroundingResult
 from vre.core.grounding.resolver import ConceptResolver
 from vre.core.models import (
-    Depth,
     DepthGap,
     DepthLevel,
     EpistemicQuery,
@@ -93,17 +93,30 @@ class GroundingEngine:
         return all_roots, transients
 
     @staticmethod
-    def _contiguous_max_depth(node: Primitive) -> DepthLevel | None:
+    @cache
+    def _max_contiguous_from_levels(present: frozenset[DepthLevel]) -> DepthLevel | None:
         """
-        Return the highest DepthLevel forming a contiguous chain from D0, or None if no depths.
+        Highest DepthLevel forming a contiguous chain from D0 in *present*, or None.
+
+        Pure function of the level set — memoized so all primitives sharing a
+        depth shape share the cached answer. Cache grows with the number of
+        distinct level-sets the process sees (typically tiny).
         """
-        present = {d.level for d in node.depths}
         result: DepthLevel | None = None
         for level in sorted(DepthLevel):
             if level not in present:
                 break
             result = level
         return result
+
+    @staticmethod
+    def _contiguous_max_depth(node: Primitive) -> DepthLevel | None:
+        """
+        Return the highest DepthLevel forming a contiguous chain from D0, or None if no depths.
+        """
+        return GroundingEngine._max_contiguous_from_levels(
+            frozenset(d.level for d in node.depths)
+        )
 
     @staticmethod
     def _partition_edges_by_source_depth(
@@ -240,23 +253,26 @@ class GroundingEngine:
     def _filter_depths(all_nodes: list[Primitive]) -> list[Primitive]:
         """
         Return copies of all_nodes with relata filtered to targets present in the collected set.
+
+        Uses model_copy(deep=True) to skip Pydantic re-validation while still
+        producing fully detached instances — downstream consumers (metrics
+        updates, tracing) can treat the result as independent of the source.
         """
         collected_ids = {n.id for n in all_nodes}
         return [
-            Primitive(
-                id=p.id,
-                name=p.name,
-                provenance=p.provenance,
-                metrics=p.metrics,
-                depths=[
-                    Depth(
-                        level=d.level,
-                        properties=d.properties,
-                        provenance=d.provenance,
-                        relata=[r for r in d.relata if r.target_id in collected_ids],
-                    )
-                    for d in p.depths
-                ],
+            p.model_copy(
+                update={
+                    "depths": [
+                        d.model_copy(
+                            update={
+                                "relata": [r for r in d.relata if r.target_id in collected_ids],
+                            },
+                            deep=True,
+                        )
+                        for d in p.depths
+                    ],
+                },
+                deep=True,
             )
             for p in all_nodes
         ]
@@ -285,58 +301,59 @@ class GroundingEngine:
         """
         if not concepts:
             logger.debug("Empty concept list, returning empty response")
-            return _empty_response()
+            response = _empty_response()
+        else:
+            subgraph = self._repo.resolve_subgraph(concepts)
 
-        subgraph = self._repo.resolve_subgraph(concepts)
-
-        roots, transients = self._identify_roots(concepts, subgraph.roots)
-        transient_ids = {t.id for t in transients}
-        root_ids = {r.id for r in roots}
-        all_nodes = list(subgraph.nodes) + transients
-        logger.debug(
-            "Query for %s: resolved %d roots (%d transient), %d nodes, %d edges",
-            concepts, len(roots), len(transients), len(all_nodes), len(subgraph.edges),
-        )
-
-        id_to_prim = {n.id: n for n in all_nodes}
-        visible_edges, gated_edges = self._partition_edges_by_source_depth(
-            subgraph.edges, id_to_prim,
-        )
-
-        gaps: list[DepthGap | ExistenceGap | RelationalGap | ReachabilityGap] = self._detect_gaps(
-            all_nodes,
-            visible_edges,
-            gated_edges,
-            root_ids,
-            transient_ids,
-            min_depth=min_depth,
-        )
-
-        # Undirected connectivity check across all non-transient roots
-        # using only visible edges. Anchor on the root with the largest
-        # reachable component so truly isolated nodes get reported.
-        non_transient_roots = [r for r in roots if r.id not in transient_ids]
-        if len(non_transient_roots) > 1:
-            neighbors: dict[UUID, set[UUID]] = {}
-            for edge in visible_edges:
-                neighbors.setdefault(edge.source_id, set()).add(edge.target_id)
-                neighbors.setdefault(edge.target_id, set()).add(edge.source_id)
-            anchor = max(
-                non_transient_roots,
-                key=lambda r: len(self._reachable_undirected(r.id, neighbors)),
+            roots, transients = self._identify_roots(concepts, subgraph.roots)
+            transient_ids = {t.id for t in transients}
+            root_ids = {r.id for r in roots}
+            all_nodes = list(subgraph.nodes) + transients
+            logger.debug(
+                "Query for %s: resolved %d roots (%d transient), %d nodes, %d edges",
+                concepts, len(roots), len(transients), len(all_nodes), len(subgraph.edges),
             )
-            reachable = self._reachable_undirected(anchor.id, neighbors)
-            for root in non_transient_roots:
-                if root.id != anchor.id and root.id not in reachable:
-                    logger.warning("Reachability gap: %r is isolated from other query roots", root.name)
-                    gaps.append(ReachabilityGap(primitive=root))
 
-        filtered = self._filter_depths(all_nodes)
+            id_to_prim = {n.id: n for n in all_nodes}
+            visible_edges, gated_edges = self._partition_edges_by_source_depth(
+                subgraph.edges, id_to_prim,
+            )
 
-        return EpistemicResponse(
-            query=EpistemicQuery(concept_ids=[r.id for r in roots]),
-            result=EpistemicResult(primitives=filtered, gaps=gaps, pathway=visible_edges),
-        )
+            gaps: list[DepthGap | ExistenceGap | RelationalGap | ReachabilityGap] = self._detect_gaps(
+                all_nodes,
+                visible_edges,
+                gated_edges,
+                root_ids,
+                transient_ids,
+                min_depth=min_depth,
+            )
+
+            # Undirected connectivity check across all non-transient roots
+            # using only visible edges. Anchor on the root with the largest
+            # reachable component so truly isolated nodes get reported.
+            non_transient_roots = [r for r in roots if r.id not in transient_ids]
+            if len(non_transient_roots) > 1:
+                neighbors: dict[UUID, set[UUID]] = {}
+                for edge in visible_edges:
+                    neighbors.setdefault(edge.source_id, set()).add(edge.target_id)
+                    neighbors.setdefault(edge.target_id, set()).add(edge.source_id)
+                anchor = max(
+                    non_transient_roots,
+                    key=lambda r: len(self._reachable_undirected(r.id, neighbors)),
+                )
+                reachable = self._reachable_undirected(anchor.id, neighbors)
+                for root in non_transient_roots:
+                    if root.id != anchor.id and root.id not in reachable:
+                        logger.warning("Reachability gap: %r is isolated from other query roots", root.name)
+                        gaps.append(ReachabilityGap(primitive=root))
+
+            filtered = self._filter_depths(all_nodes)
+
+            response = EpistemicResponse(
+                query=EpistemicQuery(concept_ids=[r.id for r in roots]),
+                result=EpistemicResult(primitives=filtered, gaps=gaps, pathway=visible_edges),
+            )
+        return response
 
     def ground(
         self,
@@ -354,24 +371,25 @@ class GroundingEngine:
         """
         if not concepts:
             logger.debug("Ground called with empty concepts")
-            return GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
+            result = GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
+        else:
+            # Resolve to canonical names where possible; unknown names pass through
+            # as-is — the engine will surface ExistenceGaps for them.
+            name_map = resolver.build_name_map()
+            canonical = [
+                (resolver.lookup(c, name_map) or c)
+                for c in concepts
+            ]
+            logger.info("Grounding %d concept(s)", len(concepts))
+            logger.debug("Grounding concepts: %s -> canonical: %s", concepts, canonical)
 
-        # Resolve to canonical names where possible; unknown names pass through
-        # as-is — the engine will surface ExistenceGaps for them.
-        name_map = resolver.build_name_map()
-        canonical = [
-            (resolver.lookup(c, name_map) or c)
-            for c in concepts
-        ]
-        logger.info("Grounding %d concept(s)", len(concepts))
-        logger.debug("Grounding concepts: %s -> canonical: %s", concepts, canonical)
-
-        response = self.query(canonical, min_depth=min_depth)
-        grounded = len(response.result.gaps) == 0
-        logger.info("Grounding result: grounded=%s, gaps=%d", grounded, len(response.result.gaps))
-        return GroundingResult(
-            grounded=grounded,
-            resolved=canonical,
-            gaps=response.result.gaps,
-            trace=response,
-        )
+            response = self.query(canonical, min_depth=min_depth)
+            grounded = len(response.result.gaps) == 0
+            logger.info("Grounding result: grounded=%s, gaps=%d", grounded, len(response.result.gaps))
+            result = GroundingResult(
+                grounded=grounded,
+                resolved=canonical,
+                gaps=response.result.gaps,
+                trace=response,
+            )
+        return result

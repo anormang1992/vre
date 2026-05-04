@@ -14,24 +14,8 @@ import importlib
 from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
-from vre.core.models import DepthLevel, RelationType, Relatum
+from vre.core.models import DepthLevel, RelationType, Relatum, format_depth_label
 from vre.core.policy.models import Cardinality, Policy
-
-
-_DEPTH_LABELS: dict[DepthLevel, str] = {
-    DepthLevel.EXISTENCE:    "D0 EXISTENCE",
-    DepthLevel.IDENTITY:     "D1 IDENTITY",
-    DepthLevel.CAPABILITIES: "D2 CAPABILITIES",
-    DepthLevel.CONSTRAINTS:  "D3 CONSTRAINTS",
-    DepthLevel.IMPLICATIONS: "D4 IMPLICATIONS",
-}
-
-
-def _depth_label(level: DepthLevel) -> str:
-    """
-    Return the human-readable label for a DepthLevel, e.g. "D2 CAPABILITIES".
-    """
-    return _DEPTH_LABELS.get(level, f"D{int(level)}")
 
 
 def _prompt(msg: str, default: str = "") -> str:
@@ -39,8 +23,10 @@ def _prompt(msg: str, default: str = "") -> str:
     Prompt the user for input, using default if the response is blank.
     """
     if default:
-        return input(f"  {msg} [{default}]: ").strip() or default
-    return input(f"  {msg}: ").strip()
+        response = input(f"  {msg} [{default}]: ").strip() or default
+    else:
+        response = input(f"  {msg}: ").strip()
+    return response
 
 
 def _prompt_yn(msg: str, default: str = "y") -> bool:
@@ -71,20 +57,20 @@ def _validate_callback(path: str) -> bool:
     """
     Attempt to import and resolve a dotted-path callback string; return True if valid.
     """
+    valid = False
     module_path, _, attr = path.rpartition(".")
     if not module_path or not attr:
         print("    Callback must be a dotted path, e.g. my_module.my_fn")
-        return False
-    try:
-        mod = importlib.import_module(module_path)
-        getattr(mod, attr)
-        return True
-    except ImportError as exc:
-        print(f"    Import error: {exc}")
-        return False
-    except AttributeError as exc:
-        print(f"    Attribute error: {exc}")
-        return False
+    else:
+        try:
+            mod = importlib.import_module(module_path)
+            getattr(mod, attr)
+            valid = True
+        except ImportError as exc:
+            print(f"    Import error: {exc}")
+        except AttributeError as exc:
+            print(f"    Attribute error: {exc}")
+    return valid
 
 
 def _display_relata_table(
@@ -107,10 +93,10 @@ def _display_relata_table(
             target_name = name_cache[relatum.target_id]
             marker = "  <- policies here" if relatum.relation_type == RelationType.APPLIES_TO else ""
             print(
-                f"  {_depth_label(depth.level):<22}"
+                f"  {format_depth_label(depth.level):<22}"
                 f" {relatum.relation_type.value:<16}"
                 f" {target_name:<22}"
-                f" {_depth_label(relatum.target_depth):<18}"
+                f" {format_depth_label(relatum.target_depth):<18}"
                 f" {len(relatum.policies)}{marker}"
             )
     print()
@@ -237,46 +223,44 @@ def run_wizard(repo: PrimitiveRepository) -> None:
 
     if not matching:
         print(f"\n  No APPLIES_TO edge exists from '{source.name}' to '{target.name}'. Exiting.")
-        return
-
-    # Step 5: choose depth if ambiguous
-    if len(matching) == 1:
-        chosen_depth_level, _chosen_idx, chosen_relatum = matching[0]
     else:
-        print("\n  Multiple APPLIES_TO edges found. Choose one:")
-        for i, (lvl, _, rel) in enumerate(matching, 1):
-            print(f"    {i}. {_depth_label(lvl)} -> {target.name}  (policies: {len(rel.policies)})")
-        while True:
-            raw = input("  Enter number: ").strip()
-            try:
-                sel = int(raw)
-                if 1 <= sel <= len(matching):
-                    chosen_depth_level, _chosen_idx, chosen_relatum = matching[sel - 1]
-                    break
-            except ValueError:
-                pass
-            print(f"    Enter a number between 1 and {len(matching)}")
+        # Step 5: choose depth if ambiguous
+        if len(matching) == 1:
+            chosen_depth_level, _chosen_idx, chosen_relatum = matching[0]
+        else:
+            print("\n  Multiple APPLIES_TO edges found. Choose one:")
+            for i, (lvl, _, rel) in enumerate(matching, 1):
+                print(f"    {i}. {format_depth_label(lvl)} -> {target.name}  (policies: {len(rel.policies)})")
+            while True:
+                raw = input("  Enter number: ").strip()
+                try:
+                    sel = int(raw)
+                    if 1 <= sel <= len(matching):
+                        chosen_depth_level, _chosen_idx, chosen_relatum = matching[sel - 1]
+                        break
+                except ValueError:
+                    pass
+                print(f"    Enter a number between 1 and {len(matching)}")
 
-    # Step 6: show existing policies
-    _display_existing_policies(chosen_relatum)
+        # Step 6: show existing policies
+        _display_existing_policies(chosen_relatum)
 
-    # Step 7: collect new policy
-    policy = _collect_policy()
+        # Step 7: collect new policy
+        policy = _collect_policy()
 
-    # Step 8: confirm
-    _print_policy_summary(policy)
-    confirm = input("Save? [y/N]: ").strip().lower()
-    if confirm != "y":
-        print("  Aborted. No changes saved.")
-        return
-
-    # Step 9: mutate in memory and persist
-    chosen_relatum.policies.append(policy)
-    repo.save_primitive(source)
-    print(
-        f"\n  Saved policy '{policy.name}' on "
-        f"{source.name} --[APPLIES_TO @ {_depth_label(chosen_depth_level)}]--> {target.name}\n"
-    )
+        # Step 8: confirm
+        _print_policy_summary(policy)
+        confirm = input("Save? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("  Aborted. No changes saved.")
+        else:
+            # Step 9: mutate in memory and persist
+            chosen_relatum.policies.append(policy)
+            repo.save_primitive(source)
+            print(
+                f"\n  Saved policy '{policy.name}' on "
+                f"{source.name} --[APPLIES_TO @ {format_depth_label(chosen_depth_level)}]--> {target.name}\n"
+            )
 
 
 def main() -> None:
