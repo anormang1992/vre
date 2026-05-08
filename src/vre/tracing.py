@@ -5,7 +5,7 @@
 Trace persistence — serializes grounding results to daily JSONL files.
 
 Enabled by default on every VRE instance. Traces are written to
-``~/.vre/traces/YYYY-MM-DD.jsonl``. Disable with ``persist_traces=False``.
+`~/.vre/traces/YYYY-MM-DD.jsonl`. Disable with `persist_traces=False`.
 """
 
 import logging
@@ -19,7 +19,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from vre.core.grounding.models import GroundingResult
-from vre.learning.models import LearningResult
 
 
 logger = logging.getLogger(__name__)
@@ -27,36 +26,29 @@ logger = logging.getLogger(__name__)
 
 class TraceEntry(BaseModel):
     """
-    A single JSONL line representing one grounding or learning operation.
+    A single JSONL line representing one grounding operation.
     """
 
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    operation: Literal["check", "learn"]
+    operation: Literal["check"]
     concepts: list[str]
     resolved: list[str]
     grounded: bool
     gaps: list[dict[str, Any]] = Field(default_factory=list)
     steps: list[dict[str, Any]] = Field(default_factory=list)
     agent_id: str | None = None
-    learning_outcomes: list[dict[str, Any]] | None = None
 
 
 def build_trace_entry(
-    operation: Literal["check", "learn"],
+    operation: Literal["check"],
     concepts: list[str],
     result: GroundingResult,
-    learning_outcomes: list[LearningResult] | None = None,
 ) -> TraceEntry:
     """
-    Construct a `TraceEntry` from a `GroundingResult` and optional learning outcomes.
+    Construct a `TraceEntry` from a `GroundingResult`.
     """
     gaps = [gap.model_dump(mode="json") for gap in result.gaps]
-
     steps = [step.model_dump(mode="json") for step in result.get_pathway_steps()]
-
-    serialized_outcomes: list[dict[str, Any]] | None = None
-    if learning_outcomes is not None:
-        serialized_outcomes = [lr.model_dump(mode="json") for lr in learning_outcomes]
 
     return TraceEntry(
         operation=operation,
@@ -66,7 +58,6 @@ def build_trace_entry(
         gaps=gaps,
         steps=steps,
         agent_id=str(result.agent_id) if result.agent_id is not None else None,
-        learning_outcomes=serialized_outcomes,
     )
 
 
@@ -78,7 +69,7 @@ class TraceWriter:
     Appends `TraceEntry` objects to daily JSONL files.
 
     Files are named `YYYY-MM-DD.jsonl` under the trace directory
-    (defaults to ``~/.vre/traces/``). Each line is independently valid JSON.
+    (defaults to `~/.vre/traces/`). Each line is independently valid JSON.
     """
 
     def __init__(self, trace_dir: Path | None = None) -> None:
@@ -99,9 +90,7 @@ class TraceWriter:
 
 class TraceManager:
     """
-    Internal coordinator owning the TraceWriter and the in-flight suppression
-    state used by `learn_all` to skip per-iteration `check()` traces in favor
-    of a single summary trace at the end of the loop.
+    Internal coordinator owning the TraceWriter.
 
     All write paths are best-effort: persistence failures are logged and never
     raise to the caller.
@@ -140,20 +129,3 @@ class TraceManager:
         """
         if self._writer is not None and not self._suppressed:
             self._safe_write(build_trace_entry("check", concepts, result), label="check")
-
-    def write_learn(
-        self,
-        concepts: list[str],
-        result: GroundingResult,
-        outcomes: list[LearningResult],
-    ) -> None:
-        """
-        Persist a 'learn' trace entry summarizing a learning loop. No-op when
-        no writer is configured. Not affected by `suppress()` — learning
-        summaries are the reason `learn_all` suppresses its inner check writes.
-        """
-        if self._writer is not None:
-            self._safe_write(
-                build_trace_entry("learn", concepts, result, outcomes),
-                label="learn_all",
-            )

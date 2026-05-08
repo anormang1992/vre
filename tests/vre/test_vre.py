@@ -19,14 +19,8 @@ from vre.core.models import (
     ResolvedSubgraph,
 )
 from vre.core.policy import Cardinality, Policy, PolicyAction, PolicyResult
-from vre.core.grounding import GroundingResult
-from vre.learning.callback import LearningCallback
-from vre.learning.models import (
-    CandidateDecision,
-    DepthCandidate,
-    ExistenceCandidate,
-    ProposedDepth,
-)
+from vre.core.grounding import GroundingResult, ConceptResolver
+from vre.learning import LearningEngine
 
 
 # ---------------------------------------------------------------------------
@@ -341,119 +335,18 @@ class TestCheckPolicyOrchestration:
 
 
 # ---------------------------------------------------------------------------
-# VRE.learn_all tests
+# VRE property tests
 # ---------------------------------------------------------------------------
 
 
-class _AcceptLearner(LearningCallback):
-    """Callback that accepts proposals with appropriate candidates."""
+class TestVREProperties:
+    def test_learning_engine_property(self):
+        vre = _make_vre_with_stub([])
+        assert isinstance(vre.learning_engine, LearningEngine)
 
-    def __init__(self):
-        self.calls = []
-
-    def __call__(self, candidate, grounding, gap):
-        self.calls.append((candidate, gap))
-        if isinstance(candidate, ExistenceCandidate):
-            filled = ExistenceCandidate(
-                name=candidate.name,
-                d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"desc": "test"}),
-            )
-            return filled, CandidateDecision.ACCEPTED
-        if isinstance(candidate, DepthCandidate):
-            filled = DepthCandidate(new_depths=[
-                ProposedDepth(level=gap.required_depth, properties={"test": True}),
-            ])
-            return filled, CandidateDecision.ACCEPTED
-        return None, CandidateDecision.SKIPPED
-
-
-class _RejectLearner(LearningCallback):
-    """Callback that rejects all proposals."""
-
-    def __call__(self, candidate, grounding, gap):
-        return None, CandidateDecision.REJECTED
-
-
-class TestVRELearnAll:
-    def test_learn_all_resolves_existence_gap(self):
-        """learn_all creates the missing primitive and returns grounded."""
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-
-        grounding = vre.check(["file", "copy"])
-        assert grounding.grounded is False
-
-        learner = _AcceptLearner()
-        result = vre.learn_all(grounding, learner, ["file", "copy"])
-        # After learning "copy", re-grounding should find it (now in the repo)
-        assert isinstance(result, GroundingResult)
-
-    def test_learn_all_stops_on_rejection(self):
-        """learn_all stops the loop when callback rejects."""
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-
-        grounding = vre.check(["file", "copy"])
-        result = vre.learn_all(grounding, _RejectLearner(), ["file", "copy"])
-        assert isinstance(result, GroundingResult)
-        assert result.grounded is False
-
-    def test_learn_all_skips_gaps_and_continues(self):
-        """learn_all skips a gap and continues to the next."""
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-
-        grounding = vre.check(["file", "alpha", "beta"])
-        assert len([g for g in grounding.gaps if g.kind == "EXISTENCE"]) == 2
-
-        call_count = 0
-
-        class SkipThenAccept(LearningCallback):
-            def __call__(self, candidate, grounding, gap):
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    return None, CandidateDecision.SKIPPED
-                if isinstance(candidate, ExistenceCandidate):
-                    filled = ExistenceCandidate(
-                        name=candidate.name,
-                        d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"desc": "test"}),
-                    )
-                    return filled, CandidateDecision.ACCEPTED
-                # Skip any non-existence gaps (e.g. ReachabilityGap)
-                return None, CandidateDecision.SKIPPED
-
-        result = vre.learn_all(grounding, SkipThenAccept(), ["file", "alpha", "beta"])
-        assert isinstance(result, GroundingResult)
-        # At least 2 calls: one skip, one accept
-        assert call_count >= 2
-
-    def test_learn_all_uses_context_manager(self):
-        """learn_all wraps the callback in a context manager."""
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-
-        grounding = vre.check(["file", "unknown"])
-
-        entered = False
-        exited = False
-
-        class LifecycleLearner(LearningCallback):
-            def __enter__(self):
-                nonlocal entered
-                entered = True
-                return self
-
-            def __exit__(self, *args):
-                nonlocal exited
-                exited = True
-
-            def __call__(self, candidate, grounding, gap):
-                return None, CandidateDecision.REJECTED
-
-        vre.learn_all(grounding, LifecycleLearner(), ["file", "unknown"])
-        assert entered
-        assert exited
+    def test_resolver_property(self):
+        vre = _make_vre_with_stub([])
+        assert isinstance(vre.resolver, ConceptResolver)
 
 
 # ---------------------------------------------------------------------------

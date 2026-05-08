@@ -42,13 +42,7 @@ from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, Pol
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.gate import PolicyGate
 from vre.identity import AgentIdentity, AgentRegistry
-from vre.learning import (
-    CandidateDecision,
-    LearningCallback,
-    LearningCandidate,
-    LearningEngine,
-    LearningResult,
-)
+from vre.learning import LearningEngine, template_for_gap
 from vre.metrics import MetricsManager
 from vre.tracing import TraceManager, TraceWriter
 
@@ -84,11 +78,8 @@ __all__ = [
     "PolicyViolation",
     "PolicyCallContext",
     "PolicyGate",
-    "CandidateDecision",
-    "LearningCallback",
-    "LearningCandidate",
     "LearningEngine",
-    "LearningResult",
+    "template_for_gap",
 ]
 
 
@@ -136,6 +127,20 @@ class VRE:
         """
         return self._identity
 
+    @property
+    def learning_engine(self) -> LearningEngine:
+        """
+        The learning engine for validating and persisting candidate fills.
+        """
+        return self._learning_engine
+
+    @property
+    def resolver(self) -> ConceptResolver:
+        """
+        The concept resolver for name-to-primitive resolution and cache invalidation.
+        """
+        return self._resolver
+
     def _stamp_identity(self, result: GroundingResult) -> GroundingResult:
         """
         Set `agent_id` on the result if this instance has an identity and the result doesn't already have one.
@@ -166,47 +171,6 @@ class VRE:
         self._metrics.update_grounding(result)
         self._traces.write_check(concepts, result)
         return result
-
-    def learn_all(
-        self,
-        grounding: GroundingResult,
-        callback: LearningCallback,
-        concepts: list[str],
-        min_depth: DepthLevel | None = None,
-    ) -> GroundingResult:
-        """
-        Iteratively resolve all gaps via the learning loop.
-
-        Processes one gap at a time, re-grounding after each accepted/modified
-        candidate. Skipped gaps are excluded from subsequent rounds (the user
-        has acknowledged them). Rejected gaps stop the loop entirely.
-        Returns the final GroundingResult.
-        """
-        skipped: set[int] = set()
-        learning_outcomes: list[LearningResult] = []
-        with self._traces.suppress(), callback:
-            while not grounding.grounded and grounding.gaps:
-                gap_index = next(
-                    (i for i, g in enumerate(grounding.gaps) if i not in skipped),
-                    None,
-                )
-                if gap_index is None:
-                    break
-                result = self._learning_engine.learn_at(grounding, gap_index, callback)
-                learning_outcomes.append(result)
-                self._metrics.update_learning(grounding.gaps[gap_index], result.decision)
-                if result.decision == CandidateDecision.REJECTED:
-                    break
-                if result.decision == CandidateDecision.SKIPPED:
-                    skipped.add(gap_index)
-                    continue
-                self._resolver.invalidate()
-                grounding = self.check(concepts, min_depth=min_depth)
-                skipped.clear()
-
-        if learning_outcomes:
-            self._traces.write_learn(concepts, grounding, learning_outcomes)
-        return grounding
 
     def check_policy(
         self,
@@ -245,7 +209,7 @@ class VRE:
                 try:
                     card_enum = Cardinality(cardinality)
                 except ValueError:
-                    card_enum = None  # unknown → fire all policies
+                    card_enum = None  # unknown -> fire all policies
 
             gate = PolicyGate()
             violations = gate.evaluate(grounding.trace, card_enum, call_context)

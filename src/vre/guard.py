@@ -14,7 +14,7 @@ Usage::
 
 Behaviour
 ---------
-Each call runs grounding → policy → execution in a single pass:
+Each call runs grounding -> policy -> execution in a single pass:
 
 1. VRE grounding is checked (depth derived from graph structure).
 2. `on_trace` is fired (if provided) with the `GroundingResult`.
@@ -38,7 +38,6 @@ from vre.core.policy.models import PolicyViolation
 if TYPE_CHECKING:
     from vre import VRE
     from vre.core.grounding import GroundingResult
-    from vre.learning.callback import LearningCallback
 
 # `concepts` and `cardinality` may be static values or callables that receive
 # the same (*args, **kwargs) as the decorated function and return the value
@@ -56,7 +55,6 @@ def vre_guard(
     min_depth: DepthLevel | None = None,
     on_trace: Callable[["GroundingResult"], None] | None = None,
     on_policy: Callable[[list[PolicyViolation]], bool] | None = None,
-    on_learn: "LearningCallback | None" = None,
 ) -> Callable:
     """
     Decorator that gates a function behind VRE grounding and policy checks.
@@ -82,12 +80,6 @@ def vre_guard(
         Optional callback called with the list of PolicyViolation when any
         violation requires confirmation. Should return True to proceed,
         False to block.
-    on_learn:
-        Optional learning callback invoked when grounding fails. Enters the
-        auto-learning loop: surfaces gap templates, collects agent/user
-        responses, persists accepted candidates, and re-grounds iteratively.
-        When absent, ungrounded results are returned immediately (existing
-        behaviour).
     """
     def decorator(fn: Callable) -> Callable:
         """
@@ -98,7 +90,7 @@ def vre_guard(
         @functools.wraps(fn)
         def wrapped(*args, **kwargs):
             """
-            Run grounding → learning [optional] → policy → execution on each call.
+            Run grounding -> policy -> execution on each call.
             """
             resolved_concepts = concepts(*args, **kwargs) if callable(concepts) else concepts
             logger.info("Guard %r: grounding %d concept(s)", tool_name, len(resolved_concepts))
@@ -106,12 +98,6 @@ def vre_guard(
             grounding = vre.check(resolved_concepts, min_depth=min_depth)
             if on_trace:
                 on_trace(grounding)
-
-            if not grounding.grounded and on_learn:
-                logger.info("Guard %r: entering learning loop (%d gaps)", tool_name, len(grounding.gaps))
-                grounding = vre.learn_all(grounding, on_learn, resolved_concepts, min_depth=min_depth)
-                if on_trace:
-                    on_trace(grounding)
 
             if not grounding.grounded:
                 logger.info("Guard %r: not grounded, returning GroundingResult (%d gaps)", tool_name, len(grounding.gaps))

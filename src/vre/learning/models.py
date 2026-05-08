@@ -2,38 +2,21 @@
 # Licensed under the Apache License, Version 2.0
 
 """
-Candidate models for the VRE auto-learning loop.
+Candidate models for VRE learning.
 
-Candidates carry only what's *new* — the agent's proposed knowledge. All
-context (primitive IDs, existing depths, required depths) lives on the gap
-itself, which the engine already has access to.
+Candidates carry only what's *new* — the integrator's proposed knowledge.
+All context (primitive IDs, existing depths, required depths) lives on
+the gap itself, which the engine already has access to.
 
 This keeps the models lightweight and compatible with LLM structured output.
 """
 
-from enum import Enum
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from vre.core.models import DepthLevel, RelationType
-
-
-class CandidateDecision(str, Enum):
-    """
-    Outcome of a learning candidate review.
-
-    ACCEPTED — agent proposal persisted as-is (provenance: learned).
-    MODIFIED — user refined the proposal before persistence (provenance: conversational).
-    REJECTED — candidate discarded, nothing persisted. Stops the learning loop entirely.
-    SKIPPED — candidate intentionally dismissed (e.g. edge absence is deliberate
-              enforcement). The loop continues to the next gap.
-    """
-
-    ACCEPTED = "accepted"
-    MODIFIED = "modified"
-    REJECTED = "rejected"
-    SKIPPED = "skipped"
+from vre.core.errors import CandidateValidationError
+from vre.core.models import DepthLevel, KnowledgeGap, RelationType
 
 
 class ProposedDepth(BaseModel):
@@ -67,6 +50,12 @@ class ExistenceCandidate(BaseModel):
     name: str
     d1: ProposedDepth | None = None
 
+    def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        if self.d1 is None:
+            raise CandidateValidationError(
+                f"ExistenceCandidate '{self.name}' is missing D1 (identity)"
+            )
+
 
 class DepthCandidate(BaseModel):
     """
@@ -78,6 +67,12 @@ class DepthCandidate(BaseModel):
 
     kind: Literal["DEPTH"] = "DEPTH"
     new_depths: list[ProposedDepth] = Field(default_factory=list)
+
+    def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        if not self.new_depths:
+            raise CandidateValidationError(
+                f"DepthCandidate for '{gap.primitive.name}' has no new depths"
+            )
 
 
 class RelationalCandidate(BaseModel):
@@ -91,26 +86,37 @@ class RelationalCandidate(BaseModel):
     kind: Literal["RELATIONAL"] = "RELATIONAL"
     new_depths: list[ProposedDepth] = Field(default_factory=list)
 
+    def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        if not self.new_depths:
+            raise CandidateValidationError(
+                f"RelationalCandidate for '{gap.target.name}' has no new depths"
+            )
+
 
 class ReachabilityCandidate(BaseModel):
     """
     Proposal for a ReachabilityGap — concept not connected to other concepts.
 
-    Focused solely on edge placement. The agent proposes which target to
-    connect to, the relation type, and the depth levels for the edge.
-    The engine resolves target_name to an ID from the grounding trace and
-    scaffolds any missing depths as stubs. If the scaffolded depths lack
-    required knowledge, re-grounding will surface them as depth or
-    relational gaps for the loop to handle naturally.
+    Focused solely on edge placement. The integrator proposes both the
+    source and target of the edge, the relation type, and the depth
+    levels. At least one of ``source_name`` or ``target_name`` must
+    match the gap's primitive — the edge must fix *this* disconnection.
+    The direction is up to the integrator.
 
-    If the absence is intentional enforcement, the user skips instead of
-    filling this in.
+    Source and target must already have the required depth levels before
+    edge placement; if they don't, ``learn_gap`` raises
+    ``CandidateValidationError`` telling the integrator which DepthGaps
+    to fill first.
     """
 
     kind: Literal["REACHABILITY"] = "REACHABILITY"
+    source_name: str | None = Field(
+        default=None,
+        description="Name of the source concept (edge originates here).",
+    )
     target_name: str | None = Field(
         default=None,
-        description="Name of the target concept to connect to.",
+        description="Name of the target concept (edge points here).",
     )
     relation_type: RelationType | None = Field(
         default=None,
@@ -118,24 +124,42 @@ class ReachabilityCandidate(BaseModel):
     )
     source_depth_level: DepthLevel | None = Field(
         default=None,
-        description="Depth level on the source where the edge is placed. Determines when the agent can reason about this relationship.",
+        description="Depth level on the source where the edge is placed.",
     )
     target_depth_level: DepthLevel | None = Field(
         default=None,
         description="Minimum depth required on the target for the edge to resolve.",
     )
 
+    def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        if self.source_name is None or self.target_name is None:
+            raise CandidateValidationError(
+                f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
+                f"source_name or target_name"
+            )
+        if self.relation_type is None:
+            raise CandidateValidationError(
+                f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
+                f"relation_type"
+            )
+        if self.source_depth_level is None or self.target_depth_level is None:
+            raise CandidateValidationError(
+                f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
+                f"source_depth_level or target_depth_level"
+            )
+        gap_name = gap.primitive.name.lower()
+        if (
+            self.source_name.lower() != gap_name
+            and self.target_name.lower() != gap_name
+        ):
+            raise CandidateValidationError(
+                f"ReachabilityCandidate must reference the gapped primitive "
+                f"'{gap.primitive.name}' as either source or target, "
+                f"got source='{self.source_name}', target='{self.target_name}'"
+            )
+
 
 LearningCandidate = Annotated[
     ExistenceCandidate | DepthCandidate | RelationalCandidate | ReachabilityCandidate,
     Field(discriminator="kind"),
 ]
-
-
-class LearningResult(BaseModel):
-    """
-    Outcome of a single learning round.
-    """
-
-    decision: CandidateDecision
-    candidate: LearningCandidate

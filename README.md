@@ -35,13 +35,12 @@ knowledge boundary a first-class object — one that can be queried, audited, an
 - [Callbacks](#callbacks)
     - [`on_trace`](#on_trace)
     - [`on_policy`](#on_policy)
-    - [`on_learn`](#on_learn)
-- [Auto-Learning](#auto-learning)
+- [Learning](#learning)
     - [How It Works](#how-it-works-1)
     - [Candidate Types](#candidate-types)
-    - [Decisions and Provenance](#decisions-and-provenance)
-    - [Two-Phase Edge Placement](#two-phase-edge-placement)
-    - [The `LearningCallback` ABC](#the-learningcallback-abc)
+    - [Provenance](#provenance)
+    - [Reachability Prerequisites](#reachability-prerequisites)
+    - [Reference Loop](#reference-loop)
 - [Policy System](#policy-system)
     - [Defining Policies](#defining-policies)
     - [Policy Callbacks](#policy-callbacks)
@@ -341,9 +340,13 @@ vre_guard(
     min_depth=None,   # DepthLevel | None — enforces a minimum depth floor
     on_trace=None,    # Callable[[GroundingResult], None]
     on_policy=None,   # Callable[[list[PolicyViolation]], bool]
-    on_learn=None,    # LearningCallback — auto-learning loop for knowledge gaps
 )
 ```
+
+The guard does not orchestrate learning. When grounding fails, it returns the
+`GroundingResult` and lets the integrator decide what to do next — typically
+by exposing a separate `learn_gaps` tool that the agent can invoke. See
+[Learning](#learning).
 
 **`concepts`** can be static or dynamic. Static is appropriate when a function always touches the same concept domain.
 Dynamic is appropriate when the concepts depend on the actual arguments — for
@@ -381,14 +384,12 @@ Each call runs the following sequence:
 1. **Resolve concepts** — map names to canonical primitives via the graph
 2. **Ground** — verify the subgraph meets depth requirements (graph-derived + optional `min_depth` floor)
 3. **Fire `on_trace`** — surface the epistemic result to the caller
-4. **If not grounded and `on_learn` is present** — enter the [auto-learning loop](#auto-learning)
-5. **Fire `on_trace` again** — surface the post-learning epistemic result
-6. **If still not grounded** — return the `GroundingResult` immediately; the function does not execute
-7. **Evaluate policies** — check all `APPLIES_TO` relata for applicable policy gates
-8. **If hard blocks** — return `PolicyResult(BLOCK)` immediately; `on_policy` is not consulted
-9. **If confirmation required** — call `on_policy` with pending violations; block if declined or no handler
-10. **If BLOCK** — return the `PolicyResult`; the function does not execute
-11. **Execute** — call the original function and return its result
+4. **If not grounded** — return the `GroundingResult` immediately; the function does not execute
+5. **Evaluate policies** — check all `APPLIES_TO` relata for applicable policy gates
+6. **If hard blocks** — return `PolicyResult(BLOCK)` immediately; `on_policy` is not consulted
+7. **If confirmation required** — call `on_policy` with pending violations; block if declined or no handler
+8. **If BLOCK** — return the `PolicyResult`; the function does not execute
+9. **Execute** — call the original function and return its result
 
 ---
 
@@ -459,45 +460,60 @@ If `on_policy` is not provided and a policy requires confirmation, the guard ret
 <img width="1392" height="714" alt="image" src="https://github.com/user-attachments/assets/8b701635-d4ca-4511-98e3-cda82a5dde38" />
 
 
-### `on_learn`
-
-Called when grounding fails and the guard enters the auto-learning loop. See [Auto-Learning](#auto-learning) for
-details.
-
 ---
 
-## Auto-Learning
+## Learning
 
-When grounding fails and an `on_learn` callback is present, VRE enters an iterative learning loop that transforms
-knowledge gaps into graph growth. Rather than simply blocking the action, VRE surfaces
-structured templates for each gap, invokes the callback to fill them, and persists accepted knowledge back to the
-graph — then re-grounds to see if the action is now justified.
+VRE is a **knowledge linter**, not a knowledge builder. It identifies gaps and validates fills; the integrator
+owns the loop. When grounding fails, the integrator decides whether to surface the gaps to the user, escalate
+to a human, or run a learning loop that grows the graph through use.
 
-This is VRE's answer to its primary adoption bottleneck: manual graph authoring. The graph grows through use.
+This separation is deliberate. Loop orchestration is inherently integration-specific — different LLMs, different
+data sources, different retry/budget strategies. By keeping VRE's surface tight (identify gaps, persist fills),
+integrators can build whatever flow fits their stack without fighting the framework.
 
 ### How It Works
 
-1. **Gap detected** — grounding check reveals one or more knowledge gaps
-2. **Template created** — VRE generates a structured candidate template based on the gap type
-3. **Callback invoked** — the integrator's `on_learn` callback receives the template, the full grounding result, and the
-   specific gap. The callback fills the template (via LLM, user input, or any other
-   mechanism) and returns a decision.
-4. **Persistence** — accepted or modified candidates are persisted to the graph with provenance tracking
-5. **Re-ground** — VRE re-checks grounding. The gap landscape may have shifted — new gaps may have appeared, existing
-   ones may be resolved. The loop continues until grounded, all gaps are addressed, or
-   the user rejects.
+VRE exposes three things:
+
+1. **`vre.check(concepts)`** returns a `GroundingResult` with structured `KnowledgeGap` objects when grounding fails
+2. **`template_for_gap(gap)`** returns the candidate model class to fill — the integrator constructs an instance
+   however they like (LLM structured output, user input, static rules)
+3. **`vre.learning_engine.learn_gap(gap, candidate, source=LEARNED)`** validates the candidate against its gap and
+   persists it to the graph
+
+A typical integrator-owned loop looks like this:
+
+```python
+from vre.learning.templates import template_for_gap
+
+grounding = vre.check(["delete", "file"])
+while not grounding.grounded and grounding.gaps:
+    gap = grounding.gaps[0]
+    candidate_cls = template_for_gap(gap)
+    filled = my_llm_fill(candidate_cls, gap, grounding)  # integrator's code
+    if filled is None:
+        break
+    vre.learning_engine.learn_gap(gap, filled)
+    vre.resolver.invalidate()
+    grounding = vre.check(["delete", "file"])
+```
+
+`learn_gap` raises `CandidateValidationError` if the candidate is malformed or if its prerequisites are not met
+(e.g. trying to place an edge at a depth the source does not have). The integrator catches the error, fills the
+prerequisite, and retries.
 
 ### Candidate Types
 
 Each gap type has a corresponding candidate model. Candidates carry only what's *new* — all context (primitive IDs,
 existing depths, required depths) lives on the gap itself.
 
-| Gap Type          | Candidate               | What the Agent Fills In                                                |
-|-------------------|-------------------------|------------------------------------------------------------------------|
-| `ExistenceGap`    | `ExistenceCandidate`    | D1 identity for a new concept (D0 is auto-generated)                   |
-| `DepthGap`        | `DepthCandidate`        | Missing depth levels with properties                                   |
-| `RelationalGap`   | `RelationalCandidate`   | Missing depth levels on the edge target                                |
-| `ReachabilityGap` | `ReachabilityCandidate` | Edge placement: target name, relation type, source/target depth levels |
+| Gap Type          | Candidate               | What the Integrator Fills In                                                  |
+|-------------------|-------------------------|-------------------------------------------------------------------------------|
+| `ExistenceGap`    | `ExistenceCandidate`    | D1 identity for a new concept (D0 is auto-generated)                          |
+| `DepthGap`        | `DepthCandidate`        | Missing depth levels with properties                                          |
+| `RelationalGap`   | `RelationalCandidate`   | Missing depth levels on the edge target                                       |
+| `ReachabilityGap` | `ReachabilityCandidate` | Edge placement: source name, target name, relation type, source/target depths |
 
 `ExistenceCandidate`, `DepthCandidate`, and `RelationalCandidate` all use `ProposedDepth`:
 
@@ -510,71 +526,41 @@ ProposedDepth(
 )
 ```
 
-### Decisions and Provenance
+`ReachabilityCandidate` declares both source and target by name. At least one of them must match the gap's
+primitive — the edge must fix *this* disconnection — but the integrator chooses the direction. An edge from an
+existing connected node *back* to the orphan is just as valid as one originating from the orphan.
 
-The callback returns one of four decisions, and provenance is derived from what actually happened:
+### Provenance
 
-| Decision   | Effect                                               | Provenance       |
-|------------|------------------------------------------------------|------------------|
-| `ACCEPTED` | Persist as proposed                                  | `learned`        |
-| `MODIFIED` | Persist after user refinement                        | `conversational` |
-| `SKIPPED`  | Intentionally dismissed — loop continues to next gap | —                |
-| `REJECTED` | Discard — stops the learning loop entirely           | —                |
+`learn_gap` accepts an optional `source: ProvenanceSource` parameter (default `LEARNED`). The integrator decides
+how to stamp persisted knowledge based on its own loop semantics — `LEARNED` for LLM-proposed fills accepted as-is,
+`CONVERSATIONAL` for human-modified proposals, etc. The graph remembers not just what it knows, but how it came to
+know it.
 
-`SKIPPED` is particularly important for reachability gaps: the absence of an edge can itself be an enforcement
-mechanism. If a concept *should not* be connected, the user skips rather than placing an
-edge.
+### Reachability Prerequisites
 
-### Two-Phase Edge Placement
+`ReachabilityCandidate` focuses solely on edge placement — it declares *where* the edge goes, not what depths need
+to exist. If the source or target lacks the required depth level, `learn_gap` raises `CandidateValidationError`.
 
-Reachability candidates focus solely on edge placement — they declare *where* the edge goes, not what depths need to
-exist. If the source or target lacks the declared depth level, the engine
-automatically synthesizes a `DepthGap` and invokes the callback to learn the missing depths *before* placing the edge.
-This keeps each candidate type focused on its single concern while handling
-cascading dependencies naturally.
-
-### The `LearningCallback` ABC
+To handle this cleanly, the engine exposes `reachability_prerequisites(gap, candidate)` which returns a list of
+`DepthGap` objects that must be filled before the edge can be placed. The integrator's loop checks prerequisites,
+fills them, and only then calls `learn_gap` for the reachability candidate.
 
 ```python
-from vre.learning.callback import LearningCallback
-from vre.learning.models import LearningCandidate, CandidateDecision
-
-
-class MyLearner(LearningCallback):
-    def __call__(self, candidate, grounding, gap) -> tuple[LearningCandidate | None, CandidateDecision]:
-        # Fill the template, present to user, return (filled, decision)
-        ...
+prereqs = vre.learning_engine.reachability_prerequisites(gap, filled)
+for depth_gap in prereqs:
+    depth_filled = my_llm_fill(template_for_gap(depth_gap), depth_gap, grounding)
+    vre.learning_engine.learn_gap(depth_gap, depth_filled)
+vre.learning_engine.learn_gap(gap, filled)
 ```
 
-`LearningCallback` is an abstract base class with `__call__` as the only required method. It also supports context
-manager lifecycle via `__enter__` and `__exit__` (default no-ops) — `learn_all` wraps
-the session in `with callback:`, allowing callbacks to manage state across a learning session.
+### Reference Loop
 
-### Example
-
-The following walkthrough uses the `seed_gaps` script and attempts to create and write to a file. The learning loop
-resolves several knowledge gaps through agent-user conversational turns:
-
-1. **Existence Gap** — `write` did not exist in the graph
-2. **Reachability Gap** — no edges connecting `write` and `file`
-3. **Depth Gaps** — both `write` and `file` were missing the depths required by the edge placement
-
-<img width="3372" height="906" alt="image" src="https://github.com/user-attachments/assets/2c73380d-dbf9-4acd-8f74-f492c46f468a" />
-
-<img width="3410" height="1520" alt="image" src="https://github.com/user-attachments/assets/23a7fe9c-8ae5-490d-b7c7-7638abd0c90b" />
-
-<img width="3406" height="850" alt="image" src="https://github.com/user-attachments/assets/8b31127f-bd50-4549-aa70-4d0bef281633" />
-
-<img width="3404" height="1498" alt="image" src="https://github.com/user-attachments/assets/cd7852f3-df99-4a83-8070-a5293d4332c4" />
-
-Of note: the agent correctly identified additional relata that should be attached to the `File` primitive and attempted
-to record them in the `properties` object. This indicates the agent is reasoning
-from within the epistemic envelope defined by the grounding trace, using neighboring primitives in the subgraph to
-enrich its own proposals.
-
-The repository includes a reference `DemoLearner` implementation (`examples/langchain_ollama/learner.py`) that uses
-ChatOllama structured output to fill templates and Rich to present proposals. The
-user chooses: accept, modify (provide feedback, LLM re-proposes), skip, or reject.
+The repository includes a reference `learn_gaps` tool (`examples/langchain_ollama/tools.py`) and a `DemoLearner`
+(`examples/langchain_ollama/learner.py`) that exercise the full pattern: ChatOllama structured output for filling
+candidates, Rich panels for human review, accept/modify/skip/reject decisions, and prerequisite handling for
+reachability gaps. The langchain agent gets the `learn_gaps` tool alongside its primary tools — when a guarded
+command is blocked, the agent calls `learn_gaps` to resolve the gaps and retries.
 
 ---
 
@@ -752,17 +738,17 @@ concepts = ConceptExtractor()
 @vre_guard(
     vre,
     concepts=concepts,  # LLM extracts primitives from command string
-    cardinality=get_cardinality,
-    # inspects flags/globs -> "single" or "multiple"
+    cardinality=get_cardinality,  # inspects flags/globs -> "single" or "multiple"
     on_trace=on_trace,  # renders epistemic tree to terminal
-    on_policy=on_policy,
-    # Rich Confirm.ask prompt
-    on_learn=on_learn,  # auto-learning callback for knowledge gaps
+    on_policy=on_policy,  # Rich Confirm.ask prompt
 )
 def shell_tool(command: str) -> str:
     result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=sandbox)
     return result.stdout + result.stderr
 ```
+
+The agent is given two tools: `shell_tool` (guarded) and `learn_gaps` (the integrator-owned learning loop).
+When the guarded shell_tool blocks on knowledge gaps, the agent invokes `learn_gaps` to resolve them and retries.
 
 ### Claude Code Hook
 
@@ -862,10 +848,10 @@ grounding history, and affect the agent's confidence in related concepts.
 
 ```
 src/vre/
-├── __init__.py                  # VRE public interface (check, learn_all, check_policy)
-├── guard.py                     # vre_guard decorator (grounding → learning → policy → execution)
-├── metrics.py                   # MetricsManager — best-effort grounding/learning metric updates
-├── tracing.py                   # TraceWriter + TraceManager — JSONL persistence + suppression
+├── __init__.py                  # VRE public interface (check, check_policy, learning_engine)
+├── guard.py                     # vre_guard decorator (grounding → policy → execution)
+├── metrics.py                   # MetricsManager — best-effort grounding metric updates
+├── tracing.py                   # TraceWriter + TraceManager — JSONL persistence
 │
 ├── identity/
 │   ├── models.py                # AgentIdentity — stable UUID bound to a registration key
@@ -886,10 +872,9 @@ src/vre/
 │       └── wizard.py            # Interactive policy attachment CLI
 │
 └── learning/
-    ├── callback.py              # LearningCallback ABC
-    ├── models.py                # Candidate models, CandidateDecision, LearningResult
-    ├── templates.py             # template_for_gap — gap → structured candidate template
-    └── engine.py                # LearningEngine — template → callback → validate → persist
+    ├── models.py                # Candidate models with validate_for_gap methods
+    ├── templates.py             # template_for_gap — gap → candidate model class
+    └── engine.py                # LearningEngine — learn_gap, reachability_prerequisites
 
 scripts/
 ├── clear_graph.py               # Clear all primitives from the Neo4j graph
@@ -902,7 +887,7 @@ examples/
 └── langchain_ollama/
     ├── main.py                  # Entry point — argparse + agent setup
     ├── agent.py                 # ToolAgent — LangChain + Ollama streaming loop
-    ├── tools.py                 # shell_tool with vre_guard applied
+    ├── tools.py                 # shell_tool (guarded) and learn_gaps (integrator loop)
     ├── callbacks.py             # ConceptExtractor, on_trace, on_policy, get_cardinality
     ├── policies.py              # Demo PolicyCallback — protected file deletion guard
     ├── learner.py               # DemoLearner — ChatOllama structured output + Rich UI

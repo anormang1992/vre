@@ -86,8 +86,6 @@ class PrimitiveMetrics(BaseModel):
     last_failed: datetime | None = None
     grounding_count: int = 0
     failure_count: int = 0
-    learning_count: int = 0
-    rejection_count: int = 0
 
     @property
     def last_exercised(self) -> datetime | None:
@@ -159,6 +157,19 @@ class Primitive(BaseModel):
     depths: list[Depth] = Field(default_factory=list)
     provenance: Provenance | None = None
     metrics: PrimitiveMetrics | None = None
+
+    @property
+    def contiguous_max_depth(self) -> DepthLevel | None:
+        """
+        Highest DepthLevel forming a contiguous chain from D0, or None if no depths.
+        """
+        levels = {d.level for d in self.depths}
+        result: DepthLevel | None = None
+        for level in sorted(DepthLevel):
+            if level not in levels:
+                break
+            result = level
+        return result
 
     def validate_provenance(self) -> None:
         """

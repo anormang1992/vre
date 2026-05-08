@@ -2,10 +2,11 @@
 # Licensed under the Apache License, Version 2.0
 
 """
-LearningEngine — orchestrates the auto-learning loop.
+LearningEngine — validates and persists candidate fills for knowledge gaps.
 
-Processes one gap at a time: template creation -> callback invocation ->
-validation -> persistence -> re-grounding.
+Integrators identify gaps via VRE.check(), create templates via
+template_for_gap(), fill them however they choose, and pass the filled
+candidate here for validation and persistence.
 """
 
 import logging
@@ -14,10 +15,8 @@ from uuid import UUID
 
 from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.graph import PrimitiveRepository
-from vre.core.grounding.models import GroundingResult
 from vre.core.models import (
     Depth,
-    DepthGap,
     DepthLevel,
     ExistenceGap,
     KnowledgeGap,
@@ -27,37 +26,24 @@ from vre.core.models import (
     ReachabilityGap,
     Relatum,
     RelationalGap,
+    DepthGap,
 )
-from vre.learning.callback import LearningCallback
 from vre.learning.models import (
-    CandidateDecision,
     DepthCandidate,
     ExistenceCandidate,
     LearningCandidate,
-    LearningResult,
     ProposedDepth,
     ReachabilityCandidate,
     RelationalCandidate,
 )
-from vre.learning.templates import template_for_gap
 
 
-def _make_provenance(decision: CandidateDecision) -> Provenance:
+def _make_provenance(source: ProvenanceSource) -> Provenance:
     """
-    Derive provenance from the candidate decision.
+    Create a timestamped provenance record with the given source.
     """
-    source = (
-        ProvenanceSource.LEARNED
-        if decision == CandidateDecision.ACCEPTED
-        else ProvenanceSource.CONVERSATIONAL
-    )
-    detail = (
-        "auto-learning: accepted as proposed"
-        if decision == CandidateDecision.ACCEPTED
-        else "auto-learning: modified by user"
-    )
     now = datetime.now(timezone.utc)
-    return Provenance(source=source, created_at=now, updated_at=now, detail=detail)
+    return Provenance(source=source, created_at=now, updated_at=now)
 
 
 def _to_depth(proposed: ProposedDepth, provenance: Provenance) -> Depth:
@@ -67,32 +53,61 @@ def _to_depth(proposed: ProposedDepth, provenance: Provenance) -> Depth:
     return Depth(level=proposed.level, properties=proposed.properties, provenance=provenance)
 
 
-def _resolve_name_to_id(name: str, grounding: GroundingResult) -> UUID:
-    """
-    Resolve a primitive name to its UUID from the grounding trace.
-    """
-    for p in grounding.get_primitives():
-        if p.name.lower() == name.lower():
-            return p.id
-    raise CandidateValidationError(f"Cannot resolve '{name}' to a primitive ID from the grounding trace")
-
-
 logger = logging.getLogger(__name__)
 
 
 class LearningEngine:
     """
-    Processes knowledge gaps via the auto-learning loop.
+    Validates and persists candidate fills for knowledge gaps.
 
-    The engine:
-    1. Creates a template from the gap
-    2. Invokes the callback (agent fills template, user reviews)
-    3. Validates and persists accepted/modified candidates using gap context
-    4. Returns the result with the decision
+    The engine does not orchestrate a learning loop — that is the
+    integrator's responsibility. It provides a single entry point,
+    `learn_gap`, which validates a filled candidate against its gap
+    and persists it to the graph.
     """
 
     def __init__(self, repository: PrimitiveRepository) -> None:
         self._repo = repository
+
+    def reachability_prerequisites(
+        self,
+        gap: ReachabilityGap,
+        candidate: ReachabilityCandidate,
+    ) -> list[DepthGap]:
+        """
+        Return DepthGaps that must be filled before this edge can be placed.
+
+        Checks that both source and target have the required depth levels.
+        Returns an empty list if no prerequisites are missing.
+        """
+        candidate.validate_for_gap(gap)
+
+        prerequisites: list[DepthGap] = []
+        for name, required_level in [
+            (candidate.source_name, candidate.source_depth_level),
+            (candidate.target_name, candidate.target_depth_level),
+        ]:
+            primitive = self._repo.find_by_name(name)
+            if primitive is None:
+                raise CandidateValidationError(f"Cannot resolve '{name}' to a primitive ID")
+            existing_levels = {d.level for d in primitive.depths}
+            if required_level not in existing_levels:
+                prerequisites.append(DepthGap(
+                    primitive=primitive,
+                    required_depth=required_level,
+                    current_depth=primitive.contiguous_max_depth,
+                ))
+
+        return prerequisites
+
+    def _resolve_name_to_id(self, name: str) -> UUID:
+        """
+        Resolve a primitive name to its UUID from the repository.
+        """
+        primitive = self._repo.find_by_name(name)
+        if primitive is None:
+            raise CandidateValidationError(f"Cannot resolve '{name}' to a primitive ID")
+        return primitive.id
 
     def _persist_existence(
         self, gap: ExistenceGap, candidate: ExistenceCandidate, provenance: Provenance,
@@ -100,10 +115,6 @@ class LearningEngine:
         """
         Persist a new primitive with D0 (auto-generated) and agent-provided D1.
         """
-        if candidate.d1 is None:
-            logger.warning("ExistenceCandidate %r missing D1 (identity)", candidate.name)
-            raise CandidateValidationError(f"ExistenceCandidate '{candidate.name}' is missing D1 (identity)")
-
         d0 = Depth(
             level=DepthLevel.EXISTENCE,
             properties={"exists": True},
@@ -125,7 +136,7 @@ class LearningEngine:
         """
         Merge proposed depth levels into a primitive and persist.
 
-        Converts ProposedDepth → Depth, replaces existing depth levels when the
+        Converts ProposedDepth -> Depth, replaces existing depth levels when the
         level already exists, appends otherwise. Sorts and saves.
         """
         logger.debug(
@@ -139,9 +150,6 @@ class LearningEngine:
             depth = _to_depth(proposed, provenance)
             touched_levels.add(depth.level)
             if depth.level in existing_levels:
-                # Carry forward relata from the old depth — edges and properties
-                # are independent concerns; replacing descriptive knowledge should
-                # not silently drop validated relationships.
                 old = next(d for d in primitive.depths if d.level == depth.level)
                 depth.relata = old.relata
                 primitive.depths = [
@@ -151,7 +159,6 @@ class LearningEngine:
                 primitive.depths.append(depth)
             existing_levels.add(depth.level)
 
-        # Stamp provenance on carried-forward relata that lack it
         for depth in primitive.depths:
             if depth.level not in touched_levels:
                 continue
@@ -168,10 +175,6 @@ class LearningEngine:
         """
         Merge new depth levels into an existing primitive and persist.
         """
-        if not candidate.new_depths:
-            logger.warning("DepthCandidate for %r has no new depths", gap.primitive.name)
-            raise CandidateValidationError(f"DepthCandidate for '{gap.primitive.name}' has no new depths")
-
         existing = self._repo.find_by_id(gap.primitive.id)
         if existing is None:
             raise CandidateValidationError(f"Primitive '{gap.primitive.name}' ({gap.primitive.id}) not found")
@@ -188,10 +191,6 @@ class LearningEngine:
         """
         Merge new depth levels into the target primitive and persist.
         """
-        if not candidate.new_depths:
-            logger.warning("RelationalCandidate for %r has no new depths", gap.target.name)
-            raise CandidateValidationError(f"RelationalCandidate for '{gap.target.name}' has no new depths")
-
         target = self._repo.find_by_id(gap.target.id)
         if target is None:
             raise CandidateValidationError(f"Target '{gap.target.name}' ({gap.target.id}) not found")
@@ -199,151 +198,81 @@ class LearningEngine:
         self._merge_depths(target, candidate.new_depths, provenance)
         logger.debug("Merged relational depths into target %r", target.name)
 
-    def _learn_missing_depths(
-        self,
-        primitive: Primitive,
-        required_level: DepthLevel,
-        grounding: GroundingResult,
-        callback: LearningCallback,
-    ) -> CandidateDecision | None:
-        """
-        If the primitive lacks the required depth level, synthesize a DepthGap
-        and invoke the callback to learn the missing depths. Returns the
-        decision if learning was needed, or None if the depth already exists.
-        """
-        existing_levels = {d.level for d in primitive.depths}
-        result: CandidateDecision | None = None
-        if required_level in existing_levels:
-            logger.debug("Depth D%d already present on %r, skipping sub-learning", int(required_level), primitive.name)
-        else:
-            current_depth = max(existing_levels, key=lambda lv: lv.value) if existing_levels else None
-            logger.debug(
-                "Synthesized DepthGap for %r: requires D%d, current=%s",
-                primitive.name, int(required_level),
-                ("D" + str(int(current_depth))) if current_depth is not None else "None",
-            )
-            gap = DepthGap(
-                primitive=primitive,
-                required_depth=required_level,
-                current_depth=current_depth,
-            )
-            template = template_for_gap(gap)
-            filled, decision = callback(template, grounding, gap)
-
-            if decision in (CandidateDecision.SKIPPED, CandidateDecision.REJECTED):
-                result = decision
-            elif filled is None:
-                logger.warning("Callback returned None for synthesized depth gap on %r, treating as REJECTED", primitive.name)
-                result = CandidateDecision.REJECTED
-            else:
-                provenance = _make_provenance(decision)
-                self._persist_depth(gap, filled, provenance)
-                result = decision
-        return result
-
     def _persist_reachability(
         self,
         gap: ReachabilityGap,
         candidate: ReachabilityCandidate,
-        grounding: GroundingResult,
-        callback: LearningCallback,
         provenance: Provenance,
-    ) -> CandidateDecision:
+    ) -> None:
         """
-        Two-phase edge placement:
-        1. Learn any missing depths on source and target via the callback
-        2. Place the edge once both sides have the required depths
-
-        If depth learning is rejected or skipped, edge placement is abandoned
-        and the decision propagates back as the outcome.
+        Resolve names, check depth requirements, and place an edge.
         """
-        if candidate.target_name is None or candidate.relation_type is None:
-            logger.warning(
-                "ReachabilityCandidate for %r missing target_name or relation_type",
-                gap.primitive.name,
-            )
-            raise CandidateValidationError(
-                f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
-                f"target_name or relation_type"
-            )
-        if candidate.source_depth_level is None or candidate.target_depth_level is None:
-            raise CandidateValidationError(
-                f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
-                f"source_depth_level or target_depth_level"
-            )
+        source_id = self._resolve_name_to_id(candidate.source_name)
+        target_id = self._resolve_name_to_id(candidate.target_name)
 
-        target_id = _resolve_name_to_id(candidate.target_name, grounding)
-
-        source = self._repo.find_by_id(gap.primitive.id)
+        source = self._repo.find_by_id(source_id)
         if source is None:
-            raise CandidateValidationError(f"Source '{gap.primitive.name}' ({gap.primitive.id}) not found")
+            raise CandidateValidationError(f"Source '{candidate.source_name}' ({source_id}) not found")
 
         target = self._repo.find_by_id(target_id)
         if target is None:
             raise CandidateValidationError(f"Target '{candidate.target_name}' ({target_id}) not found")
 
-        # Phase 1: learn missing depths on source, then target. Either rejection
-        # or skip overrides the outcome and short-circuits phase 2.
+        source_levels = {d.level for d in source.depths}
+        if candidate.source_depth_level not in source_levels:
+            raise CandidateValidationError(
+                f"Source '{source.name}' requires D{candidate.source_depth_level.value} "
+                f"({candidate.source_depth_level.name}) but only has "
+                f"{sorted('D' + str(int(lv)) for lv in source_levels)}. "
+                f"Fill the DepthGap first."
+            )
+
+        target_levels = {d.level for d in target.depths}
+        if candidate.target_depth_level not in target_levels:
+            raise CandidateValidationError(
+                f"Target '{target.name}' requires D{candidate.target_depth_level.value} "
+                f"({candidate.target_depth_level.name}) but only has "
+                f"{sorted('D' + str(int(lv)) for lv in target_levels)}. "
+                f"Fill the DepthGap first."
+            )
+
         logger.debug(
-            "Reachability two-phase: learning missing depths on source=%r, target=%r",
-            source.name, target.name,
+            "Placing %s edge from %r (D%d) to %r (D%d)",
+            candidate.relation_type.value, source.name, int(candidate.source_depth_level),
+            candidate.target_name, int(candidate.target_depth_level),
         )
-        outcome: CandidateDecision = CandidateDecision.ACCEPTED
-        src_decision = self._learn_missing_depths(source, candidate.source_depth_level, grounding, callback)
-        if src_decision in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
-            outcome = src_decision
-        else:
-            if src_decision is not None:
-                source = self._repo.find_by_id(source.id)
-            tgt_decision = self._learn_missing_depths(target, candidate.target_depth_level, grounding, callback)
-            if tgt_decision in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
-                outcome = tgt_decision
-
-        if outcome == CandidateDecision.ACCEPTED:
-            # Phase 2: place the edge
-            logger.debug(
-                "Reachability two-phase: placing %s edge from %r (D%d) to %r (D%d)",
-                candidate.relation_type.value, source.name, int(candidate.source_depth_level),
-                candidate.target_name, int(candidate.target_depth_level),
+        depth_obj = next(d for d in source.depths if d.level == candidate.source_depth_level)
+        new_relatum = Relatum(
+            relation_type=candidate.relation_type,
+            target_id=target_id,
+            target_depth=candidate.target_depth_level,
+            provenance=provenance,
+        )
+        depth_obj.relata.append(new_relatum)
+        source.depths.sort(key=lambda d: int(d.level))
+        try:
+            self._repo.save_primitive(source)
+        except CyclicRelationshipError:
+            logger.exception(
+                "Cyclic relationship error placing %s edge from %r (%s) to %r (%s)",
+                candidate.relation_type.value,
+                source.name,
+                source.id,
+                target.name,
+                target.id,
             )
-            depth_obj = next(d for d in source.depths if d.level == candidate.source_depth_level)
-            new_relatum = Relatum(
-                relation_type=candidate.relation_type,
-                target_id=target_id,
-                target_depth=candidate.target_depth_level,
-                provenance=provenance,
-            )
-            depth_obj.relata.append(new_relatum)
-            source.depths.sort(key=lambda d: int(d.level))
-            try:
-                self._repo.save_primitive(source)
-            except CyclicRelationshipError:
-                logger.exception(
-                    "Cyclic relationship error placing %s edge from %r (%s) to %r (%s)",
-                    candidate.relation_type.value,
-                    source.name,
-                    source.id,
-                    target.name,
-                    target.id,
-                )
-                depth_obj.relata.remove(new_relatum)
-                raise
-
-        return outcome
+            depth_obj.relata.remove(new_relatum)
+            raise
 
     def _persist(
         self,
         gap: KnowledgeGap,
         candidate: LearningCandidate,
-        grounding: GroundingResult,
-        callback: LearningCallback,
         provenance: Provenance,
-    ) -> CandidateDecision | None:
+    ) -> None:
         """
-        Validate and persist a filled candidate to the graph.
-        Returns a decision override for reachability (two-phase), or None.
+        Persist a validated candidate to the graph.
         """
-        override: CandidateDecision | None = None
         match (gap, candidate):
             case (ExistenceGap(), ExistenceCandidate()):
                 self._persist_existence(gap, candidate, provenance)
@@ -352,56 +281,20 @@ class LearningEngine:
             case (RelationalGap(), RelationalCandidate()):
                 self._persist_relational(gap, candidate, provenance)
             case (ReachabilityGap(), ReachabilityCandidate()):
-                override = self._persist_reachability(gap, candidate, grounding, callback, provenance)
-        return override
+                self._persist_reachability(gap, candidate, provenance)
 
-    def learn_at(
+    def learn_gap(
         self,
-        grounding: GroundingResult,
-        gap_index: int,
-        callback: LearningCallback,
-    ) -> LearningResult:
+        gap: KnowledgeGap,
+        candidate: LearningCandidate,
+        source: ProvenanceSource = ProvenanceSource.LEARNED,
+    ) -> None:
         """
-        Process the gap at the given index in the grounding result.
+        Validate and persist a filled candidate for the given gap.
+
+        Raises CandidateValidationError if the candidate is invalid.
         """
-        if not grounding.gaps:
-            raise CandidateValidationError("No gaps to learn from")
-        if gap_index < 0 or gap_index >= len(grounding.gaps):
-            raise CandidateValidationError(f"Gap index {gap_index} out of range (0..{len(grounding.gaps) - 1})")
-
-        gap = grounding.gaps[gap_index]
-        logger.info("Learning at gap_index=%d, gap_kind=%s", gap_index, gap.kind)
-        candidate = template_for_gap(gap)
-        filled, decision = callback(candidate, grounding, gap)
-
-        result: LearningResult
-        if decision == CandidateDecision.SKIPPED:
-            logger.info("Gap %d skipped by callback", gap_index)
-            result = LearningResult(decision=CandidateDecision.SKIPPED, candidate=candidate)
-        elif decision == CandidateDecision.REJECTED:
-            logger.info("Gap %d rejected by callback", gap_index)
-            result = LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
-        elif filled is None:
-            logger.warning(
-                "Callback for gap %d returned no candidate (decision=%s); treating as REJECTED",
-                gap_index,
-                decision.value,
-            )
-            result = LearningResult(decision=CandidateDecision.REJECTED, candidate=candidate)
-        else:
-            logger.debug(
-                "Persisting %s candidate for gap %d (decision=%s)",
-                type(filled).__name__, gap_index, decision.value,
-            )
-            provenance = _make_provenance(decision)
-            override = self._persist(gap, filled, grounding, callback, provenance)
-
-            # Reachability two-phase can override the decision if depth
-            # learning was rejected or skipped
-            if override in (CandidateDecision.REJECTED, CandidateDecision.SKIPPED):
-                logger.info("Reachability two-phase override: %s", override.value)
-                result = LearningResult(decision=override, candidate=filled)
-            else:
-                result = LearningResult(decision=decision, candidate=filled)
-        return result
-
+        logger.info("Learning gap: %s", gap.kind)
+        candidate.validate_for_gap(gap)
+        provenance = _make_provenance(source)
+        self._persist(gap, candidate, provenance)

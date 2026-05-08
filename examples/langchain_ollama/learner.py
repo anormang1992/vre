@@ -1,8 +1,12 @@
 """
-Demo auto-learning module — meta-epistemic dialogue with the agent.
+Demo learning module — meta-epistemic dialogue with the agent.
 
 Uses ChatOllama structured output to fill candidate templates, then
 presents proposals to the user via Rich for review.
+
+This is a reference implementation showing how an integrator can wire up
+learning. VRE does not enforce any particular callback interface — the
+integrator produces filled candidates however they choose.
 """
 
 from __future__ import annotations
@@ -15,9 +19,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from examples.langchain_ollama.repl import console
-from vre.learning.callback import LearningCallback
 from vre.learning.models import (
-    CandidateDecision,
     DepthCandidate,
     ExistenceCandidate,
     LearningCandidate,
@@ -47,7 +49,7 @@ conceptual primitives with depth levels:
 
 Each depth carries `properties` — descriptive attributes intrinsic to
 the concept at that level. Properties describe what something IS, what
-it CAN DO, or what CONDITIONS apply to it. 
+it CAN DO, or what CONDITIONS apply to it.
 
 You are given an epistemic trace showing the current state of the
 knowledge graph and a gap that needs to be filled. Propose knowledge
@@ -107,21 +109,27 @@ Epistemic trace:
 """
 
 _REACHABILITY_PROMPT = """\
-The concept '{source}' is not connected to other concepts in the subgraph.
+The concept '{orphan}' is not connected to other concepts in the subgraph.
 
-Available targets:
-{targets}
+Available concepts:
+{others}
 
-Existing depths on '{source}':
-{source_depths}
+Existing depths on '{orphan}':
+{orphan_depths}
 
-Propose an edge connecting '{source}' to one of the available targets.
+Propose an edge connecting '{orphan}' to the graph. The edge can go in
+either direction — '{orphan}' can be the source OR the target. Choose
+whichever direction is semantically correct.
+
 You MUST fill in ALL of the following fields:
 
-1. target_name — name of the target concept
-2. relation_type — one of: APPLIES_TO, REQUIRES, CONSTRAINED_BY, DEPENDS_ON, INCLUDES
-3. source_depth_level — int, which depth on '{source}' to place the edge at
-4. target_depth_level — int, the minimum depth required on the target for the edge to resolve
+1. source_name — name of the concept the edge originates from
+2. target_name — name of the concept the edge points to
+3. relation_type — one of: APPLIES_TO, REQUIRES, CONSTRAINED_BY, DEPENDS_ON, INCLUDES
+4. source_depth_level — int, which depth on the source to place the edge at
+5. target_depth_level — int, the minimum depth required on the target for the edge to resolve
+
+At least one of source_name or target_name MUST be '{orphan}'.
 
 Do NOT propose new depths. Focus only on edge placement. Any missing depths
 will be handled separately after the edge is placed.
@@ -194,9 +202,9 @@ def build_prompt(candidate: LearningCandidate, grounding: GroundingResult, gap) 
         )
     if isinstance(candidate, ReachabilityCandidate):
         return _REACHABILITY_PROMPT.format(
-            source=gap.primitive.name,
-            targets=_fmt_available_targets(grounding, gap.primitive.id),
-            source_depths=_fmt_existing_depths(gap.primitive),
+            orphan=gap.primitive.name,
+            others=_fmt_available_targets(grounding, gap.primitive.id),
+            orphan_depths=_fmt_existing_depths(gap.primitive),
             trace=trace,
         )
     return ""
@@ -232,14 +240,14 @@ def render_candidate(candidate: LearningCandidate, gap) -> None:
             f"  D{d.level.value} {d.level.name}: {d.properties}" for d in candidate.new_depths
         ) or "  (none)"
         console.print(Panel(
-            f"[bold]Source:[/] {gap.source.name} → [bold]Target:[/] {gap.target.name}\n"
+            f"[bold]Source:[/] {gap.source.name} -> [bold]Target:[/] {gap.target.name}\n"
             f"[bold]New depths on target:[/]\n{depths_str}",
             title="[bold yellow]Relational Proposal[/]",
             border_style="yellow",
         ))
     elif isinstance(candidate, ReachabilityCandidate):
         console.print(Panel(
-            f"[bold]Source:[/] {gap.primitive.name}\n"
+            f"[bold]Source:[/] {candidate.source_name or '(none)'}\n"
             f"[bold]Target:[/] {candidate.target_name or '(none)'}\n"
             f"[bold]Relation:[/] {candidate.relation_type.value if candidate.relation_type else '(none)'}\n"
             f"[bold]Source depth:[/] D{candidate.source_depth_level.value if candidate.source_depth_level else '?'}\n"
@@ -254,22 +262,21 @@ def render_candidate(candidate: LearningCandidate, gap) -> None:
 
 
 # ---------------------------------------------------------------------------
-# DemoLearner — the callback implementation
+# DemoLearner — the demo's learning implementation
 # ---------------------------------------------------------------------------
 
-class DemoLearner(LearningCallback):
+class DemoLearner:
     """
-    Learning callback that uses ChatOllama to fill candidate templates
-    and presents them to the user for review via Rich.
+    Demo learner that uses ChatOllama to fill candidate templates
+    and presents them to the user via Rich for review.
 
-    Flow: agent proposes → user reviews → accept/modify/skip/reject.
-    If the user requests modifications, the agent re-proposes with feedback
-    until the user is satisfied.
+    Flow: agent proposes -> user reviews -> accept/modify/skip/reject.
+    Returns the filled candidate or None (skip/reject).
     """
 
-    def __init__(self, model: str = "qwen3:8b") -> None:
-        self._model = model
+    def __init__(self, model: str = "gemma4:26b") -> None:
         self._active = False
+        self._llm = ChatOllama(model=model, reasoning=False)
 
     def __enter__(self) -> DemoLearner:
         self._active = False
@@ -283,31 +290,29 @@ class DemoLearner(LearningCallback):
         candidate: LearningCandidate,
         messages: list[dict[str, str]],
     ) -> LearningCandidate:
-        llm = ChatOllama(model=self._model).with_structured_output(type(candidate))
-        return llm.invoke(messages)
+        return self._llm.with_structured_output(type(candidate)).invoke(messages)
 
     def __call__(
         self,
         candidate: LearningCandidate,
         grounding: GroundingResult,
         gap: KnowledgeGap,
-    ) -> tuple[LearningCandidate | None, CandidateDecision]:
+    ) -> LearningCandidate | None:
 
         if not self._active:
             if not Confirm.ask("\n[bold cyan]Knowledge gap detected.[/] Enter learning mode?"):
-                return None, CandidateDecision.REJECTED
+                return None
             self._active = True
 
-        messages = [
-            {"role": "system", "content": _LEARN_SYSTEM},
-            {"role": "user", "content": build_prompt(candidate, grounding, gap)},
-        ]
+        gap_prompt = build_prompt(candidate, grounding, gap)
 
         console.print("\n[dim]Agent is proposing knowledge...[/]")
-        filled = self._invoke_llm(candidate, messages)
+        filled = self._invoke_llm(candidate, [
+            {"role": "system", "content": _LEARN_SYSTEM},
+            {"role": "user", "content": gap_prompt},
+        ])
         render_candidate(filled, gap)
 
-        was_modified = False
         while True:
             choice = questionary.select(
                 "Decision:",
@@ -315,20 +320,19 @@ class DemoLearner(LearningCallback):
                 default="accept",
             ).ask()
 
-            if choice is None:  # Ctrl-C
-                return None, CandidateDecision.REJECTED
-            if choice == "accept":
-                decision = CandidateDecision.MODIFIED if was_modified else CandidateDecision.ACCEPTED
-                return filled, decision
-            if choice == "skip":
-                return None, CandidateDecision.SKIPPED
-            if choice == "reject":
-                return None, CandidateDecision.REJECTED
-            if choice == "modify":
-                was_modified = True
-                messages.append({"role": "assistant", "content": filled.model_dump_json()})
-                feedback = Prompt.ask("[bold]What should be changed?[/]")
-                messages.append({"role": "user", "content": feedback})
-                console.print("\n[dim]Agent is revising...[/]")
-                filled = self._invoke_llm(candidate, messages)
-                render_candidate(filled, gap)
+            match choice:
+                case "accept":
+                    return filled
+                case "modify":
+                    feedback = Prompt.ask("[bold]What should be changed?[/]")
+                    console.print("\n[dim]Agent is revising...[/]")
+                    filled = self._invoke_llm(candidate, [
+                        {"role": "system", "content": _LEARN_SYSTEM},
+                        {"role": "user", "content": (
+                            f"Revise this proposal:\n{filled.model_dump_json()}\n\n"
+                            f"Requested change: {feedback}"
+                        )},
+                    ])
+                    render_candidate(filled, gap)
+                case _:
+                    return None

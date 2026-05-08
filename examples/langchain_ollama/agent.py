@@ -4,15 +4,26 @@ Minimal tool-calling agent loop using ChatOllama and langchain-core only.
 
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 
 SYSTEM = """\
-You are a helpful assistant with access to tools for filesystem management. Every tool is gated by
-VRE (Volute Reasoning Engine) to enforce epistemic justification before execution.
+You are a filesystem assistant. You have two tools:
 
-Your shell tool runs in a fully writable workspace directory. All files should be created and managed
-there using relative paths. Do not use /tmp or other directories outside the workspace.
+1. shell_tool — runs a shell command in the workspace directory. Use relative paths.
+2. learn_gaps — resolves knowledge gaps so blocked commands can proceed.
+
+Every shell command is checked by VRE (Volute Reasoning Engine) before execution.
+If VRE does not have enough knowledge about the concepts involved, the command is
+blocked and the tool returns a grounding result listing the gaps.
+
+When a shell command is blocked:
+- Read the gaps in the response (DEPTH, REACHABILITY, RELATIONAL, EXISTENCE).
+- Call learn_gaps with ALL the concept names from the blocked command (comma-separated).
+- After learn_gaps resolves the gaps, retry the original shell command.
+
+Do not assume a tool call succeeded unless you see its result. Do not narrate actions
+you have not taken. Call tools, read results, then respond.
 """
 
 
@@ -26,8 +37,14 @@ class ToolAgent:
     content (including <think> blocks) appears before the tool fires.
     """
 
-    def __init__(self, tools: list, model: str = "qwen3:8b") -> None:
-        self._llm = ChatOllama(model=model, reasoning=True).bind_tools(tools)
+    def __init__(self, tools: list, model: str = "gemma4:26b") -> None:
+        self._llm = ChatOllama(
+            model=model,
+            reasoning=True,
+            top_p=0.95,
+            top_k=64,
+            temperature=1.0
+        ).bind_tools(tools)
         self._tools = {t.name: t for t in tools}
 
     def stream(self, inputs: dict):
@@ -54,7 +71,11 @@ class ToolAgent:
             for c in chunks[1:]:
                 full = full + c
 
-            messages.append(full)
+            history_msg = AIMessage(
+                content=full.content,
+                tool_calls=full.tool_calls,
+            )
+            messages.append(history_msg)
 
             if not full.tool_calls:
                 break
