@@ -20,13 +20,6 @@ from vre.core.models import (
     ResolvedSubgraph,
 )
 from vre.core.grounding import GroundingResult
-from vre.learning.callback import LearningCallback
-from vre.learning.models import (
-    CandidateDecision,
-    DepthCandidate,
-    ExistenceCandidate,
-    ProposedDepth,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -126,27 +119,6 @@ def _make_vre(primitives: list[Primitive]) -> tuple[VRE, StubRepository]:
     return VRE(repo, persist_traces=False), repo
 
 
-class _AcceptLearner(LearningCallback):
-    def __call__(self, candidate, grounding, gap):
-        if isinstance(candidate, ExistenceCandidate):
-            filled = ExistenceCandidate(
-                name=candidate.name,
-                d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"desc": "test"}),
-            )
-            return filled, CandidateDecision.ACCEPTED
-        if isinstance(candidate, DepthCandidate):
-            filled = DepthCandidate(new_depths=[
-                ProposedDepth(level=gap.required_depth, properties={"test": True}),
-            ])
-            return filled, CandidateDecision.ACCEPTED
-        return None, CandidateDecision.SKIPPED
-
-
-class _RejectLearner(LearningCallback):
-    def __call__(self, candidate, grounding, gap):
-        return None, CandidateDecision.REJECTED
-
-
 # ---------------------------------------------------------------------------
 # PrimitiveMetrics model tests
 # ---------------------------------------------------------------------------
@@ -156,8 +128,6 @@ class TestPrimitiveMetricsModel:
         m = PrimitiveMetrics()
         assert m.grounding_count == 0
         assert m.failure_count == 0
-        assert m.learning_count == 0
-        assert m.rejection_count == 0
         assert m.last_grounded is None
         assert m.last_failed is None
 
@@ -272,40 +242,6 @@ class TestGroundingMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Learning metrics tests
-# ---------------------------------------------------------------------------
-
-class TestLearningMetrics:
-    def test_learn_all_accepted_increments_learning_count(self):
-        file_p = _make_fully_grounded("file")
-        vre, repo = _make_vre([file_p])
-
-        grounding = vre.check(["file", "copy"])
-        assert grounding.grounded is False
-
-        vre.learn_all(grounding, _AcceptLearner(), ["file", "copy"])
-
-        created = repo.find_by_name("copy")
-        assert created is not None
-        assert created.metrics is not None
-        # learning_count tracks accepted learning events on this primitive
-        assert created.metrics.learning_count >= 1
-        # Re-grounding after learning also updates grounding metrics
-        assert created.metrics.last_exercised is not None
-
-    def test_learn_all_rejected_increments_rejection_count(self):
-        file_p = _make_fully_grounded("file")
-        vre, repo = _make_vre([file_p])
-
-        grounding = vre.check(["file", "copy"])
-        vre.learn_all(grounding, _RejectLearner(), ["file", "copy"])
-
-        # "copy" was never created (rejected), so we can't track metrics on it.
-        # This verifies the code handles the case gracefully without crashing.
-        assert repo.find_by_name("copy") is None
-
-
-# ---------------------------------------------------------------------------
 # Serialization round-trip tests
 # ---------------------------------------------------------------------------
 
@@ -316,15 +252,11 @@ class TestMetricsSerialization:
             last_failed=datetime(2026, 3, 10, 8, 0, 0, tzinfo=timezone.utc),
             grounding_count=42,
             failure_count=3,
-            learning_count=5,
-            rejection_count=1,
         )
         data = m.model_dump(mode="json")
         restored = PrimitiveMetrics(**data)
         assert restored.grounding_count == 42
         assert restored.failure_count == 3
-        assert restored.learning_count == 5
-        assert restored.rejection_count == 1
         assert restored.last_grounded == m.last_grounded
         assert restored.last_failed == m.last_failed
 

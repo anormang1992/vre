@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from rich.prompt import Confirm
 from rich.tree import Tree
 
-from examples.langchain_ollama.learner import DemoLearner
 from examples.langchain_ollama.repl import console
 from vre.core.policy.models import PolicyViolation
 
@@ -55,27 +54,27 @@ class ConceptExtractor:
     def _format_prompt(command: str) -> str:
         return f"""
             Shell command: {command}
-            
+
             Identify the conceptual primitives this command touches.
-            
+
             Primitives are the conceptual entities required to reason about the effects
             of the command. This includes ACTIONS, TARGETS, and concepts implied by flags.
-            
+
             - Actions: read, write, delete, create, move, copy, list, execute, modify, etc.
             - Targets: file, directory, process, network, permission, etc.
-            
+
             Flag-to-concept examples:
             - `rm -rf dir/` → delete + directory + file
             - `cp -a src/ dst/` → copy + file + directory + permission
             - `chmod +x script.sh` → modify + permission + file + execute
             - `find . -name "*.py" -delete` → list + delete + file + directory
-            
+
             Flags themselves are NOT primitives, but they change semantic intent or
             introduce additional concepts as shown above.
 
             Do NOT return flag names (recursive, force, verbose, interactive, etc.)
             as primitives. Map what the flag *does* to the concepts it affects.
-            
+
             Return only the list of required conceptual primitives.
         """
 
@@ -227,10 +226,3 @@ def on_policy(violations: list[PolicyViolation]) -> bool:
         if not Confirm.ask(f"[yellow]⚠  Policy gate:[/] {v.message}"):
             return False
     return True
-
-
-def make_on_learn(model: str = "qwen3:8b") -> DemoLearner:
-    """
-    Create a learning callback for the demo agent.
-    """
-    return DemoLearner(model=model)

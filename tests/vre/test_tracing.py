@@ -22,13 +22,6 @@ from vre.core.models import (
     RelationType,
     ResolvedSubgraph,
 )
-from vre.learning.callback import LearningCallback
-from vre.learning.models import (
-    CandidateDecision,
-    ExistenceCandidate,
-    LearningResult,
-    ProposedDepth,
-)
 import vre.tracing as tracing_module
 from vre.tracing import TraceWriter, build_trace_entry
 
@@ -181,24 +174,7 @@ class TestBuildTraceEntry:
         assert entry.grounded is True
         assert entry.gaps == []
         assert len(entry.steps) == 1
-        assert entry.learning_outcomes is None
         assert entry.timestamp is not None
-
-    def test_learn_operation_with_outcomes(self):
-        result = _grounding_result(grounded=True)
-        outcomes = [
-            LearningResult(
-                decision=CandidateDecision.ACCEPTED,
-                candidate=ExistenceCandidate(name="copy", d1=ProposedDepth(level=DepthLevel.IDENTITY)),
-            ),
-        ]
-        entry = build_trace_entry("learn", ["file", "copy"], result, outcomes)
-
-        assert entry.operation == "learn"
-        assert entry.learning_outcomes is not None
-        assert len(entry.learning_outcomes) == 1
-        assert entry.learning_outcomes[0]["decision"] == "accepted"
-        assert entry.learning_outcomes[0]["candidate"]["kind"] == "EXISTENCE"
 
     def test_no_trace_gives_empty_steps(self):
         result = _grounding_result(with_trace=False)
@@ -252,7 +228,7 @@ class TestTraceEntrySerialization:
 
         expected_keys = {
             "timestamp", "operation", "concepts", "resolved",
-            "grounded", "gaps", "steps", "agent_id", "learning_outcomes",
+            "grounded", "gaps", "steps", "agent_id",
         }
         assert set(parsed.keys()) == expected_keys
 
@@ -361,64 +337,3 @@ class TestVRETraceIntegration:
         # Existence gap should have kind field
         existence_gaps = [g for g in parsed["gaps"] if g["kind"] == "EXISTENCE"]
         assert len(existence_gaps) >= 1
-
-    def test_learn_all_writes_single_trace_with_outcomes(self, tmp_path, monkeypatch):
-        """learn_all suppresses intermediate check() traces and writes one learn entry."""
-        monkeypatch.setattr(tracing_module, "DEFAULT_TRACE_DIR", tmp_path / "traces")
-        file_p = _make_fully_grounded("file")
-        repo = StubRepository([file_p])
-        vre = VRE(repo)
-
-        grounding = vre.check(["file", "copy"])
-        assert grounding.grounded is False
-
-        class AcceptLearner(LearningCallback):
-            def __call__(self, candidate, grounding, gap):
-                if isinstance(candidate, ExistenceCandidate):
-                    filled = ExistenceCandidate(
-                        name=candidate.name,
-                        d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"desc": "test"}),
-                    )
-                    return filled, CandidateDecision.ACCEPTED
-                return None, CandidateDecision.SKIPPED
-
-        vre.learn_all(grounding, AcceptLearner(), ["file", "copy"])
-
-        files = list((tmp_path / "traces").glob("*.jsonl"))
-        assert len(files) == 1
-        lines = files[0].read_text().strip().split("\n")
-
-        # One "check" from the initial check(), one "learn" from learn_all()
-        # Intermediate check() calls inside learn_all() should be suppressed
-        operations = [json.loads(line)["operation"] for line in lines]
-        assert operations.count("check") == 1
-        assert operations.count("learn") == 1
-
-        # The learn entry should have learning_outcomes
-        learn_entry = json.loads(lines[operations.index("learn")])
-        assert learn_entry["learning_outcomes"] is not None
-        assert len(learn_entry["learning_outcomes"]) >= 1
-
-    def test_learn_all_no_trace_without_outcomes(self, tmp_path, monkeypatch):
-        """learn_all does not write a trace when there are no learning outcomes."""
-        monkeypatch.setattr(tracing_module, "DEFAULT_TRACE_DIR", tmp_path / "traces")
-        file_p = _make_fully_grounded("file")
-        repo = StubRepository([file_p])
-        vre = VRE(repo)
-
-        # Grounded result — learn_all loop body never executes
-        grounding = vre.check(["file"])
-        assert grounding.grounded is True
-
-        vre.learn_all(grounding, _NullLearner(), ["file"])
-
-        files = list((tmp_path / "traces").glob("*.jsonl"))
-        lines = files[0].read_text().strip().split("\n")
-        # Only the initial check() trace, no learn trace
-        operations = [json.loads(line)["operation"] for line in lines]
-        assert operations == ["check"]
-
-
-class _NullLearner(LearningCallback):
-    def __call__(self, candidate, grounding, gap):
-        return None, CandidateDecision.SKIPPED

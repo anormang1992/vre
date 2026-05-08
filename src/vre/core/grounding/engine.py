@@ -17,7 +17,6 @@ lever to enforce a stricter floor than the graph alone would require.
 from __future__ import annotations
 
 import logging
-from functools import cache
 from uuid import UUID
 
 from vre.core.graph import PrimitiveRepository
@@ -93,32 +92,6 @@ class GroundingEngine:
         return all_roots, transients
 
     @staticmethod
-    @cache
-    def _max_contiguous_from_levels(present: frozenset[DepthLevel]) -> DepthLevel | None:
-        """
-        Highest DepthLevel forming a contiguous chain from D0 in *present*, or None.
-
-        Pure function of the level set — memoized so all primitives sharing a
-        depth shape share the cached answer. Cache grows with the number of
-        distinct level-sets the process sees (typically tiny).
-        """
-        result: DepthLevel | None = None
-        for level in sorted(DepthLevel):
-            if level not in present:
-                break
-            result = level
-        return result
-
-    @staticmethod
-    def _contiguous_max_depth(node: Primitive) -> DepthLevel | None:
-        """
-        Return the highest DepthLevel forming a contiguous chain from D0, or None if no depths.
-        """
-        return GroundingEngine._max_contiguous_from_levels(
-            frozenset(d.level for d in node.depths)
-        )
-
-    @staticmethod
     def _partition_edges_by_source_depth(
         edges: list[EpistemicStep],
         id_to_prim: dict[UUID, Primitive],
@@ -136,7 +109,7 @@ class GroundingEngine:
             src = id_to_prim.get(edge.source_id)
             if src is None:
                 continue
-            src_contiguous = GroundingEngine._contiguous_max_depth(src)
+            src_contiguous = src.contiguous_max_depth
             if src_contiguous is not None and src_contiguous >= edge.source_depth:
                 visible.append(edge)
             else:
@@ -175,7 +148,7 @@ class GroundingEngine:
             src = id_to_prim.get(edge.source_id)
             if src is None or src.id in transient_ids:
                 continue
-            src_contiguous = GroundingEngine._contiguous_max_depth(src)
+            src_contiguous = src.contiguous_max_depth
             existing = depth_gap_map.get(src.id)
             if existing is None or edge.source_depth > existing[0]:
                 depth_gap_map[src.id] = (edge.source_depth, src_contiguous)
@@ -185,7 +158,7 @@ class GroundingEngine:
             for node in all_nodes:
                 if node.id in transient_ids or node.id not in root_ids:
                     continue
-                contiguous = GroundingEngine._contiguous_max_depth(node)
+                contiguous = node.contiguous_max_depth
                 if contiguous is None or contiguous < min_depth:
                     existing = depth_gap_map.get(node.id)
                     if existing is None or min_depth > existing[0]:
@@ -208,7 +181,7 @@ class GroundingEngine:
             tgt_prim = id_to_prim.get(edge.target_id)
             if tgt_prim is None:
                 continue
-            tgt_contiguous = GroundingEngine._contiguous_max_depth(tgt_prim)
+            tgt_contiguous = tgt_prim.contiguous_max_depth
             if tgt_contiguous is not None and tgt_contiguous >= edge.target_depth:
                 continue
             pair = (edge.source_id, edge.target_id)
@@ -220,7 +193,7 @@ class GroundingEngine:
             tgt_prim = id_to_prim.get(tgt_id)
             if src_prim is None or tgt_prim is None:
                 continue
-            curr = GroundingEngine._contiguous_max_depth(tgt_prim)
+            curr = tgt_prim.contiguous_max_depth
             gaps.append(RelationalGap(
                 source=src_prim,
                 target=tgt_prim,

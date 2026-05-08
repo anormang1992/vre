@@ -10,16 +10,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from vre.core.grounding.models import GroundingResult
 from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.models import (
     Depth,
     DepthGap,
     DepthLevel,
-    EpistemicQuery,
-    EpistemicResponse,
-    EpistemicResult,
-    EpistemicStep,
     ExistenceGap,
     Primitive,
     Provenance,
@@ -30,10 +25,8 @@ from vre.core.models import (
     RelationType,
     TRANSITIVE_RELATION_TYPES,
 )
-from vre.learning.callback import LearningCallback
 from vre.learning.engine import LearningEngine, _make_provenance
 from vre.learning.models import (
-    CandidateDecision,
     DepthCandidate,
     ExistenceCandidate,
     ProposedDepth,
@@ -75,24 +68,6 @@ def _depth(
     )
 
 
-def _grounding_result(
-    grounded: bool,
-    gaps: list | None = None,
-    primitives: list[Primitive] | None = None,
-) -> GroundingResult:
-    prims = primitives or []
-    trace = EpistemicResponse(
-        query=EpistemicQuery(concept_ids=[]),
-        result=EpistemicResult(primitives=prims, gaps=[], pathway=[]),
-    ) if prims else None
-    return GroundingResult(
-        grounded=grounded,
-        resolved=[],
-        gaps=gaps or [],
-        trace=trace,
-    )
-
-
 class StubRepository:
     """
     In-memory repository for learning engine tests.
@@ -100,12 +75,17 @@ class StubRepository:
 
     def __init__(self, primitives: list[Primitive] | None = None) -> None:
         self._by_id: dict[UUID, Primitive] = {}
+        self._by_name: dict[str, Primitive] = {}
         for p in primitives or []:
             self._by_id[p.id] = p
+            self._by_name[p.name.lower()] = p
         self.saved: list[Primitive] = []
 
     def find_by_id(self, id: UUID) -> Primitive | None:
         return self._by_id.get(id)
+
+    def find_by_name(self, name: str) -> Primitive | None:
+        return self._by_name.get(name.lower())
 
     def save_primitive(self, primitive: Primitive) -> None:
         for depth in primitive.depths:
@@ -137,6 +117,7 @@ class StubRepository:
                                 visited.add(r.target_id)
                                 queue.append(r.target_id)
         self._by_id[primitive.id] = primitive
+        self._by_name[primitive.name.lower()] = primitive
         self.saved.append(primitive)
 
 
@@ -178,6 +159,7 @@ class TestTemplateForGap:
         gap = ReachabilityGap(primitive=prim)
         template = template_for_gap(gap)
         assert isinstance(template, ReachabilityCandidate)
+        assert template.source_name is None
         assert template.target_name is None
         assert template.relation_type is None
         assert template.source_depth_level is None
@@ -190,15 +172,13 @@ class TestTemplateForGap:
 # ---------------------------------------------------------------------------
 
 class TestMakeProvenance:
-    def test_accepted_is_learned(self):
-        prov = _make_provenance(CandidateDecision.ACCEPTED)
+    def test_learned_source(self):
+        prov = _make_provenance(ProvenanceSource.LEARNED)
         assert prov.source == ProvenanceSource.LEARNED
-        assert "accepted" in prov.detail
 
-    def test_modified_is_conversational(self):
-        prov = _make_provenance(CandidateDecision.MODIFIED)
+    def test_conversational_source(self):
+        prov = _make_provenance(ProvenanceSource.CONVERSATIONAL)
         assert prov.source == ProvenanceSource.CONVERSATIONAL
-        assert "modified" in prov.detail
 
 
 # ---------------------------------------------------------------------------
@@ -210,18 +190,13 @@ class TestPersistExistence:
         repo = StubRepository()
         engine = LearningEngine(repo)
         gap = ExistenceGap(primitive=_primitive("Copy"))
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = ExistenceCandidate(
             name="Copy",
             d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Duplicates content"}),
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.ACCEPTED
+        engine.learn_gap(gap, filled)
         assert len(repo.saved) == 1
         saved = repo.saved[0]
         assert saved.name == "Copy"
@@ -234,32 +209,23 @@ class TestPersistExistence:
         repo = StubRepository()
         engine = LearningEngine(repo)
         gap = ExistenceGap(primitive=_primitive("Copy"))
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = ExistenceCandidate(name="Copy", d1=None)
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="missing D1"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
-    def test_modified_gets_conversational_provenance(self):
+    def test_conversational_provenance(self):
         repo = StubRepository()
         engine = LearningEngine(repo)
         gap = ExistenceGap(primitive=_primitive("Copy"))
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = ExistenceCandidate(
             name="Copy",
             d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Duplicates"}),
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.MODIFIED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.MODIFIED
+        engine.learn_gap(gap, filled, source=ProvenanceSource.CONVERSATIONAL)
         saved = repo.saved[0]
         assert saved.provenance.source == ProvenanceSource.CONVERSATIONAL
 
@@ -278,16 +244,12 @@ class TestPersistDepth:
             required_depth=DepthLevel.CAPABILITIES,
             current_depth=DepthLevel.IDENTITY,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = DepthCandidate(
             new_depths=[ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"can_read": "true"})],
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         levels = [d.level for d in saved.depths]
         assert DepthLevel.CAPABILITIES in levels
@@ -298,15 +260,11 @@ class TestPersistDepth:
         repo = StubRepository([prim])
         engine = LearningEngine(repo)
         gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE)
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = DepthCandidate(new_depths=[])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="no new depths"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
 
 class TestPersistRelational:
@@ -322,16 +280,12 @@ class TestPersistRelational:
             required_depth=DepthLevel.CAPABILITIES,
             current_depth=DepthLevel.EXISTENCE,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = RelationalCandidate(
             new_depths=[ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"writable": "true"})],
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         assert saved.id == target.id
         levels = {d.level for d in saved.depths}
@@ -354,21 +308,16 @@ class TestPersistReachability:
         engine = LearningEngine(repo)
 
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(
-            grounded=False, gaps=[gap], primitives=[source, target],
-        )
 
         filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         assert saved.id == source.id
         d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
@@ -377,22 +326,87 @@ class TestPersistReachability:
         assert d2.relata[0].relation_type == RelationType.APPLIES_TO
         assert d2.relata[0].provenance.source == ProvenanceSource.LEARNED
 
-    def test_rejects_missing_target_name(self):
+    def test_attaches_relatum_with_reverse_direction(self):
+        """Edge FROM a connected node TO the orphan (gap primitive is target)."""
+        connected = _primitive("FileSystem", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        orphan = _primitive("Delete", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        repo = StubRepository([connected, orphan])
+        engine = LearningEngine(repo)
+
+        gap = ReachabilityGap(primitive=orphan)
+
+        filled = ReachabilityCandidate(
+            source_name="FileSystem",
+            target_name="Delete",
+            relation_type=RelationType.INCLUDES,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        engine.learn_gap(gap, filled)
+        saved = repo.saved[0]
+        assert saved.id == connected.id
+        d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
+        assert len(d2.relata) == 1
+        assert d2.relata[0].target_id == orphan.id
+
+    def test_rejects_when_neither_side_is_gap_primitive(self):
+        """Neither source_name nor target_name matches the gap primitive."""
         source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
         repo = StubRepository([source])
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source])
+
+        filled = ReachabilityCandidate(
+            source_name="Unrelated",
+            target_name="AlsoUnrelated",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        with pytest.raises(CandidateValidationError, match="must reference the gapped primitive"):
+            engine.learn_gap(gap, filled)
+
+    def test_rejects_missing_names(self):
+        """Empty ReachabilityCandidate with no names at all."""
+        source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
+        repo = StubRepository([source])
+        engine = LearningEngine(repo)
+        gap = ReachabilityGap(primitive=source)
 
         filled = ReachabilityCandidate()
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
+        with pytest.raises(CandidateValidationError, match="missing"):
+            engine.learn_gap(gap, filled)
+
+    def test_rejects_missing_source_name(self):
+        """Has target_name but no source_name."""
+        source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
+        repo = StubRepository([source])
+        engine = LearningEngine(repo)
+        gap = ReachabilityGap(primitive=source)
+
+        filled = ReachabilityCandidate(
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
 
         with pytest.raises(CandidateValidationError, match="missing"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
-    def test_learns_missing_source_depth_before_placing_edge(self):
+    def test_rejects_when_source_depth_missing(self):
+        """Source does not have the required depth level."""
         target = _primitive("File", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -402,74 +416,43 @@ class TestPersistReachability:
         repo = StubRepository([source, target])
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
 
-        edge_candidate = ReachabilityCandidate(
+        filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
-            source_depth_level=DepthLevel.CONSTRAINTS,
+            source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        call_count = 0
+        with pytest.raises(CandidateValidationError, match="DepthGap"):
+            engine.learn_gap(gap, filled)
 
-        def callback(candidate, gr, gap):
-            nonlocal call_count
-            call_count += 1
-            if isinstance(candidate, DepthCandidate):
-                # Agent fills in the missing depths
-                filled = DepthCandidate(new_depths=[
-                    ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Remove"}),
-                    ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"can_delete": "true"}),
-                    ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"requires_perm": "true"}),
-                ])
-                return filled, CandidateDecision.ACCEPTED
-            return edge_candidate, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
-        # Callback invoked twice: once for edge, once for source depths
-        assert call_count == 2
-        # Source should have depths + relatum
-        saved_source = next(s for s in repo.saved if s.id == source.id and any(
-            r for d in s.depths for r in d.relata
-        ))
-        d3 = next(d for d in saved_source.depths if d.level == DepthLevel.CONSTRAINTS)
-        assert d3.properties == {"requires_perm": "true"}
-        assert len(d3.relata) == 1
-        assert d3.relata[0].target_id == target.id
-
-    def test_abandons_edge_if_depth_learning_rejected(self):
-        target = _primitive("File", depths=[
+    def test_rejects_when_target_depth_missing(self):
+        """Target does not have the required depth level."""
+        source = _primitive("Delete", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
             _depth(DepthLevel.CAPABILITIES),
         ])
-        source = _primitive("Delete", depths=[_depth(DepthLevel.EXISTENCE)])
+        target = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
         repo = StubRepository([source, target])
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
 
-        edge_candidate = ReachabilityCandidate(
+        filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
-            source_depth_level=DepthLevel.CONSTRAINTS,
+            source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            if isinstance(candidate, DepthCandidate):
-                return None, CandidateDecision.REJECTED
-            return edge_candidate, CandidateDecision.ACCEPTED
+        with pytest.raises(CandidateValidationError, match="DepthGap"):
+            engine.learn_gap(gap, filled)
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.REJECTED
-        # No relata should have been placed
-        for saved in repo.saved:
-            for d in saved.depths:
-                assert len(d.relata) == 0
-
-    def test_skips_depth_learning_when_already_present(self):
+    def test_places_edge_when_depths_already_present(self):
+        """When both sides already have the required depths, edge placement succeeds."""
         target = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
         source = _primitive("Delete", depths=[
             _depth(DepthLevel.EXISTENCE),
@@ -479,151 +462,75 @@ class TestPersistReachability:
         repo = StubRepository([source, target])
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
 
-        edge_candidate = ReachabilityCandidate(
+        filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.EXISTENCE,
         )
 
-        call_count = 0
-
-        def callback(candidate, gr, gap):
-            nonlocal call_count
-            call_count += 1
-            return edge_candidate, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
-        # Only called once — no depth learning needed
-        assert call_count == 1
-        # D1 retains original properties
+        engine.learn_gap(gap, filled)
         saved = next(s for s in repo.saved if s.id == source.id)
+        # D1 retains original properties
         d1 = next(d for d in saved.depths if d.level == DepthLevel.IDENTITY)
         assert d1.properties == {"description": "Removes content"}
+        # Edge was placed
+        d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
+        assert len(d2.relata) == 1
+        assert d2.relata[0].target_id == target.id
 
     def test_rejects_unresolvable_target_name(self):
         source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
         repo = StubRepository([source])
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source])
 
         filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="Nonexistent",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="Cannot resolve"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
 
 # ---------------------------------------------------------------------------
-# Decision flow tests
+# learn_gap tests
 # ---------------------------------------------------------------------------
 
-class TestDecisionFlow:
-    def test_rejected_does_not_persist(self):
+class TestLearnGap:
+    def test_provenance_defaults_to_learned(self):
         repo = StubRepository()
         engine = LearningEngine(repo)
         gap = ExistenceGap(primitive=_primitive("Copy"))
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
-        def callback(candidate, gr, gap):
-            return None, CandidateDecision.REJECTED
+        filled = ExistenceCandidate(
+            name="Copy",
+            d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Duplicates"}),
+        )
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.REJECTED
-        assert len(repo.saved) == 0
+        engine.learn_gap(gap, filled)
+        saved = repo.saved[0]
+        assert saved.provenance.source == ProvenanceSource.LEARNED
 
-    def test_skipped_does_not_persist(self):
+    def test_provenance_conversational(self):
         repo = StubRepository()
         engine = LearningEngine(repo)
         gap = ExistenceGap(primitive=_primitive("Copy"))
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
-        def callback(candidate, gr, gap):
-            return None, CandidateDecision.SKIPPED
+        filled = ExistenceCandidate(
+            name="Copy",
+            d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Duplicates"}),
+        )
 
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.SKIPPED
-        assert len(repo.saved) == 0
-
-    def test_no_gaps_raises(self):
-        repo = StubRepository()
-        engine = LearningEngine(repo)
-        grounding = _grounding_result(grounded=True, gaps=[])
-
-        with pytest.raises(CandidateValidationError, match="No gaps"):
-            engine.learn_at(grounding, 0, lambda c, g, gap: (None, CandidateDecision.REJECTED))
-
-
-# ---------------------------------------------------------------------------
-# learn_at tests
-# ---------------------------------------------------------------------------
-
-class TestLearnAt:
-    def test_processes_gap_at_index(self):
-        repo = StubRepository()
-        engine = LearningEngine(repo)
-        gap0 = ExistenceGap(primitive=_primitive("Copy"))
-        gap1 = ExistenceGap(primitive=_primitive("Move"))
-        grounding = _grounding_result(grounded=False, gaps=[gap0, gap1])
-
-        received_names = []
-
-        def callback(candidate, gr, gap):
-            received_names.append(candidate.name)
-            return None, CandidateDecision.SKIPPED
-
-        engine.learn_at(grounding, 1, callback)
-        assert received_names == ["Move"]
-
-    def test_out_of_range_raises(self):
-        repo = StubRepository()
-        engine = LearningEngine(repo)
-        gap = ExistenceGap(primitive=_primitive("Copy"))
-        grounding = _grounding_result(grounded=False, gaps=[gap])
-
-        with pytest.raises(CandidateValidationError, match="out of range"):
-            engine.learn_at(grounding, 5, lambda c, g, gap: (None, CandidateDecision.REJECTED))
-
-
-# ---------------------------------------------------------------------------
-# Callback lifecycle tests
-# ---------------------------------------------------------------------------
-
-class TestLearningCallbackLifecycle:
-    def test_default_enter_returns_self(self):
-        class SimpleLearner(LearningCallback):
-            def __call__(self, candidate, grounding, gap):
-                return None, CandidateDecision.REJECTED
-
-        cb = SimpleLearner()
-        assert cb.__enter__() is cb
-
-    def test_default_exit_is_noop(self):
-        class SimpleLearner(LearningCallback):
-            def __call__(self, candidate, grounding, gap):
-                return None, CandidateDecision.REJECTED
-
-        cb = SimpleLearner()
-        cb.__exit__(None, None, None)  # should not raise
-
-    def test_usable_as_context_manager(self):
-        class SimpleLearner(LearningCallback):
-            def __call__(self, candidate, grounding, gap):
-                return None, CandidateDecision.REJECTED
-
-        cb = SimpleLearner()
-        with cb as entered:
-            assert entered is cb
+        engine.learn_gap(gap, filled, source=ProvenanceSource.CONVERSATIONAL)
+        saved = repo.saved[0]
+        assert saved.provenance.source == ProvenanceSource.CONVERSATIONAL
 
 
 # ---------------------------------------------------------------------------
@@ -646,20 +553,16 @@ class TestTemplateForGapEdgeCases:
 class TestPersistDepthEdgeCases:
     def test_primitive_not_found_raises(self):
         prim = _primitive("Ghost")
-        repo = StubRepository()  # empty — primitive not in repo
+        repo = StubRepository()  # empty -- primitive not in repo
         engine = LearningEngine(repo)
         gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE)
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = DepthCandidate(
             new_depths=[ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"a": "true"})],
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="not found"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_replaces_existing_depth_level(self):
         """When a candidate proposes a depth that already exists, it should replace it."""
@@ -670,17 +573,13 @@ class TestPersistDepthEdgeCases:
         repo = StubRepository([prim])
         engine = LearningEngine(repo)
         gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.IDENTITY)
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = DepthCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.IDENTITY, properties={"updated": "true"}),
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"cap": "true"}),
         ])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         d1 = next(d for d in saved.depths if d.level == DepthLevel.IDENTITY)
         assert d1.properties == {"updated": "true"}
@@ -713,22 +612,18 @@ class TestPersistDepthEdgeCases:
         repo = StubRepository([prim])
         engine = LearningEngine(repo)
         gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.IDENTITY)
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = DepthCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.IDENTITY, properties={"desc": "a file"}),
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"cap": "read"}),
         ])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
-        # D0 was NOT touched — its relatum should remain unstamped
+        # D0 was NOT touched -- its relatum should remain unstamped
         d0 = next(d for d in saved.depths if d.level == DepthLevel.EXISTENCE)
         assert d0.relata[0].provenance is None
-        # D1 WAS replaced — relata carried forward and provenance stamped
+        # D1 WAS replaced -- relata carried forward and provenance stamped
         d1 = next(d for d in saved.depths if d.level == DepthLevel.IDENTITY)
         assert len(d1.relata) == 1
         assert d1.relata[0].target_id == target_id
@@ -748,15 +643,11 @@ class TestPersistRelationalEdgeCases:
             source=source, target=target,
             required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = RelationalCandidate(new_depths=[])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="no new depths"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_target_not_found_raises(self):
         source = _primitive("Create")
@@ -767,17 +658,13 @@ class TestPersistRelationalEdgeCases:
             source=source, target=target,
             required_depth=DepthLevel.CAPABILITIES, current_depth=None,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = RelationalCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"writable": "true"}),
         ])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="not found"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_replaces_existing_depth_on_target(self):
         source = _primitive("Create")
@@ -791,16 +678,12 @@ class TestPersistRelationalEdgeCases:
             source=source, target=target,
             required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = RelationalCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"updated": "true"}),
         ])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
         assert d2.properties == {"updated": "true"}
@@ -826,18 +709,14 @@ class TestPersistRelationalEdgeCases:
             source=source, target=target,
             required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = RelationalCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"cap": "true"}),
         ])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
-        # D0 was not touched — its relatum provenance should remain None
+        # D0 was not touched -- its relatum provenance should remain None
         d0 = next(d for d in saved.depths if d.level == DepthLevel.EXISTENCE)
         assert d0.relata[0].provenance is None
 
@@ -864,16 +743,12 @@ class TestPersistRelationalEdgeCases:
             source=source, target=target,
             required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE,
         )
-        grounding = _grounding_result(grounded=False, gaps=[gap])
 
         filled = RelationalCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"updated": "true"}),
         ])
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        engine.learn_at(grounding, 0, callback)
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
         assert d2.properties == {"updated": "true"}
@@ -889,20 +764,17 @@ class TestPersistReachabilityEdgeCases:
         repo = StubRepository([source])
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source])
 
         filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=None,
             target_depth_level=None,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CandidateValidationError, match="missing"):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_source_not_found_raises(self):
         source = _primitive("Ghost")
@@ -910,187 +782,45 @@ class TestPersistReachabilityEdgeCases:
         repo = StubRepository([target])  # source not in repo
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
 
         filled = ReachabilityCandidate(
+            source_name="Ghost",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        with pytest.raises(CandidateValidationError, match="not found"):
-            engine.learn_at(grounding, 0, callback)
+        with pytest.raises(CandidateValidationError, match="Cannot resolve"):
+            engine.learn_gap(gap, filled)
 
     def test_target_not_found_raises(self):
         source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
-        target = _primitive("File", depths=[_depth(DepthLevel.CAPABILITIES)])
         repo = StubRepository([source])  # target not in repo
         engine = LearningEngine(repo)
         gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
 
         filled = ReachabilityCandidate(
+            source_name="Delete",
             target_name="File",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        with pytest.raises(CandidateValidationError, match="not found"):
-            engine.learn_at(grounding, 0, callback)
-
-    def test_learns_missing_target_depth_and_refreshes(self):
-        """When only the target needs depth learning, verifies the target is refreshed."""
-        source = _primitive("Delete", depths=[
-            _depth(DepthLevel.EXISTENCE),
-            _depth(DepthLevel.IDENTITY),
-            _depth(DepthLevel.CAPABILITIES),
-        ])
-        target = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
-        repo = StubRepository([source, target])
-        engine = LearningEngine(repo)
-        gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
-
-        edge_candidate = ReachabilityCandidate(
-            target_name="File",
-            relation_type=RelationType.APPLIES_TO,
-            source_depth_level=DepthLevel.CAPABILITIES,
-            target_depth_level=DepthLevel.CAPABILITIES,
-        )
-
-        def callback(candidate, gr, gap):
-            if isinstance(candidate, DepthCandidate):
-                filled = DepthCandidate(new_depths=[
-                    ProposedDepth(level=DepthLevel.IDENTITY, properties={"desc": "a file"}),
-                    ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"readable": "true"}),
-                ])
-                return filled, CandidateDecision.ACCEPTED
-            return edge_candidate, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.ACCEPTED
-        # Edge should be placed on source
-        saved_source = next(s for s in repo.saved if s.id == source.id and any(
-            r for d in s.depths for r in d.relata
-        ))
-        d2 = next(d for d in saved_source.depths if d.level == DepthLevel.CAPABILITIES)
-        assert len(d2.relata) == 1
-        assert d2.relata[0].target_id == target.id
-
-    def test_rejects_target_depth_learning_abandons_edge(self):
-        """When target depth learning is rejected, edge placement is abandoned."""
-        source = _primitive("Delete", depths=[
-            _depth(DepthLevel.EXISTENCE),
-            _depth(DepthLevel.IDENTITY),
-            _depth(DepthLevel.CAPABILITIES),
-        ])
-        target = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
-        repo = StubRepository([source, target])
-        engine = LearningEngine(repo)
-        gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
-
-        edge_candidate = ReachabilityCandidate(
-            target_name="File",
-            relation_type=RelationType.APPLIES_TO,
-            source_depth_level=DepthLevel.CAPABILITIES,
-            target_depth_level=DepthLevel.CAPABILITIES,
-        )
-
-        def callback(candidate, gr, gap):
-            if isinstance(candidate, DepthCandidate):
-                return None, CandidateDecision.REJECTED
-            return edge_candidate, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.REJECTED
-
-    def test_skips_source_depth_learning_abandons_edge(self):
-        """When source depth learning is skipped, edge placement is abandoned."""
-        source = _primitive("Delete", depths=[_depth(DepthLevel.EXISTENCE)])
-        target = _primitive("File", depths=[
-            _depth(DepthLevel.EXISTENCE),
-            _depth(DepthLevel.CAPABILITIES),
-        ])
-        repo = StubRepository([source, target])
-        engine = LearningEngine(repo)
-        gap = ReachabilityGap(primitive=source)
-        grounding = _grounding_result(grounded=False, gaps=[gap], primitives=[source, target])
-
-        edge_candidate = ReachabilityCandidate(
-            target_name="File",
-            relation_type=RelationType.APPLIES_TO,
-            source_depth_level=DepthLevel.CAPABILITIES,
-            target_depth_level=DepthLevel.CAPABILITIES,
-        )
-
-        def callback(candidate, gr, gap):
-            if isinstance(candidate, DepthCandidate):
-                return None, CandidateDecision.SKIPPED
-            return edge_candidate, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.SKIPPED
-
-
-class TestLearnMissingDepthsEdgeCases:
-    def test_filled_none_treated_as_rejected(self):
-        """If callback returns filled=None with ACCEPTED, treat as REJECTED."""
-        prim = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
-        repo = StubRepository([prim])
-        engine = LearningEngine(repo)
-
-        # Call _learn_missing_depths directly
-        grounding = _grounding_result(grounded=False)
-
-        def callback(candidate, gr, gap):
-            return None, CandidateDecision.ACCEPTED
-
-        result = engine._learn_missing_depths(
-            prim, DepthLevel.CAPABILITIES, grounding, callback,
-        )
-        assert result == CandidateDecision.REJECTED
+        with pytest.raises(CandidateValidationError, match="Cannot resolve"):
+            engine.learn_gap(gap, filled)
 
 
 # ---------------------------------------------------------------------------
 # Cycle detection
 # ---------------------------------------------------------------------------
 
-def _reachability_grounding(
-    source: Primitive,
-    target: Primitive,
-    all_primitives: list[Primitive],
-    pathway: list[EpistemicStep] | None = None,
-) -> tuple[ReachabilityGap, GroundingResult]:
-    """Build a ReachabilityGap + GroundingResult with a trace for cycle tests."""
-    gap = ReachabilityGap(primitive=source)
-    trace = EpistemicResponse(
-        query=EpistemicQuery(concept_ids=[]),
-        result=EpistemicResult(
-            primitives=all_primitives,
-            gaps=[gap],
-            pathway=pathway or [],
-        ),
-    )
-    grounding = GroundingResult(
-        grounded=False, resolved=[], gaps=[gap], trace=trace,
-    )
-    return gap, grounding
-
-
 class TestCycleDetection:
-    """Cycle detection via save_primitive → CyclicRelationshipError propagated."""
+    """Cycle detection via save_primitive -> CyclicRelationshipError propagated."""
 
     def test_self_referential_transitive_raises(self):
-        """A→A via REQUIRES is a trivial cycle → CyclicRelationshipError."""
+        """A->A via REQUIRES is a trivial cycle -> CyclicRelationshipError."""
         a = _primitive("A", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1098,23 +828,21 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(a, a, [a])
+        gap = ReachabilityGap(primitive=a)
 
         filled = ReachabilityCandidate(
+            source_name="A",
             target_name="A",
             relation_type=RelationType.REQUIRES,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CyclicRelationshipError):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_direct_cycle_raises(self):
-        """A→B via REQUIRES exists; B→A via REQUIRES would cycle → CyclicRelationshipError."""
+        """A->B via REQUIRES exists; B->A via REQUIRES would cycle -> CyclicRelationshipError."""
         b = _primitive("B", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1137,23 +865,21 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a, b])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(b, a, [a, b])
+        gap = ReachabilityGap(primitive=b)
 
         filled = ReachabilityCandidate(
+            source_name="B",
             target_name="A",
             relation_type=RelationType.REQUIRES,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CyclicRelationshipError):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_indirect_cycle_raises(self):
-        """A→B→C via DEPENDS_ON exists; C→A would cycle → CyclicRelationshipError."""
+        """A->B->C via DEPENDS_ON exists; C->A would cycle -> CyclicRelationshipError."""
         c = _primitive("C", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1191,23 +917,21 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a, b, c])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(c, a, [a, b, c])
+        gap = ReachabilityGap(primitive=c)
 
         filled = ReachabilityCandidate(
+            source_name="C",
             target_name="A",
             relation_type=RelationType.DEPENDS_ON,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CyclicRelationshipError):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_mixed_transitive_types_cycle_raises(self):
-        """A→B via REQUIRES exists; B→A via CONSTRAINED_BY would cycle → CyclicRelationshipError."""
+        """A->B via REQUIRES exists; B->A via CONSTRAINED_BY would cycle -> CyclicRelationshipError."""
         b = _primitive("B", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1230,23 +954,21 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a, b])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(b, a, [a, b])
+        gap = ReachabilityGap(primitive=b)
 
         filled = ReachabilityCandidate(
+            source_name="B",
             target_name="A",
             relation_type=RelationType.CONSTRAINED_BY,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
         with pytest.raises(CyclicRelationshipError):
-            engine.learn_at(grounding, 0, callback)
+            engine.learn_gap(gap, filled)
 
     def test_non_transitive_cycle_allowed(self):
-        """A→B via APPLIES_TO exists; B→A via APPLIES_TO is fine → ACCEPTED."""
+        """A->B via APPLIES_TO exists; B->A via APPLIES_TO is fine."""
         b = _primitive("B", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1269,23 +991,23 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a, b])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(b, a, [a, b])
+        gap = ReachabilityGap(primitive=b)
 
         filled = ReachabilityCandidate(
+            source_name="B",
             target_name="A",
             relation_type=RelationType.APPLIES_TO,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.ACCEPTED
+        engine.learn_gap(gap, filled)
+        saved = repo.saved[0]
+        d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
+        assert len(d2.relata) == 1
 
     def test_non_transitive_self_ref_allowed(self):
-        """A→A via INCLUDES is fine → ACCEPTED."""
+        """A->A via INCLUDES is fine."""
         a = _primitive("A", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1293,23 +1015,21 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(a, a, [a])
+        gap = ReachabilityGap(primitive=a)
 
         filled = ReachabilityCandidate(
+            source_name="A",
             target_name="A",
             relation_type=RelationType.INCLUDES,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.ACCEPTED
+        engine.learn_gap(gap, filled)
+        assert len(repo.saved) == 1
 
     def test_valid_transitive_edge_accepted(self):
-        """A→B via REQUIRES with no path B→A → ACCEPTED."""
+        """A->B via REQUIRES with no path B->A."""
         b = _primitive("B", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -1322,20 +1042,17 @@ class TestCycleDetection:
         ])
         repo = StubRepository([a, b])
         engine = LearningEngine(repo)
-        gap, grounding = _reachability_grounding(a, b, [a, b])
+        gap = ReachabilityGap(primitive=a)
 
         filled = ReachabilityCandidate(
+            source_name="A",
             target_name="B",
             relation_type=RelationType.REQUIRES,
             source_depth_level=DepthLevel.CAPABILITIES,
             target_depth_level=DepthLevel.CAPABILITIES,
         )
 
-        def callback(candidate, gr, gap):
-            return filled, CandidateDecision.ACCEPTED
-
-        result = engine.learn_at(grounding, 0, callback)
-        assert result.decision == CandidateDecision.ACCEPTED
+        engine.learn_gap(gap, filled)
         saved = repo.saved[0]
         d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
         assert len(d2.relata) == 1
@@ -1383,8 +1100,8 @@ class TestStubRepositoryCycleDetection:
                 )],
             ),
         ])
-        repo = StubRepository([a])  # A→B already in repo
-        # Now try to save B with B→A
+        repo = StubRepository([a])  # A->B already in repo
+        # Now try to save B with B->A
         b_with_edge = _primitive("B", depths=[
             Depth(
                 level=DepthLevel.CAPABILITIES,

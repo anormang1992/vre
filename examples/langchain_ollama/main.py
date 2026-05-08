@@ -16,9 +16,10 @@ from vre import VRE
 from vre.core.graph import PrimitiveRepository
 
 from examples.langchain_ollama.agent import make_agent
-from examples.langchain_ollama.callbacks import ConceptExtractor, get_cardinality, make_on_learn, on_policy, on_trace
+from examples.langchain_ollama.callbacks import ConceptExtractor, get_cardinality, on_policy, on_trace
+from examples.langchain_ollama.learner import DemoLearner
 from examples.langchain_ollama.repl import run
-from examples.langchain_ollama.tools import init_tools
+from examples.langchain_ollama.tools import init_tools, init_learn_tool
 
 
 def main() -> None:
@@ -37,7 +38,8 @@ def main() -> None:
     vre = VRE(repo, agent_key="langchain-ollama-demo-agent", agent_name="Langchain Ollama Demo Agent")
 
     concepts = ConceptExtractor(model=args.concepts_model)
-    on_learn = make_on_learn(model=args.model)
+    learner = DemoLearner(model=args.model)
+
     shell_fn = init_tools(
         vre,
         args.sandbox,
@@ -45,7 +47,6 @@ def main() -> None:
         get_cardinality,
         on_trace,
         on_policy,
-        on_learn,
     )
     shell_tool = StructuredTool.from_function(
         shell_fn,
@@ -53,7 +54,14 @@ def main() -> None:
         description="Run a shell command in the workspace directory. The workspace is fully writable — you can create, modify, delete, and execute files here. Use relative paths.",
     )
 
-    agent = make_agent([shell_tool], model=args.model)
+    learn_fn = init_learn_tool(vre, learner)
+    learn_tool = StructuredTool.from_function(
+        learn_fn,
+        name="learn_gaps",
+        description="Identify and resolve knowledge gaps for concepts. Pass a comma-separated list of concept names (e.g. 'delete, file, directory'). Use this when a shell command is blocked due to ungrounded concepts.",
+    )
+
+    agent = make_agent([shell_tool, learn_tool], model=args.model)
     run(agent)
 
 

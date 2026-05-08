@@ -9,8 +9,6 @@ from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyAction, PolicyResult
 from vre.core.policy.models import PolicyViolation, Policy
 from vre.guard import vre_guard
-from vre.learning.callback import LearningCallback
-from vre.learning.models import CandidateDecision
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -395,75 +393,6 @@ def test_vre_guard_no_min_depth_passes_none():
 
     my_fn()
     mock_vre.check.assert_called_once_with(["file"], min_depth=None)
-
-
-# ── on_learn path ────────────────────────────────────────────────────────────
-
-class _StubLearner(LearningCallback):
-    """Minimal LearningCallback for guard tests."""
-    def __call__(self, candidate, grounding, gap):
-        return None, CandidateDecision.REJECTED
-
-
-def test_vre_guard_on_learn_invokes_learn_all_when_not_grounded():
-    """When grounding fails and on_learn is provided, learn_all is called."""
-    from vre.guard import vre_guard
-
-    grounded_result = _grounding(grounded=True)
-    mock_vre = _mock_vre(_grounding(grounded=False, gaps=[MagicMock()]))
-    mock_vre.learn_all.return_value = grounded_result
-    mock_vre.check_policy.return_value = PolicyResult(action=PolicyAction.PASS)
-
-    learner = _StubLearner()
-
-    @vre_guard(mock_vre, concepts=["file"], on_learn=learner)
-    def my_fn():
-        return "executed"
-
-    result = my_fn()
-    assert result == "executed"
-    mock_vre.learn_all.assert_called_once()
-
-
-def test_vre_guard_on_learn_fires_on_trace_after_learning():
-    """on_trace fires twice: once after initial grounding, once after learning."""
-    from vre.guard import vre_guard
-
-    traces = []
-    grounded_result = _grounding(grounded=True)
-    mock_vre = _mock_vre(_grounding(grounded=False, gaps=[MagicMock()]))
-    mock_vre.learn_all.return_value = grounded_result
-    mock_vre.check_policy.return_value = PolicyResult(action=PolicyAction.PASS)
-
-    learner = _StubLearner()
-
-    @vre_guard(mock_vre, concepts=["file"], on_trace=traces.append, on_learn=learner)
-    def my_fn():
-        return "executed"
-
-    my_fn()
-    assert len(traces) == 2
-    assert traces[0].grounded is False
-    assert traces[1].grounded is True
-
-
-def test_vre_guard_on_learn_returns_grounding_when_still_not_grounded():
-    """When learn_all doesn't fully resolve gaps, returns the GroundingResult."""
-    from vre.guard import vre_guard
-
-    still_ungrounded = _grounding(grounded=False, gaps=[MagicMock()])
-    mock_vre = _mock_vre(_grounding(grounded=False, gaps=[MagicMock()]))
-    mock_vre.learn_all.return_value = still_ungrounded
-
-    learner = _StubLearner()
-
-    @vre_guard(mock_vre, concepts=["file"], on_learn=learner)
-    def my_fn():
-        return "executed"
-
-    result = my_fn()
-    assert isinstance(result, GroundingResult)
-    assert result.grounded is False
 
 
 def test_vre_guard_on_policy_decline_returns_block():
