@@ -774,9 +774,12 @@ const NODES = [
           </div>
         </div>
         <p>
-          Depth is <strong>monotonic</strong>: D3 grounding implies D0–D2.
-          Planning requires D2. Execution requires D3. Execution without D3
-          grounding is forbidden.
+          Depth is <strong>monotonic</strong>: D3 grounding implies D0–D2 are
+          also grounded. Depth requirements are derived from the graph itself —
+          edges carry a source depth that determines when they become visible
+          and a target depth that determines when they resolve. Integrators can
+          enforce a minimum depth floor (e.g. D3 for execution) as a secondary
+          safety lever via <code>min_depth</code>.
         </p>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
           <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
@@ -875,15 +878,18 @@ const NODES = [
           Each <code>vre_guard</code> call follows a strict sequence:
           <strong>resolve</strong> concept names to canonical primitives →
           <strong>ground</strong> the subgraph against depth requirements → fire
-          <strong>on_trace</strong> with the result → if not grounded and
-          <strong>on_learn</strong> is provided, enter the
-          <strong>learning loop</strong> to resolve gaps → re-ground and fire
-          <strong>on_trace</strong> again → if still not grounded,
+          <strong>on_trace</strong> with the result → if not grounded,
           <strong>block</strong> and return gaps → evaluate
           <strong>policies</strong> on APPLIES_TO relata → if hard blocks,
           <strong>block</strong> immediately → if confirmation required, call
           <strong>on_policy</strong> for human confirmation → if approved,
           <strong>execute</strong> the original function.
+        </p>
+        <p>
+          The guard does not orchestrate learning. When grounding fails, it
+          returns the gaps and lets the integrator decide what to do — typically
+          by exposing a separate <code>learn_gaps</code> tool the agent can
+          invoke. See <strong>LEARNING</strong>.
         </p>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
           <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
@@ -955,7 +961,6 @@ const NODES = [
           &nbsp;&nbsp;&nbsp;&nbsp;min_depth=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># DepthLevel | None — floor override</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;on_trace=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[GroundingResult], None]</span><br>
           &nbsp;&nbsp;&nbsp;&nbsp;on_policy=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;<span class="cc"># Callable[[list[PolicyViolation]], bool]</span><br>
-          &nbsp;&nbsp;&nbsp;&nbsp;on_learn=<span class="ck">None</span>,&nbsp;&nbsp;&nbsp;&nbsp;<span class="cc"># LearningCallback | None</span><br>
           )
         </div>
         <ul style="margin-left:0.8rem">
@@ -970,9 +975,6 @@ const NODES = [
           </li>
           <li>
               <strong>on_policy</strong> — called with confirmation-required violations for human approval.
-          </li>
-          <li>
-            <strong>on_learn</strong> — a <code>LearningCallback</code> that enables the auto-learning loop when grounding fails.
           </li>
         </ul>
         <div class="code-block">
@@ -1048,51 +1050,72 @@ const NODES = [
     threeColor: 0xF0C54D,
     content: {
       depth: 'LEARNING',
-      title: 'Ignorance is surfaced. Knowledge is earned.',
+      title: 'VRE is a knowledge linter.',
       body: `
         <p>
           When grounding fails, VRE does not simply block the agent. It surfaces
-          <strong>structured knowledge gaps</strong> that describe exactly what is
-          missing. The auto-learning loop turns these gaps into proposals that a
-          human reviews before anything enters the graph.
+          <strong>structured knowledge gaps</strong> that describe exactly what
+          is missing — and provides the tools to fill them. But VRE does not
+          orchestrate the loop. The integrator owns it.
+        </p>
+        <p>
+          This separation is deliberate. Loop orchestration is inherently
+          integration-specific — different LLMs, different data sources,
+          different retry/budget strategies. By keeping VRE's surface tight
+          (identify gaps, persist fills), integrators can build whatever flow
+          fits their stack without fighting the framework.
         </p>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
           <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
-            THE LEARNING LOOP
+            VRE'S LEARNING SURFACE
           </strong>
         </p>
         <p>
-          Each gap type produces a <strong>candidate template</strong> that an
-          agent fills in. The human reviews, modifies, or rejects the proposal.
-          Accepted candidates are persisted with provenance tracking.
+          Three things, total:
+        </p>
+        <ul style="margin-left:0.8rem">
+          <li>
+            <code>vre.check(concepts)</code> returns a <code>GroundingResult</code> with structured <code>KnowledgeGap</code> objects when grounding fails.
+          </li>
+          <li>
+            <code>template_for_gap(gap)</code> returns the candidate model class to fill — the integrator constructs an instance however they like (LLM structured output, user input, static rules).
+          </li>
+          <li>
+            <code>vre.learning_engine.learn_gap(gap, candidate)</code> validates the candidate against its gap and persists it to the graph.
+          </li>
+        </ul>
+        <p style="margin-top:1.5rem;margin-bottom:0.5rem">
+          <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
+            INTEGRATOR-OWNED LOOP
+          </strong>
         </p>
         <div style="margin:0.8rem 0 1.2rem">
           <div class="depth-row">
             <div class="depth-indicator d0">1</div>
             <div class="depth-text">
-              <div class="depth-label">GAP DETECTED</div>
-              <div class="depth-question">Grounding fails → structured gap surfaced</div>
+              <div class="depth-label">CHECK</div>
+              <div class="depth-question">Integrator calls <code>vre.check()</code> → gets gaps</div>
             </div>
           </div>
           <div class="depth-row">
             <div class="depth-indicator d1">2</div>
             <div class="depth-text">
-              <div class="depth-label">TEMPLATE CREATED</div>
-              <div class="depth-question">Engine builds a candidate from the gap type</div>
+              <div class="depth-label">FILL</div>
+              <div class="depth-question">Integrator fills the candidate (LLM, user, rules — their call)</div>
             </div>
           </div>
           <div class="depth-row">
             <div class="depth-indicator d2">3</div>
             <div class="depth-text">
-              <div class="depth-label">AGENT PROPOSES</div>
-              <div class="depth-question">LLM fills the template with domain knowledge</div>
+              <div class="depth-label">PERSIST</div>
+              <div class="depth-question">VRE validates and persists via <code>learn_gap</code></div>
             </div>
           </div>
           <div class="depth-row">
             <div class="depth-indicator d3">4</div>
             <div class="depth-text">
-              <div class="depth-label">HUMAN REVIEWS</div>
-              <div class="depth-question">Accept, modify, skip, or reject the proposal</div>
+              <div class="depth-label">RE-CHECK</div>
+              <div class="depth-question">Integrator re-checks; loop continues until grounded</div>
             </div>
           </div>
         </div>
@@ -1103,7 +1126,7 @@ const NODES = [
         </p>
         <ul style="margin-left:0.8rem">
           <li>
-            <strong>ExistenceCandidate</strong> — concept not in graph. Agent proposes D1 (identity); D0 is auto-generated on acceptance.
+            <strong>ExistenceCandidate</strong> — concept not in graph. Integrator proposes D1 (identity); D0 is auto-generated on acceptance.
           </li>
           <li>
             <strong>DepthCandidate</strong> — concept exists but is too shallow. Proposes missing depths.
@@ -1112,20 +1135,22 @@ const NODES = [
             <strong>RelationalCandidate</strong> — relatum target is under-grounded. Proposes depths on target.
           </li>
           <li>
-            <strong>ReachabilityCandidate</strong> — concept is disconnected. Proposes edge placement.
+            <strong>ReachabilityCandidate</strong> — concept is disconnected. Proposes edge placement, in either direction.
           </li>
         </ul>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
           <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
-            TWO-PHASE EDGE PLACEMENT
+            REACHABILITY PREREQUISITES
           </strong>
         </p>
         <p>
-          When a reachability gap is resolved by placing an edge, the engine
-          checks whether the source and target have the required depths. If not,
-          it synthesizes <code>DepthGap</code>s and invokes the learning callback
-          for each missing depth <strong>before</strong> placing the edge. The
-          agent cannot connect concepts it does not yet understand.
+          Reachability candidates focus on edge placement, not depth. If the
+          source or target lacks the required depth, <code>learn_gap</code>
+          raises <code>CandidateValidationError</code>. The engine exposes
+          <code>reachability_prerequisites(gap, candidate)</code> which returns
+          the <code>DepthGap</code>s that must be filled first. The integrator
+          fills them, then places the edge — explicitly, with no nested
+          callbacks.
         </p>
         <p style="margin-top:1.5rem;margin-bottom:0.5rem">
           <strong style="color:var(--tb);font-family:'JetBrains Mono',monospace;font-size:0.65rem;letter-spacing:0.1rem">
@@ -1133,10 +1158,11 @@ const NODES = [
           </strong>
         </p>
         <p>
-          Every piece of learned knowledge carries structured provenance.
-          Accepted proposals are marked <code>learned</code>. Modified proposals
-          are marked <code>conversational</code>. The graph remembers not just
-          what it knows, but <strong>how it came to know it</strong>.
+          Every piece of persisted knowledge carries structured provenance.
+          <code>learn_gap</code> accepts an optional <code>source</code>
+          parameter — the integrator decides how to stamp fills based on its
+          own loop semantics. The graph remembers not just what it knows, but
+          <strong>how it came to know it</strong>.
         </p>
       `
     }
