@@ -534,6 +534,207 @@ class TestLearnGap:
 
 
 # ---------------------------------------------------------------------------
+# Reachability prerequisites tests
+# ---------------------------------------------------------------------------
+
+class TestReachabilityPrerequisites:
+    def _make_engine(self, *primitives) -> LearningEngine:
+        return LearningEngine(StubRepository(list(primitives)))
+
+    def test_returns_empty_when_both_sides_have_required_depths(self):
+        source = _primitive("Delete", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        target = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        engine = self._make_engine(source, target)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            source_name="Delete",
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        prereqs = engine.reachability_prerequisites(gap, candidate)
+        assert prereqs == []
+
+    def test_returns_depth_gap_when_source_missing_required_depth(self):
+        source = _primitive("Delete", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+        ])
+        target = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        engine = self._make_engine(source, target)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            source_name="Delete",
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        prereqs = engine.reachability_prerequisites(gap, candidate)
+        assert len(prereqs) == 1
+        assert prereqs[0].primitive.id == source.id
+        assert prereqs[0].required_depth == DepthLevel.CAPABILITIES
+        assert prereqs[0].current_depth == DepthLevel.IDENTITY
+
+    def test_returns_depth_gap_when_target_missing_required_depth(self):
+        source = _primitive("Delete", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        target = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+        ])
+        engine = self._make_engine(source, target)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            source_name="Delete",
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        prereqs = engine.reachability_prerequisites(gap, candidate)
+        assert len(prereqs) == 1
+        assert prereqs[0].primitive.id == target.id
+        assert prereqs[0].required_depth == DepthLevel.CAPABILITIES
+        assert prereqs[0].current_depth == DepthLevel.IDENTITY
+
+    def test_returns_both_depth_gaps_when_both_sides_missing(self):
+        source = _primitive("Delete", depths=[_depth(DepthLevel.EXISTENCE)])
+        target = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
+        engine = self._make_engine(source, target)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            source_name="Delete",
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        prereqs = engine.reachability_prerequisites(gap, candidate)
+        assert len(prereqs) == 2
+        prim_ids = {p.primitive.id for p in prereqs}
+        assert prim_ids == {source.id, target.id}
+
+    def test_current_depth_reflects_contiguous_max_not_highest_level(self):
+        """A non-contiguous chain (D0, D1, D3) should report D1 as current."""
+        source = _primitive("Create", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        target = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        engine = self._make_engine(source, target)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            source_name="Create",
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        prereqs = engine.reachability_prerequisites(gap, candidate)
+        assert len(prereqs) == 1
+        assert prereqs[0].primitive.id == source.id
+        assert prereqs[0].current_depth == DepthLevel.IDENTITY
+
+    def test_works_with_reverse_direction(self):
+        """When the gap primitive is the target, prerequisites still work."""
+        connected = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
+        orphan = _primitive("Config", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        engine = self._make_engine(connected, orphan)
+        gap = ReachabilityGap(primitive=orphan)
+        candidate = ReachabilityCandidate(
+            source_name="File",
+            target_name="Config",
+            relation_type=RelationType.INCLUDES,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.IDENTITY,
+        )
+
+        prereqs = engine.reachability_prerequisites(gap, candidate)
+        assert len(prereqs) == 1
+        assert prereqs[0].primitive.id == connected.id
+        assert prereqs[0].required_depth == DepthLevel.CAPABILITIES
+
+    def test_validates_candidate_first(self):
+        """Missing source_name raises before any repo lookup."""
+        source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
+        engine = self._make_engine(source)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            target_name="File",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        with pytest.raises(CandidateValidationError, match="missing"):
+            engine.reachability_prerequisites(gap, candidate)
+
+    def test_validates_gap_primitive_match_first(self):
+        """Edge that doesn't reference the gap primitive raises before repo lookups."""
+        orphan = _primitive("Config", depths=[_depth(DepthLevel.CAPABILITIES)])
+        a = _primitive("File", depths=[_depth(DepthLevel.CAPABILITIES)])
+        b = _primitive("Write", depths=[_depth(DepthLevel.CAPABILITIES)])
+        engine = self._make_engine(orphan, a, b)
+        gap = ReachabilityGap(primitive=orphan)
+        candidate = ReachabilityCandidate(
+            source_name="File",
+            target_name="Write",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        with pytest.raises(CandidateValidationError, match="must reference the gapped primitive"):
+            engine.reachability_prerequisites(gap, candidate)
+
+    def test_unresolvable_name_raises(self):
+        source = _primitive("Delete", depths=[_depth(DepthLevel.CAPABILITIES)])
+        engine = self._make_engine(source)
+        gap = ReachabilityGap(primitive=source)
+        candidate = ReachabilityCandidate(
+            source_name="Delete",
+            target_name="Nonexistent",
+            relation_type=RelationType.APPLIES_TO,
+            source_depth_level=DepthLevel.CAPABILITIES,
+            target_depth_level=DepthLevel.CAPABILITIES,
+        )
+
+        with pytest.raises(CandidateValidationError, match="Cannot resolve"):
+            engine.reachability_prerequisites(gap, candidate)
+
+
+# ---------------------------------------------------------------------------
 # Template edge cases
 # ---------------------------------------------------------------------------
 
