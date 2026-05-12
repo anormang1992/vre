@@ -118,7 +118,7 @@ class GroundingResult(BaseModel):
     """
     Result of a VRE grounding check.
 
-    `grounded` is True only when all concepts are grounded at D3 with no gaps.
+    `grounded` is True only when all concepts are grounded with no gaps.
     Unknown concepts pass through as their original names and produce
     ExistenceGaps, causing `grounded` to be False.
 
@@ -151,12 +151,6 @@ class GroundingResult(BaseModel):
         prefix = "Grounded" if self.grounded else "Not grounded"
         agent_tag = f"  (agent: {self.agent_id})" if self.agent_id else ""
         lines.append(f"[VRE] {prefix} — {resolved_str}{agent_tag}")
-
-        if self.grounded:
-            lines.append("")
-            lines.append(
-                "This is your epistemic trace. The concepts below have been verified at D3 (CONSTRAINTS)."
-            )
 
         if self.trace:
             id_to_name = {p.id: p.name for p in self.trace.result.primitives}
