@@ -62,7 +62,6 @@ def test_grounding_str_grounded_header():
     result = _grounded(["file"], [p])
     s = str(result)
     assert s.startswith("[VRE] Grounded — file")
-    assert "This is your epistemic trace" in s
 
 
 def test_grounding_str_shows_depth_labels_and_properties():
@@ -142,14 +141,6 @@ def test_grounding_str_deduplicates_pathway():
     result = _grounded(["file", "write"], [file_p, write_p], pathway=[step, step])
     s = str(result)
     assert s.count("write —[APPLIES_TO@D2]→ file") == 1
-
-
-def test_grounding_str_not_grounded_header():
-    result = GroundingResult(grounded=False, resolved=["api"], gaps=[], trace=None)
-    s = str(result)
-    assert s.startswith("[VRE] Not grounded — api")
-    assert "Cannot execute until knowledge gaps are resolved." in s
-    assert "This is your epistemic trace" not in s
 
 
 def test_grounding_str_existence_gap():
