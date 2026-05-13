@@ -105,6 +105,88 @@ The lesson: **the same relation type can sit at any depth**, and where it
 sits is itself a policy decision. Use depth to declare what an agent must
 understand before the connection is consultable.
 
+## Shared primitives across domains
+
+When two seeders declare a primitive with the same name, they're asserting
+it's the same concept. That's not a collision to resolve away — it's how
+the graph stops being a collection of disconnected silos. A shared `delete`
+across filesystem and database, a shared `permission` across filesystem
+and auth, a shared `lock` across database and concurrency — each of those
+is the seam where multi-domain reasoning becomes possible.
+
+**Convention.** When a primitive is being shared across domains, abstract
+it. Lift its domain-specific properties off the primitive's depth
+properties and place them on the **relata metadata** where the
+domain-specific entities connect to it. The primitive itself becomes
+thinner; the relationships carry the domain knowledge.
+
+For example, a filesystem-only `delete` might describe itself as
+"Removes the file from the filesystem permanently" at D2. If `delete`
+becomes shared with the HTTP and database domains, that description is
+filesystem-specific — it doesn't apply to deleting a row or a resource.
+The convention is to thin the primitive's own description to something
+concept-level ("Removes a target entity from existence") and move the
+filesystem-specific framing onto the metadata of the `delete →
+filesystem_entity` APPLIES_TO relatum. Each consuming domain attaches
+its own framing to its own edge.
+
+Primitives that get shared frequently become *thin* — the work shifts to
+the relata metadata that connects them back to each domain's concrete
+entities. The primitive becomes a nexus, and the rich domain knowledge
+sits on the edges.
+
+You don't need to abstract a primitive preemptively. A first-author
+seeder can give a primitive a domain-specific description if no sharing
+is in view. The convention kicks in when sharing happens — at that
+moment, lift the domain-specific properties to relata metadata so the
+primitive can host both framings cleanly. The interactive merge flow
+(see `--interactive` on seed scripts) supports this when two seeders
+collide on the same name.
+
+## Edge directionality across domains
+
+Cross-domain edges are directional, and the hierarchy flows one way:
+**edges originate in specialized domains and point into general
+domains, never backwards.** General primitives stay self-contained and
+domain-agnostic; specialized primitives reach into them when they need
+to. The dependency graph across domains is a DAG with general concepts
+at the roots.
+
+Examples:
+
+- `repository INCLUDES file` is valid. The git domain reaches into the
+  filesystem domain because git operates on files. The filesystem
+  domain doesn't reach back — `file` does not know about `repository`.
+  The filesystem graph has no edges pointing into git concepts.
+- `commit CONSTRAINED_BY authentication` is valid. The git domain
+  reaches into the auth domain because pushing requires credentials.
+  The auth domain doesn't reach back — `authentication` does not know
+  about `commit`.
+
+The runtime consequence: a traversal that starts from a filesystem
+concept never enters the git domain (no filesystem primitive has an
+outward edge into a git primitive). A traversal that starts from a git
+concept enters the filesystem domain through `repository INCLUDES file`
+and picks up `file`'s local neighborhood (`path`, `permission`,
+`ownership`), which is correct and useful — the git-aware agent needs
+to understand files to work with them. The DAG produces clean,
+direction-aware traversal without any explicit scoping logic.
+
+This is also why merge review matters. If someone authors an edge from
+`file` back into `repository` (or any general primitive into a
+specialized one), the interactive merge buffer surfaces the
+bidirectional connection and the reviewer catches it: "`file`
+shouldn't know about repositories — that's backwards." The convention
+is what enforces the clean DAG; the merge buffer is what makes
+violations visible.
+
+Restated as a principle:
+
+> Edges flow from specialized domains into general domains, never
+> backwards. General primitives are thin and domain-agnostic.
+> Domain-specific knowledge lives on the edges from specialized
+> concepts, not on the shared primitive.
+
 ## Idempotency contract
 
 - Use `repo.upsert_primitive(prim)` — never `repo.save_primitive(prim)`.
