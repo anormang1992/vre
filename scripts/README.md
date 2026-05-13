@@ -4,32 +4,17 @@ Utility scripts for managing the VRE Neo4j graph. All scripts accept
 `--neo4j-uri`, `--neo4j-user`, and `--neo4j-password` arguments
 (defaults: `neo4j://localhost:7687`, `neo4j`, `password`).
 
+Domain seed scripts live in [`../seeders/`](../seeders/). The scripts here
+are graph maintenance and demo utilities.
+
 ## clear_graph.py
 
 Deletes every `Primitive` node and its relationships from the graph.
-Called automatically by both seed scripts to ensure a clean slate, but
-can also be run standalone.
+Used by `seed_gaps.py` to produce its deterministic demo output; can be
+run standalone before a seeder if you want a clean slate.
 
 ```bash
-poetry run python scripts/clear_graph.py
-```
-
-## seed_all.py
-
-Seeds the fully grounded epistemic graph — 20 primitives covering the
-filesystem domain end-to-end. Every primitive is grounded to at least D3
-(CONSTRAINTS) with complete structural relata (DEPENDS_ON, REQUIRES,
-INCLUDES, APPLIES_TO, CONSTRAINED_BY). Two primitives (`delete`,
-`execute`) extend to D4 (IMPLICATIONS) to demonstrate consequential
-relationships and the full depth model.
-
-Primitives: `operating_system`, `filesystem`, `path`, `permission`,
-`ownership`, `directory`, `file`, `symlink`, `user`, `group`,
-`process`, `create`, `read`, `write`, `modify`, `delete`, `list`,
-`move`, `copy`, `execute`
-
-```bash
-poetry run python scripts/seed_all.py
+python scripts/clear_graph.py
 ```
 
 ## seed_gaps.py
@@ -37,10 +22,11 @@ poetry run python scripts/seed_all.py
 Seeds a deliberately shaped graph (10 primitives) designed to
 demonstrate depth-gated traversal and the full gap taxonomy. Each
 action primitive is truncated or structured to produce a specific gap
-type when queried.
+type when queried. Clears the graph before seeding to guarantee the
+expected gap output.
 
 ```bash
-poetry run python scripts/seed_gaps.py
+python scripts/seed_gaps.py
 ```
 
 ### Primitives
@@ -64,7 +50,7 @@ poetry run python scripts/seed_gaps.py
 |---|---|---|
 | `["list", "directory"]` | None | list@D2 sees APPLIES_TO@D2; directory@D3 >= target D2 |
 | `["read", "file"]` | RelationalGap(read→file, req=D2, cur=D1) | read@D2 sees APPLIES_TO@D2, but file@D1 < target D2 |
-| `["delete", "file"]` | ReachabilityGap(file) | APPLIES_TO lives at D3 in seed_all; D3 omitted here, no edges exist |
+| `["delete", "file"]` | ReachabilityGap(file) | APPLIES_TO lives at D3 in the filesystem seeder; D3 omitted here, no edges exist |
 | `["delete", "directory"]` | ReachabilityGap(directory) | Same — no visible connection between delete and directory |
 | `["create", "file"]` | DepthGap(create, req=D3, cur=D1) + ReachabilityGap(file) | create contiguous max=D1; APPLIES_TO@D3 gated, nodes disconnected |
 | `["create", "directory"]` | DepthGap(create, req=D3, cur=D1) + ReachabilityGap(directory) | Same mechanism — edge gated, target unreachable |

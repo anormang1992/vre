@@ -1,14 +1,19 @@
 """
-Seed script for populating VRE with epistemic primitives.
+Seeder for the filesystem domain.
 
-Run: poetry run python scripts/seed_all.py
+Upserts a fully grounded epistemic graph for operating system filesystem
+concepts (OS, filesystem, path, permission, ownership, directory, file,
+symlink, user, group, process) and their actions (create, read, write,
+delete, list, move, copy, modify, execute). Idempotent — re-running
+preserves existing primitive ids by name. Does not clear the graph;
+compose with `scripts/clear_graph.py` if a clean slate is wanted.
+
+Run: python seeders/seed_filesystem.py
 """
 import argparse
 
-from scripts.clear_graph import clear_graph
 from vre.core.graph import PrimitiveRepository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
-from vre.core.policy.models import Cardinality, Policy
 
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
 
@@ -69,7 +74,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(os_prim)
+    os_prim = repo.upsert_primitive(os_prim)
     print(f"Saved: operating_system ({os_prim.id})")
     return os_prim
 
@@ -139,7 +144,7 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(filesystem)
+    filesystem = repo.upsert_primitive(filesystem)
     print(f"Saved: filesystem ({filesystem.id})")
     return filesystem
 
@@ -214,7 +219,7 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(path)
+    path = repo.upsert_primitive(path)
     print(f"Saved: path ({path.id})")
     return path
 
@@ -289,7 +294,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(permission)
+    permission = repo.upsert_primitive(permission)
     print(f"Saved: permission ({permission.id})")
     return permission
 
@@ -362,7 +367,7 @@ def seed_ownership(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(ownership)
+    ownership = repo.upsert_primitive(ownership)
     print(f"Saved: ownership ({ownership.id})")
     return ownership
 
@@ -455,7 +460,7 @@ def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primi
             ),
         ],
     )
-    repo.save_primitive(directory)
+    directory = repo.upsert_primitive(directory)
     print(f"Saved: directory ({directory.id})")
     return directory
 
@@ -546,7 +551,7 @@ def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive,
             ),
         ],
     )
-    repo.save_primitive(file)
+    file = repo.upsert_primitive(file)
     print(f"Saved: file ({file.id})")
     return file
 
@@ -646,7 +651,7 @@ def seed_symlink(repo: PrimitiveRepository, filesystem: Primitive, path: Primiti
             ),
         ],
     )
-    repo.save_primitive(symlink)
+    symlink = repo.upsert_primitive(symlink)
     print(f"Saved: symlink ({symlink.id})")
     return symlink
 
@@ -718,7 +723,7 @@ def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(user)
+    user = repo.upsert_primitive(user)
     print(f"Saved: user ({user.id})")
     return user
 
@@ -793,7 +798,7 @@ def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -
             ),
         ],
     )
-    repo.save_primitive(group)
+    group = repo.upsert_primitive(group)
     print(f"Saved: group ({group.id})")
     return group
 
@@ -880,7 +885,7 @@ def seed_process(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(process)
+    process = repo.upsert_primitive(process)
     print(f"Saved: process ({process.id})")
     return process
 
@@ -948,7 +953,7 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
             ),
         ],
     )
-    repo.save_primitive(create)
+    create = repo.upsert_primitive(create)
     print(f"Saved: create ({create.id})")
     return create
 
@@ -1013,7 +1018,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(read)
+    read = repo.upsert_primitive(read)
     print(f"Saved: read ({read.id})")
     return read
 
@@ -1080,7 +1085,7 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(write)
+    write = repo.upsert_primitive(write)
     print(f"Saved: write ({write.id})")
     return write
 
@@ -1139,20 +1144,6 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                         metadata={
                             "description": "Removes the file from the filesystem permanently",
                         },
-                        policies=[
-                            Policy(
-                                name="BulkFileDeletePolicy",
-                                requires_confirmation=True,
-                                trigger_cardinality=Cardinality.MULTIPLE,
-                                confirmation_message="Bulk file deletion requires user approval. Proceed?",
-                            ),
-                            Policy(
-                                name="ProtectedFileDeletePolicy",
-                                requires_confirmation=True,
-                                callback="examples.langchain_ollama.policies.protected_file_delete",
-                                confirmation_message="Deletion may affect protected files. Proceed?",
-                            ),
-                        ],
                     ),
                     Relatum(
                         relation_type=RelationType.APPLIES_TO,
@@ -1182,7 +1173,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
             ),
         ],
     )
-    repo.save_primitive(delete)
+    delete = repo.upsert_primitive(delete)
     print(f"Saved: delete ({delete.id})")
     return delete
 
@@ -1247,7 +1238,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(list_prim)
+    list_prim = repo.upsert_primitive(list_prim)
     print(f"Saved: list ({list_prim.id})")
     return list_prim
 
@@ -1337,7 +1328,7 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
             ),
         ],
     )
-    repo.save_primitive(move)
+    move = repo.upsert_primitive(move)
     print(f"Saved: move ({move.id})")
     return move
 
@@ -1424,7 +1415,7 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
             ),
         ],
     )
-    repo.save_primitive(copy)
+    copy = repo.upsert_primitive(copy)
     print(f"Saved: copy ({copy.id})")
     return copy
 
@@ -1516,7 +1507,7 @@ def seed_modify(repo: PrimitiveRepository, file: Primitive, directory: Primitive
             ),
         ],
     )
-    repo.save_primitive(modify)
+    modify = repo.upsert_primitive(modify)
     print(f"Saved: modify ({modify.id})")
     return modify
 
@@ -1605,7 +1596,7 @@ def seed_execute(repo: PrimitiveRepository, file: Primitive) -> Primitive:
             ),
         ],
     )
-    repo.save_primitive(execute)
+    execute = repo.upsert_primitive(execute)
     print(f"Saved: execute ({execute.id})")
     return execute
 
@@ -1613,8 +1604,6 @@ def seed_execute(repo: PrimitiveRepository, file: Primitive) -> Primitive:
 def main(repository: PrimitiveRepository) -> None:
     with repository as repo:
         repo.ensure_constraints()
-        deleted = clear_graph(repo)
-        print(f"Cleared {deleted} existing primitive(s).\n")
 
         # ── Substrates ───────────────────────────────────────────────────
         os_prim = seed_operating_system(repo)
@@ -1672,7 +1661,7 @@ def main(repository: PrimitiveRepository) -> None:
                 provenance=SEED_PROVENANCE,
             ),
         ])
-        repo.save_primitive(filesystem)
+        filesystem = repo.upsert_primitive(filesystem)
         print("Updated: filesystem with INCLUDES relata")
 
         # permission DEPENDS_ON ownership (eval starts with ownership)
@@ -1807,7 +1796,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             ),
         ])
-        repo.save_primitive(permission)
+        permission = repo.upsert_primitive(permission)
         print("Updated: permission with DEPENDS_ON ownership and APPLIES_TO relata")
 
         # ownership APPLIES_TO entities and actors
@@ -1859,7 +1848,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             ),
         ])
-        repo.save_primitive(ownership)
+        ownership = repo.upsert_primitive(ownership)
         print("Updated: ownership with APPLIES_TO relata")
 
         # file, directory, symlink REQUIRES ownership
@@ -1876,7 +1865,7 @@ def main(repository: PrimitiveRepository) -> None:
                     },
                 ),
             )
-            repo.save_primitive(entity_prim)
+            entity_prim = repo.upsert_primitive(entity_prim)
         print("Updated: file, directory, symlink with REQUIRES ownership")
 
         # user INCLUDES process
@@ -1892,7 +1881,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             ),
         )
-        repo.save_primitive(user)
+        user = repo.upsert_primitive(user)
         print("Updated: user with INCLUDES process")
 
         # CONSTRAINED_BY permission on all action primitives at D3
@@ -1910,7 +1899,7 @@ def main(repository: PrimitiveRepository) -> None:
                     },
                 )
             )
-            repo.save_primitive(action_prim)
+            action_prim = repo.upsert_primitive(action_prim)
         print("Updated: read, write, delete, create, modify with CONSTRAINED_BY permission at D3")
 
         # modify CONSTRAINED_BY ownership (owner authority required)
@@ -1927,7 +1916,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(modify)
+        modify = repo.upsert_primitive(modify)
         print("Updated: modify with CONSTRAINED_BY ownership at D3")
 
         list_constraints = next(d for d in list_prim.depths if d.level == DepthLevel.CONSTRAINTS)
@@ -1943,7 +1932,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(list_prim)
+        list_prim = repo.upsert_primitive(list_prim)
         print("Updated: list with CONSTRAINED_BY permission at D3")
 
         move_constraints = next(d for d in move.depths if d.level == DepthLevel.CONSTRAINTS)
@@ -1962,7 +1951,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(move)
+        move = repo.upsert_primitive(move)
         print("Updated: move with CONSTRAINED_BY permission at D3")
 
         copy_constraints = next(d for d in copy.depths if d.level == DepthLevel.CONSTRAINTS)
@@ -1980,7 +1969,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(copy)
+        copy = repo.upsert_primitive(copy)
         print("Updated: copy with CONSTRAINED_BY permission at D3")
 
         execute_constraints = next(d for d in execute.depths if d.level == DepthLevel.CONSTRAINTS)
@@ -1997,7 +1986,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(execute)
+        execute = repo.upsert_primitive(execute)
         print("Updated: execute with CONSTRAINED_BY permission at D3")
 
         # create, delete APPLIES_TO symlink (destructive — at D3)
@@ -2013,7 +2002,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(create)
+        create = repo.upsert_primitive(create)
         print("Updated: create with APPLIES_TO symlink at D3")
 
         delete_constraints = next(d for d in delete.depths if d.level == DepthLevel.CONSTRAINTS)
@@ -2051,7 +2040,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             ),
         ])
-        repo.save_primitive(delete)
+        delete = repo.upsert_primitive(delete)
         print("Updated: delete with APPLIES_TO symlink at D3 and D4 relata")
 
         # read APPLIES_TO symlink (safe — at D2)
@@ -2067,7 +2056,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(read)
+        read = repo.upsert_primitive(read)
         print("Updated: read with APPLIES_TO symlink at D2")
 
         # execute D4 relata — consequential relationships
@@ -2092,7 +2081,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             ),
         ])
-        repo.save_primitive(execute)
+        execute = repo.upsert_primitive(execute)
         print("Updated: execute with D4 relata")
 
         # process CONSTRAINED_BY permission
@@ -2110,7 +2099,7 @@ def main(repository: PrimitiveRepository) -> None:
                 },
             )
         )
-        repo.save_primitive(process)
+        process = repo.upsert_primitive(process)
         print("Updated: process with CONSTRAINED_BY permission at D3")
 
         print("\nDone. Seeded 20 primitives.")
