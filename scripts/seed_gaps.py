@@ -7,7 +7,7 @@ when queried by the grounding engine.
 
 See scripts/README.md for the full primitive table and expected gap scenarios.
 
-Run: poetry run python scripts/seed_gaps.py
+Run: python scripts/seed_gaps.py
 """
 import argparse
 
@@ -525,7 +525,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     """
     Seed the Delete primitive at D0–D2 only.
 
-    Destructive action. In the fully grounded graph (seed_all), delete's
+    Destructive action. In the fully grounded filesystem seeder, delete's
     APPLIES_TO edges live at D3 (CONSTRAINTS). Here D3 is omitted, so
     those edges simply don't exist — delete has no visible connection to
     its targets → ReachabilityGap on file or directory.
@@ -554,7 +554,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
                     "inputs": ["target_entity"],
                     "outputs": ["confirmation_of_removal"],
                 },
-                # No relata — APPLIES_TO lives at D3 in seed_all, omitted here.
+                # No relata — APPLIES_TO lives at D3 in seed_filesystem, omitted here.
             ),
         ],
     )

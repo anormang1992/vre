@@ -3,7 +3,7 @@ Clear all primitives and relationships from the VRE Neo4j graph.
 
 Can be run standalone or imported by seed scripts to ensure a clean slate.
 
-Run: poetry run python scripts/clear_graph.py
+Run: python scripts/clear_graph.py
 """
 import argparse
 from typing import LiteralString, cast

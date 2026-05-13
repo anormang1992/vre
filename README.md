@@ -207,17 +207,20 @@ If you already have neo4j installed locally, ensure it is running and note the c
 
 ### Seeding the Graph
 
-The VRE repository includes seed scripts that populate the graph with testing scenarios. Each script clears the graph before seeding
-to ensure a clean slate. See [`scripts/README.md`](scripts/README.md) for full
-details.
+The VRE repository ships with domain seeders in [`seeders/`](seeders/) and a
+gap-demonstration script in [`scripts/`](scripts/). Seeders upsert primitives
+by name (idempotent re-runs); the demo script clears the graph first to
+produce its deterministic output. Use `scripts/clear_graph.py` if you want
+a clean slate before seeding. See [`scripts/README.md`](scripts/README.md)
+for details.
 
 ```bash
-# Fully grounded graph — 16 primitives, all at D3 with complete relata
-poetry run python scripts/seed_all.py \
+# Fully grounded filesystem domain — 20 primitives, all at D3+ with complete relata
+python seeders/seed_filesystem.py \
 --neo4j-uri neo4j://localhost:7687 --neo4j-user neo4j --neo4j-password password
 
 # Gap demonstration graph — 10 primitives, deliberately shaped to produce each gap type
-poetry run python scripts/seed_gaps.py \
+python scripts/seed_gaps.py \
 --neo4j-uri neo4j://localhost:7687 --neo4j-user neo4j --neo4j-password password
 ```
 
@@ -878,8 +881,10 @@ src/vre/
 
 scripts/
 ├── clear_graph.py               # Clear all primitives from the Neo4j graph
-├── seed_all.py                  # Seed fully grounded graph (16 primitives)
 └── seed_gaps.py                 # Seed gap-demonstration graph (10 primitives)
+
+seeders/
+└── seed_filesystem.py           # Filesystem domain — 20 primitives, idempotent upsert
 
 examples/
 ├── claude-code/

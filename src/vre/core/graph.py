@@ -379,6 +379,27 @@ class PrimitiveRepository:
             logger.error("Neo4j error saving primitive %r: %s", primitive.name, exc)
             raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
 
+    def upsert_primitive(self, primitive: Primitive) -> Primitive:
+        """
+        Save `primitive`, preserving the id of any existing primitive with the
+        same name. Returns the reconciled primitive so callers can cite its
+        canonical id in downstream relata.
+
+        Within-domain idempotency only: depths and relata are full-replaced
+        (per save_primitive). Cross-domain merging is not handled here.
+        """
+        existing = self.find_by_name(primitive.name)
+        if existing is None:
+            canonical = primitive
+        else:
+            logger.info(
+                "Upserting %r: overwriting existing primitive (id=%s)",
+                primitive.name, existing.id,
+            )
+            canonical = primitive.model_copy(update={"id": existing.id})
+        self.save_primitive(canonical)
+        return canonical
+
     def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
         """
         Update only the metrics JSON on an existing primitive node.

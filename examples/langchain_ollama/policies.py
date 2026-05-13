@@ -1,10 +1,12 @@
 """
 Demo PolicyCallback — blocks deletion of files matching `protected*`.
 
-Registered on the Delete → File APPLIES_TO relatum via seed_all.py.
-Demonstrates a callback that inspects the shell command to make a
-domain-specific policy decision, including filesystem inspection when
-a wildcard or directory deletion could affect protected files.
+Intended to be attached to the Delete → File APPLIES_TO relatum by the
+integrator (via the policy wizard or a direct attachment), not by the
+domain seeder. Demonstrates a callback that inspects the shell command
+to make a domain-specific policy decision, including filesystem
+inspection when a wildcard or directory deletion could affect protected
+files.
 """
 
 from __future__ import annotations
