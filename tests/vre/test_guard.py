@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from vre.core.grounding import GroundingResult
+from vre.core.models import ExistenceGap, Primitive
 from vre.core.policy import PolicyAction, PolicyResult
 from vre.core.policy.models import PolicyViolation, Policy
 from vre.guard import vre_guard
@@ -43,7 +44,8 @@ def test_vre_guard_returns_grounding_result_when_not_grounded():
     """When grounding fails, vre_guard returns GroundingResult without calling fn."""
     from vre.guard import vre_guard
 
-    mock_vre = _mock_vre(_grounding(grounded=False, gaps=[MagicMock()]))
+    gap = ExistenceGap(primitive=Primitive(name="unknown", depths=[]))
+    mock_vre = _mock_vre(_grounding(grounded=False, gaps=[gap]))
 
     @vre_guard(mock_vre, concepts=["file"])
     def my_fn():
