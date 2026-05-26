@@ -5,7 +5,6 @@
 GroundingResult — the public result type returned by VRE grounding checks.
 """
 
-from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -126,7 +125,7 @@ class GroundingResult(BaseModel):
 
     grounded: bool
     resolved: list[str]
-    gaps: list[Any]
+    gaps: list[KnowledgeGap]
     trace: EpistemicResponse | None = None
     agent_id: UUID | None = None
 
