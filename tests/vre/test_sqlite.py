@@ -11,6 +11,7 @@ import pytest
 
 from vre.core.backends.sqlite import SQLiteRepository
 from vre.core.errors import CyclicRelationshipError, HydrationError, PersistenceError
+from vre.core.grounding import GroundingEngine
 from vre.core.models import (
     Depth,
     DepthLevel,
@@ -951,3 +952,59 @@ class TestResolveSubgraph:
                 assert isinstance(edge.relation_type, RelationType)
                 assert isinstance(edge.source_depth, DepthLevel)
                 assert isinstance(edge.target_depth, DepthLevel)
+
+
+# ------------------------------------------------------------------
+# TestUpsertPrimitive
+# ------------------------------------------------------------------
+
+
+class TestUpsertPrimitive:
+    def test_upsert_creates_new(self) -> None:
+        with SQLiteRepository(":memory:") as repo:
+            p = _make_primitive("file")
+            result = repo.upsert_primitive(p)
+            assert result.id == p.id
+            assert repo.find_by_name("file") is not None
+
+    def test_upsert_preserves_existing_id(self) -> None:
+        with SQLiteRepository(":memory:") as repo:
+            existing = _make_primitive("file")
+            repo.save_primitive(existing)
+            incoming = _make_primitive("file")
+            result = repo.upsert_primitive(incoming)
+            assert result.id == existing.id
+            assert result.id != incoming.id
+
+
+# ------------------------------------------------------------------
+# TestGroundingEngineWithSQLite
+# ------------------------------------------------------------------
+
+
+class TestGroundingEngineWithSQLite:
+    def test_clean_pass(self) -> None:
+        """list + directory with full grounding -> no gaps."""
+        with SQLiteRepository(":memory:") as repo:
+            _seed_filesystem_graph(repo)
+            engine = GroundingEngine(repo)
+            response = engine.query(["list", "directory"])
+            assert response.result.gaps == []
+
+    def test_existence_gap(self) -> None:
+        """Unknown concept -> ExistenceGap."""
+        with SQLiteRepository(":memory:") as repo:
+            _seed_filesystem_graph(repo)
+            engine = GroundingEngine(repo)
+            response = engine.query(["unknown_concept"])
+            assert len(response.result.gaps) == 1
+            assert response.result.gaps[0].kind == "EXISTENCE"
+
+    def test_relational_gap(self) -> None:
+        """read targets file at D2 but file is only D1 -> RelationalGap."""
+        with SQLiteRepository(":memory:") as repo:
+            _seed_filesystem_graph(repo)
+            engine = GroundingEngine(repo)
+            response = engine.query(["read", "file"])
+            gap_kinds = [g.kind for g in response.result.gaps]
+            assert "RELATIONAL" in gap_kinds
