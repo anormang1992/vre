@@ -512,9 +512,11 @@ class SQLiteRepository(Repository):
             return
 
         try:
+            cursor = self._conn.cursor()
+            cursor.execute("BEGIN")
             for pid, metrics in updates.items():
                 metrics_json = json.dumps(metrics.model_dump(mode="json"))
-                self._conn.execute(
+                cursor.execute(
                     "UPDATE primitives SET metrics_json = ? WHERE id = ?",
                     (metrics_json, str(pid)),
                 )
