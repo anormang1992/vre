@@ -218,7 +218,14 @@ class Neo4jRepository(Repository):
         relata_params: list[dict[str, Any]],
         transitive_types: list[str],
     ) -> None:
-        """Verify that no new transitive edge would create a cycle."""
+        """
+        Verify that no new transitive edge would create a cycle.
+
+        Called inside the write transaction after old edges have been deleted.
+        For each new transitive relatum, checks whether the target can already
+        reach the source via transitive edges. Raises CyclicRelationshipError
+        on the first cycle found.
+        """
         type_union = "|".join(transitive_types)
 
         for rp in relata_params:
@@ -259,6 +266,7 @@ class Neo4jRepository(Repository):
     # ------------------------------------------------------------------
 
     def save_primitive(self, primitive: Primitive) -> None:
+        """Persist a Primitive — full replace of depths and relata."""
         primitive.validate_provenance()
         depths_json = self._depths_to_json(primitive.depths)
 
@@ -348,6 +356,7 @@ class Neo4jRepository(Repository):
             raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
 
     def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
+        """Update only the metrics JSON on an existing primitive node."""
         metrics_json = json.dumps(metrics.model_dump(mode="json"))
         try:
             with self._driver.session(database=self._database) as session:
@@ -365,6 +374,7 @@ class Neo4jRepository(Repository):
             raise PersistenceError(f"Failed to update metrics for '{primitive_id}': {exc}") from exc
 
     def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]:
+        """Read current metrics for multiple primitives in a single query."""
         result: dict[UUID, PrimitiveMetrics | None] = {}
         if primitive_ids:
             cypher = cast(
@@ -395,6 +405,7 @@ class Neo4jRepository(Repository):
         return result
 
     def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
+        """Persist metrics for multiple primitives in a single query."""
         if not updates:
             return
         params = [
@@ -414,6 +425,7 @@ class Neo4jRepository(Repository):
             raise PersistenceError(f"Failed to batch-update metrics: {exc}") from exc
 
     def list_names(self) -> list[str]:
+        """Return the names of all primitives in the graph, sorted alphabetically."""
         try:
             with self._driver.session(database=self._database) as session:
                 result = session.run(
@@ -424,6 +436,7 @@ class Neo4jRepository(Repository):
             raise GraphError(f"Failed to list primitive names: {exc}") from exc
 
     def find_by_id(self, id: UUID) -> Primitive | None:
+        """Look up a primitive by its UUID, returning None if not found."""
         cypher = cast(
             LiteralString,
             """
@@ -466,6 +479,7 @@ class Neo4jRepository(Repository):
         return primitive
 
     def find_by_name(self, name: str) -> Primitive | None:
+        """Look up a primitive by name (case-insensitive), returning None if not found."""
         cypher = cast(
             LiteralString,
             """
@@ -509,6 +523,7 @@ class Neo4jRepository(Repository):
         return primitive
 
     def delete_primitive(self, id: UUID) -> bool:
+        """Delete the primitive with the given UUID and all its relationships. Returns True if deleted."""
         try:
             with self._driver.session(database=self._database) as session:
                 result = session.run(
@@ -523,6 +538,7 @@ class Neo4jRepository(Repository):
             raise PersistenceError(f"Failed to delete primitive '{id}': {exc}") from exc
 
     def clear(self) -> int:
+        """Delete every Primitive node and its relationships. Returns the count deleted."""
         try:
             with self._driver.session(database=self._database) as session:
                 result = session.run(
@@ -539,6 +555,7 @@ class Neo4jRepository(Repository):
         self,
         names: list[str],
     ) -> ResolvedSubgraph:
+        """Single-query Cypher traversal that resolves a subgraph for the given names."""
         logger.debug("Resolving subgraph for names=%s", names)
         lowered = [n.lower() for n in names]
 
