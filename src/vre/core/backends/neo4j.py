@@ -65,6 +65,7 @@ class Neo4jRepository(Repository):
         self._ensure_constraints()
 
     def close(self) -> None:
+        """Close the underlying Neo4j driver and release all connections."""
         self._driver.close()
 
     def _ensure_constraints(self) -> None:
@@ -88,6 +89,7 @@ class Neo4jRepository(Repository):
 
     @staticmethod
     def _depths_to_json(depths: list[Depth]) -> str:
+        """Serialize depth levels and their properties to a JSON string for Neo4j storage."""
         stripped = []
         for depth in depths:
             entry: dict[str, Any] = {
@@ -101,14 +103,17 @@ class Neo4jRepository(Repository):
 
     @staticmethod
     def _parse_json_field(value: Any) -> Any:
+        """Parse a Neo4j property that may be a JSON string or already-decoded dict/list."""
         return json.loads(value) if isinstance(value, str) else value
 
     @staticmethod
     def _dump_model_json(model: Any) -> str | None:
+        """Serialize an optional Pydantic model to a JSON string, or None when absent."""
         return json.dumps(model.model_dump(mode="json")) if model is not None else None
 
     @staticmethod
     def _record_to_node_data(record: Any) -> dict[str, Any]:
+        """Extract the node property dict from a Cypher record row."""
         return {
             "id": record["id"],
             "name": record["name"],
@@ -119,6 +124,7 @@ class Neo4jRepository(Repository):
 
     @staticmethod
     def _record_to_relationships(record: Any) -> list[dict[str, Any]]:
+        """Extract the relationship list from a Cypher record row."""
         return [
             {
                 "rel_type": r["rel_type"],
@@ -140,6 +146,7 @@ class Neo4jRepository(Repository):
         node_data: dict[str, Any],
         relationships: list[dict[str, Any]],
     ) -> Primitive:
+        """Reconstruct a Primitive from raw Neo4j node data and its relationship records."""
         try:
             raw_depths = json.loads(node_data["depths_json"])
             depths_by_level: dict[int, Depth] = {}
@@ -211,6 +218,7 @@ class Neo4jRepository(Repository):
         relata_params: list[dict[str, Any]],
         transitive_types: list[str],
     ) -> None:
+        """Verify that no new transitive edge would create a cycle."""
         type_union = "|".join(transitive_types)
 
         for rp in relata_params:
