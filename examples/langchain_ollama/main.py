@@ -23,14 +23,20 @@ from examples.langchain_ollama.tools import init_tools, init_learn_tool
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="VRE Demo Agent")
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
     parser.add_argument("--model", default="gemma4:26b")
     parser.add_argument("--sandbox", default="examples/langchain_ollama/workspace")
     parser.add_argument("--concepts-model", default="qwen2.5-coder:7b")
-    parser.add_argument("--backend", choices=["neo4j", "sqlite"], default="neo4j")
-    parser.add_argument("--sqlite-path", default=None)
+    parser.add_argument("--backend", choices=["neo4j", "sqlite"], default="sqlite",
+                        help="Persistence backend (default: sqlite)")
+
+    neo4j = parser.add_argument_group("neo4j", "Options for --backend neo4j")
+    neo4j.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
+    neo4j.add_argument("--neo4j-user", default="neo4j")
+    neo4j.add_argument("--neo4j-password", default="password")
+
+    sqlite = parser.add_argument_group("sqlite", "Options for --backend sqlite")
+    sqlite.add_argument("--sqlite-path", default=None,
+                        help="Database path (default: ~/.vre/graph.db)")
     args = parser.parse_args()
 
     os.makedirs(args.sandbox, exist_ok=True)

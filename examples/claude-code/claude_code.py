@@ -247,7 +247,7 @@ def _run_hook() -> None:
 
         from vre import VRE, PolicyAction
 
-        backend = config.get("backend", "neo4j")
+        backend = config.get("backend", "sqlite")
         if backend == "sqlite":
             from vre.core.backends import SQLiteRepository
             repo_ctx = SQLiteRepository(config.get("path"))

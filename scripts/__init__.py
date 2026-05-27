@@ -7,16 +7,20 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
         choices=["neo4j", "sqlite"],
-        default="neo4j",
-        help="Persistence backend (default: neo4j)",
+        default="sqlite",
+        help="Persistence backend (default: sqlite)",
     )
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
-    parser.add_argument(
+
+    neo4j = parser.add_argument_group("neo4j", "Options for --backend neo4j")
+    neo4j.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
+    neo4j.add_argument("--neo4j-user", default="neo4j")
+    neo4j.add_argument("--neo4j-password", default="password")
+
+    sqlite = parser.add_argument_group("sqlite", "Options for --backend sqlite")
+    sqlite.add_argument(
         "--sqlite-path",
         default=None,
-        help="SQLite database path (default: ~/.vre/graph.db, use ':memory:' for in-memory)",
+        help="Database path (default: ~/.vre/graph.db, use ':memory:' for in-memory)",
     )
 
 
