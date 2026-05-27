@@ -116,7 +116,7 @@ class SQLiteRepository(Repository):
         if str(resolved) != ":memory:":
             resolved.parent.mkdir(parents=True, exist_ok=True)
         self._path = str(resolved)
-        self._conn = sqlite3.connect(self._path)
+        self._conn = sqlite3.connect(self._path, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
@@ -436,24 +436,35 @@ class SQLiteRepository(Repository):
     def delete_primitive(self, id: UUID) -> bool:
         """Delete the primitive with the given UUID and all its relationships. Returns True if deleted."""
         sid = str(id)
-        # Delete relationships first (both directions)
-        self._conn.execute(
-            "DELETE FROM relationships WHERE source_id = ? OR target_id = ?",
-            (sid, sid),
-        )
-        cursor = self._conn.execute(
-            "DELETE FROM primitives WHERE id = ?",
-            (sid,),
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute(
+                "DELETE FROM relationships WHERE source_id = ? OR target_id = ?",
+                (sid, sid),
+            )
+            cursor = self._conn.execute(
+                "DELETE FROM primitives WHERE id = ?",
+                (sid,),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            self._conn.rollback()
+            raise PersistenceError(
+                f"Failed to delete primitive '{id}': {exc}"
+            ) from exc
 
     def clear(self) -> int:
         """Delete every primitive and its relationships. Returns the count deleted."""
-        self._conn.execute("DELETE FROM relationships")
-        cursor = self._conn.execute("DELETE FROM primitives")
-        self._conn.commit()
-        return cursor.rowcount
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute("DELETE FROM relationships")
+            cursor = self._conn.execute("DELETE FROM primitives")
+            self._conn.commit()
+            return cursor.rowcount
+        except sqlite3.Error as exc:
+            self._conn.rollback()
+            raise PersistenceError(f"Failed to clear graph: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Abstract method implementations: metrics
@@ -463,12 +474,14 @@ class SQLiteRepository(Repository):
         """Update only the metrics JSON on an existing primitive."""
         metrics_json = json.dumps(metrics.model_dump(mode="json"))
         try:
+            self._conn.execute("BEGIN")
             self._conn.execute(
                 "UPDATE primitives SET metrics_json = ? WHERE id = ?",
                 (metrics_json, str(primitive_id)),
             )
             self._conn.commit()
         except sqlite3.Error as exc:
+            self._conn.rollback()
             logger.error("Failed to update metrics for primitive %s: %s", primitive_id, exc)
             raise PersistenceError(
                 f"Failed to update metrics for '{primitive_id}': {exc}"

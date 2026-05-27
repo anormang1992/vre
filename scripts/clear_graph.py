@@ -8,6 +8,7 @@ Run: python scripts/clear_graph.py
 import argparse
 
 from vre.core.backends import Repository
+from scripts import add_backend_args, make_repository
 
 
 def clear_graph(repo: Repository) -> int:
@@ -18,8 +19,6 @@ def clear_graph(repo: Repository) -> int:
 
 
 if __name__ == "__main__":
-    import argparse
-    from scripts import add_backend_args, make_repository
 
     parser = argparse.ArgumentParser(description="Clear all VRE graph data")
     add_backend_args(parser)
