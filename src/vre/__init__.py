@@ -6,10 +6,9 @@ Volute Reasoning Engine — decorator-based epistemic enforcement.
 
 Usage::
 
-    from vre import VRE
-    from vre.core.backends import Neo4jRepository
+    from vre import VRE, SQLiteRepository
 
-    repo = Neo4jRepository("neo4j://localhost:7687", "neo4j", "password")
+    repo = SQLiteRepository()  # defaults to ~/.vre/graph.db; pass ":memory:" for testing
     vre = VRE(repo)
     result = vre.check(["file", "write"])
     print(result.grounded, result.resolved)
@@ -30,7 +29,12 @@ from vre.core.errors import (
     ResolutionError,
     VREError,
 )
-from vre.core.backends import Neo4jRepository, Repository
+from vre.core.backends import Repository, SQLiteRepository
+
+try:
+    from vre.core.backends import Neo4jRepository
+except ImportError:
+    pass
 from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
 from vre.core.models import (
     DepthLevel,
@@ -65,6 +69,7 @@ __all__ = [
     "VREError",
     "Neo4jRepository",
     "Repository",
+    "SQLiteRepository",
     "ConceptResolver",
     "GroundingEngine",
     "GroundingResult",

@@ -1008,3 +1008,18 @@ class TestGroundingEngineWithSQLite:
             response = engine.query(["read", "file"])
             gap_kinds = [g.kind for g in response.result.gaps]
             assert "RELATIONAL" in gap_kinds
+
+
+# ------------------------------------------------------------------
+# TestExports
+# ------------------------------------------------------------------
+
+
+class TestExports:
+    def test_importable_from_backends(self) -> None:
+        from vre.core.backends import SQLiteRepository as S
+        assert S is SQLiteRepository
+
+    def test_importable_from_vre(self) -> None:
+        from vre import SQLiteRepository as S
+        assert S is SQLiteRepository

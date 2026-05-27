@@ -10,12 +10,13 @@ readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "pydantic>=2.0",
-    "neo4j>=5.0,<7.0",
     "spacy>=3.8",
 ]
 
 [project.optional-dependencies]
+neo4j = ["neo4j>=5.0,<7.0"]
 examples = [
+    "neo4j>=5.0,<7.0",
     "rich>=14.3.2",
     "langchain-core>=1.2.16",
     "langchain-ollama>=1.0.1",
