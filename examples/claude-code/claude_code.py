@@ -44,6 +44,10 @@ import shlex
 import sys
 from pathlib import Path
 
+from vre import VRE, PolicyAction
+from vre.core.backends import Neo4jRepository, SQLiteRepository
+
+
 _SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 _VRE_CONFIG_PATH = Path.home() / ".vre" / "config.json"
 
@@ -265,14 +269,10 @@ def _run_hook() -> None:
 
         config = json.loads(_VRE_CONFIG_PATH.read_text())
 
-        from vre import VRE, PolicyAction
-
         backend = config.get("backend", "sqlite")
         if backend == "sqlite":
-            from vre.core.backends import SQLiteRepository
             repo_ctx = SQLiteRepository(config.get("path"))
         else:
-            from vre.core.backends import Neo4jRepository
             repo_ctx = Neo4jRepository(
                 config["uri"], config["user"], config["password"],
                 config.get("database", "neo4j"),

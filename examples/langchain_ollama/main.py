@@ -13,6 +13,7 @@ import os
 from langchain_core.tools import StructuredTool
 
 from vre import VRE
+from vre.core.backends import Neo4jRepository, SQLiteRepository
 
 from examples.langchain_ollama.agent import make_agent
 from examples.langchain_ollama.callbacks import ConceptExtractor, get_cardinality, on_policy, on_trace
@@ -42,10 +43,8 @@ def main() -> None:
     os.makedirs(args.sandbox, exist_ok=True)
 
     if args.backend == "sqlite":
-        from vre.core.backends import SQLiteRepository
         repo = SQLiteRepository(args.sqlite_path)
     else:
-        from vre.core.backends import Neo4jRepository
         repo = Neo4jRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
     vre = VRE(repo, agent_key="langchain-ollama-demo-agent", agent_name="Langchain Ollama Demo Agent")
 

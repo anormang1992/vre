@@ -1,6 +1,6 @@
 import argparse
 
-from vre.core.backends import Repository
+from vre.core.backends import Neo4jRepository, Repository, SQLiteRepository
 
 
 def add_backend_args(parser: argparse.ArgumentParser) -> None:
@@ -26,7 +26,5 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
 
 def make_repository(args: argparse.Namespace) -> Repository:
     if args.backend == "sqlite":
-        from vre.core.backends import SQLiteRepository
         return SQLiteRepository(args.sqlite_path)
-    from vre.core.backends import Neo4jRepository
     return Neo4jRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
