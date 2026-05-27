@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 try:
-    from vre.core.backends.neo4j import Neo4jRepository
+    from vre.core.backends.neo4j import Neo4jRepository  # noqa: F401
     __all__.append("Neo4jRepository")
 except ImportError:
     pass

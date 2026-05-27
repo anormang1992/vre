@@ -5,12 +5,10 @@
 Comprehensive test suite for SQLiteRepository.
 """
 
-import sqlite3
-
 import pytest
 
 from vre.core.backends.sqlite import SQLiteRepository
-from vre.core.errors import CyclicRelationshipError, HydrationError, PersistenceError
+from vre.core.errors import CyclicRelationshipError
 from vre.core.grounding import GroundingEngine
 from vre.core.models import (
     Depth,
@@ -22,7 +20,6 @@ from vre.core.models import (
     ProvenanceSource,
     Relatum,
     RelationType,
-    ResolvedSubgraph,
 )
 from vre.core.policy.models import Cardinality, Policy
 
@@ -862,7 +859,7 @@ class TestResolveSubgraph:
 
     def test_transitive_traversal(self) -> None:
         with SQLiteRepository(":memory:") as repo:
-            prims = _seed_filesystem_graph(repo)
+            _seed_filesystem_graph(repo)
             # directory -> (REQUIRES) path -> (DEPENDS_ON) filesystem -> (DEPENDS_ON) os
             result = repo.resolve_subgraph(["directory"])
             node_names = {n.name for n in result.nodes}
@@ -873,7 +870,7 @@ class TestResolveSubgraph:
 
     def test_non_transitive_edges_not_traversed(self) -> None:
         with SQLiteRepository(":memory:") as repo:
-            prims = _seed_filesystem_graph(repo)
+            _seed_filesystem_graph(repo)
             # list has APPLIES_TO directory. Starting from list, should NOT
             # traverse into directory's transitive subgraph.
             result = repo.resolve_subgraph(["list"])
@@ -904,7 +901,7 @@ class TestResolveSubgraph:
 
     def test_roots_are_only_matched_names(self) -> None:
         with SQLiteRepository(":memory:") as repo:
-            prims = _seed_filesystem_graph(repo)
+            _seed_filesystem_graph(repo)
             result = repo.resolve_subgraph(["directory"])
             root_names = {r.name for r in result.roots}
             assert root_names == {"directory"}
@@ -914,14 +911,14 @@ class TestResolveSubgraph:
 
     def test_multiple_roots(self) -> None:
         with SQLiteRepository(":memory:") as repo:
-            prims = _seed_filesystem_graph(repo)
+            _seed_filesystem_graph(repo)
             result = repo.resolve_subgraph(["file", "directory"])
             root_names = {r.name for r in result.roots}
             assert root_names == {"file", "directory"}
 
     def test_hydrated_nodes_have_relata(self) -> None:
         with SQLiteRepository(":memory:") as repo:
-            prims = _seed_filesystem_graph(repo)
+            _seed_filesystem_graph(repo)
             result = repo.resolve_subgraph(["directory"])
             # Find directory node
             dir_nodes = [n for n in result.nodes if n.name == "directory"]
@@ -945,7 +942,7 @@ class TestResolveSubgraph:
 
     def test_edges_are_epistemic_steps(self) -> None:
         with SQLiteRepository(":memory:") as repo:
-            prims = _seed_filesystem_graph(repo)
+            _seed_filesystem_graph(repo)
             result = repo.resolve_subgraph(["directory"])
             for edge in result.edges:
                 assert isinstance(edge, EpistemicStep)
