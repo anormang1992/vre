@@ -190,9 +190,20 @@ After installation, download the spaCy language model:
 python -m spacy download en_core_web_sm
 ```
 
+VRE ships with a **SQLite backend** that works out of the box — no external services required.
+The database defaults to `~/.vre/graph.db` and is created automatically on first use.
+
+For production deployments or larger graphs, an optional **Neo4j backend** is available:
+
+```bash
+pip install vre[neo4j]
+```
+
 ### Infrastructure
 
-VRE requires a running Neo4j instance for the epistemic graph:
+**SQLite (default)** — no setup needed. The database file is created automatically.
+
+**Neo4j (optional)** — requires a running Neo4j instance:
 
 ```bash
 docker run -d \
@@ -201,9 +212,6 @@ docker run -d \
 -e NEO4J_AUTH=neo4j/password \
 neo4j:latest
 ```
-
-If you already have neo4j installed locally, ensure it is running and note the connection details
-(URI, username, password) for use in the next steps.
 
 ### Seeding the Graph
 
@@ -214,14 +222,19 @@ produce its deterministic output. Use `scripts/clear_graph.py` if you want
 a clean slate before seeding. See [`scripts/README.md`](scripts/README.md)
 for details.
 
+All scripts default to the SQLite backend. Pass `--backend neo4j` with
+connection flags to use Neo4j instead.
+
 ```bash
 # Fully grounded filesystem domain — 20 primitives, all at D3+ with complete relata
-python seeders/seed_filesystem.py \
---neo4j-uri neo4j://localhost:7687 --neo4j-user neo4j --neo4j-password password
+python seeders/seed_filesystem.py
 
 # Gap demonstration graph — 10 primitives, deliberately shaped to produce each gap type
-python scripts/seed_gaps.py \
---neo4j-uri neo4j://localhost:7687 --neo4j-user neo4j --neo4j-password password
+python scripts/seed_gaps.py
+
+# Same commands with Neo4j:
+python seeders/seed_filesystem.py \
+    --backend neo4j --neo4j-uri neo4j://localhost:7687 --neo4j-user neo4j --neo4j-password password
 ```
 
 ---
@@ -229,6 +242,15 @@ python scripts/seed_gaps.py \
 ## Core API
 
 ### Connecting to VRE
+
+```python
+from vre import VRE, SQLiteRepository
+
+repo = SQLiteRepository()  # defaults to ~/.vre/graph.db
+vre = VRE(repo)
+```
+
+Or with Neo4j:
 
 ```python
 from vre import VRE
@@ -679,7 +701,7 @@ against a sandboxed filesystem.
 
 #### Prerequisites
 
-In addition to Neo4j, this example requires [Ollama](https://ollama.com/) running locally:
+This example requires [Ollama](https://ollama.com/) running locally:
 
 ```bash
 brew install ollama
@@ -695,7 +717,15 @@ poetry install --extras examples
 #### Running
 
 ```bash
+# SQLite (default — no setup needed)
 poetry run python -m examples.langchain_ollama.main \
+    --model qwen3:8b \
+    --concepts-model qwen2.5-coder:7b \
+    --sandbox examples/langchain_ollama/workspace
+
+# Neo4j
+poetry run python -m examples.langchain_ollama.main \
+    --backend neo4j \
     --neo4j-uri neo4j://localhost:7687 \
     --neo4j-user neo4j \
     --neo4j-password password \
@@ -764,11 +794,15 @@ lets Claude itself propose the conceptual primitives, using a two-pass protocol.
 #### Install
 
 ```bash
+# SQLite (default — zero config)
+poetry run python examples/claude-code/claude_code.py install
+
+# Neo4j
 poetry run python examples/claude-code/claude_code.py install \
-    --uri neo4j://localhost:7687 --user neo4j --password password
+    --backend neo4j --uri neo4j://localhost:7687 --user neo4j --password password
 ```
 
-This writes your Neo4j connection details to `~/.vre/config.json` and injects a `PreToolUse` hook entry into
+This writes your backend configuration to `~/.vre/config.json` and injects a `PreToolUse` hook entry into
 `~/.claude/settings.json` that matches all `Bash` tool calls. Safe to call multiple times —
 existing VRE hook entries are replaced, not duplicated.
 
@@ -836,13 +870,13 @@ grounding history, and affect the agent's confidence in related concepts.
 
 ## Tech Stack
 
-| Concern            | Technology               |
-|--------------------|--------------------------|
-| Language           | Python 3.12+             |
-| Epistemic graph    | Neo4j                    |
-| Concept resolution | spaCy (`en_core_web_sm`) |
-| Data models        | Pydantic v2              |
-| Package management | Poetry                   |
+| Concern            | Technology                                    |
+|--------------------|-----------------------------------------------|
+| Language           | Python 3.12+                                  |
+| Epistemic graph    | SQLite (default) or Neo4j (`pip install vre[neo4j]`) |
+| Concept resolution | spaCy (`en_core_web_sm`)                      |
+| Data models        | Pydantic v2                                   |
+| Package management | Poetry                                        |
 
 
 ---
@@ -865,7 +899,8 @@ src/vre/
 │   ├── errors.py                # VREError hierarchy — typed exceptions for all failure modes
 │   ├── backends/
 │   │   ├── repository.py        # Repository ABC — abstract persistence contract
-│   │   └── neo4j.py             # Neo4jRepository — Neo4j backend
+│   │   ├── sqlite.py            # SQLiteRepository — SQLite backend (default)
+│   │   └── neo4j.py             # Neo4jRepository — Neo4j backend (optional)
 │   ├── grounding/
 │   │   ├── resolver.py          # ConceptResolver — spaCy lemmatization + name lookup
 │   │   ├── engine.py            # GroundingEngine — depth-gated query, gap detection
@@ -882,7 +917,7 @@ src/vre/
     └── engine.py                # LearningEngine — learn_gap, reachability_prerequisites
 
 scripts/
-├── clear_graph.py               # Clear all primitives from the Neo4j graph
+├── clear_graph.py               # Clear all primitives from the graph
 └── seed_gaps.py                 # Seed gap-demonstration graph (10 primitives)
 
 seeders/
