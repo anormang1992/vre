@@ -7,8 +7,8 @@ Run: python scripts/clear_graph.py
 """
 import argparse
 
-from vre.core.backends import Repository
 from scripts import add_backend_args, make_repository
+from vre.core.backends import Repository
 
 
 def clear_graph(repo: Repository) -> int:
