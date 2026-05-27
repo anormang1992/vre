@@ -1,28 +1,20 @@
 """
-Clear all primitives and relationships from the VRE Neo4j graph.
+Clear all primitives and relationships from a VRE repository.
 
 Can be run standalone or imported by seed scripts to ensure a clean slate.
 
 Run: python scripts/clear_graph.py
 """
 import argparse
-from typing import LiteralString, cast
 
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository, Repository
 
 
-def clear_graph(repo: PrimitiveRepository) -> int:
+def clear_graph(repo: Repository) -> int:
     """
-    Delete every Primitive node and its relationships. Returns the count deleted.
+    Delete every Primitive and its relationships. Returns the count deleted.
     """
-    with repo._driver.session(database=repo._database) as session:
-        result = session.run(
-            cast(
-                LiteralString,
-                "MATCH (p:Primitive) DETACH DELETE p RETURN count(p) AS deleted",
-            ),
-        ).single()
-        return result["deleted"] if result else 0
+    return repo.clear()
 
 
 if __name__ == "__main__":
@@ -32,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument("--neo4j-password", default="password")
     args = parser.parse_args()
 
-    repo = PrimitiveRepository(
+    repo = Neo4jRepository(
         uri=args.neo4j_uri,
         user=args.neo4j_user,
         password=args.neo4j_password,

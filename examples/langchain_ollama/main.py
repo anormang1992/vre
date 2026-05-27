@@ -13,7 +13,7 @@ import os
 from langchain_core.tools import StructuredTool
 
 from vre import VRE
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository
 
 from examples.langchain_ollama.agent import make_agent
 from examples.langchain_ollama.callbacks import ConceptExtractor, get_cardinality, on_policy, on_trace
@@ -27,14 +27,14 @@ def main() -> None:
     parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
     parser.add_argument("--neo4j-user", default="neo4j")
     parser.add_argument("--neo4j-password", default="password")
-    parser.add_argument("--model", default="qwen3.5:latest")
+    parser.add_argument("--model", default="gemma4:26b")
     parser.add_argument("--sandbox", default="examples/langchain_ollama/workspace")
     parser.add_argument("--concepts-model", default="qwen2.5-coder:7b")
     args = parser.parse_args()
 
     os.makedirs(args.sandbox, exist_ok=True)
 
-    repo = PrimitiveRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
+    repo = Neo4jRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)
     vre = VRE(repo, agent_key="langchain-ollama-demo-agent", agent_name="Langchain Ollama Demo Agent")
 
     concepts = ConceptExtractor(model=args.concepts_model)

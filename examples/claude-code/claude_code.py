@@ -246,9 +246,9 @@ def _run_hook() -> None:
         config = json.loads(_VRE_CONFIG_PATH.read_text())
 
         from vre import VRE, PolicyAction
-        from vre.core.graph import PrimitiveRepository
+        from vre.core.backends import Neo4jRepository
 
-        with PrimitiveRepository(
+        with Neo4jRepository(
             config["uri"], config["user"], config["password"], config.get("database", "neo4j")
         ) as repo:
             vre = VRE(repo)

@@ -18,7 +18,7 @@ from vre.core.models import (
     Relatum,
     RelationType,
 )
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends.neo4j import Neo4jRepository
 from vre.core.grounding.models import _fmt_depth, _fmt_primitive, _fmt_relatum
 
 
@@ -214,7 +214,7 @@ def test_depths_to_json_includes_provenance():
     """
     prov = Provenance(source=ProvenanceSource.AUTHORED)
     depths = [Depth(level=DepthLevel.EXISTENCE, provenance=prov)]
-    result = json.loads(PrimitiveRepository._depths_to_json(depths))
+    result = json.loads(Neo4jRepository._depths_to_json(depths))
     assert len(result) == 1
     assert "provenance" in result[0]
     assert result[0]["provenance"]["source"] == "authored"
@@ -225,7 +225,7 @@ def test_depths_to_json_omits_provenance_when_none():
     _depths_to_json omits the provenance key entirely when provenance is None.
     """
     depths = [Depth(level=DepthLevel.EXISTENCE)]
-    result = json.loads(PrimitiveRepository._depths_to_json(depths))
+    result = json.loads(Neo4jRepository._depths_to_json(depths))
     assert "provenance" not in result[0]
 
 
@@ -259,7 +259,7 @@ def test_hydrate_primitive_with_provenance():
     )
 
     # Serialize
-    depths_json = PrimitiveRepository._depths_to_json(primitive.depths)
+    depths_json = Neo4jRepository._depths_to_json(primitive.depths)
     node_prov_json = json.dumps(prov.model_dump(mode="json"))
     rel_prov = Provenance(source=ProvenanceSource.CONVERSATIONAL)
     rel_prov_json = json.dumps(rel_prov.model_dump(mode="json"))
@@ -285,7 +285,7 @@ def test_hydrate_primitive_with_provenance():
     ]
 
     # Deserialize
-    hydrated = PrimitiveRepository._hydrate_primitive(node_data, relationships)
+    hydrated = Neo4jRepository._hydrate_primitive(node_data, relationships)
 
     # Node provenance
     assert hydrated.provenance is not None
@@ -316,7 +316,7 @@ def test_hydrate_primitive_without_provenance():
         "name": "legacy",
         "depths_json": json.dumps([{"level": 0, "properties": {}}]),
     }
-    hydrated = PrimitiveRepository._hydrate_primitive(node_data, [])
+    hydrated = Neo4jRepository._hydrate_primitive(node_data, [])
     assert hydrated.provenance is None
     assert hydrated.depths[0].provenance is None
 

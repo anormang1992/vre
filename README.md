@@ -232,9 +232,9 @@ python scripts/seed_gaps.py \
 
 ```python
 from vre import VRE
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository
 
-repo = PrimitiveRepository(
+repo = Neo4jRepository(
     uri="neo4j://localhost:7687",
     user="neo4j",
     password="password",
@@ -861,9 +861,11 @@ src/vre/
 │   └── registry.py              # AgentRegistry — file-based, append-only identity persistence
 │
 ├── core/
-│   ├── models.py                # Primitive, Depth, Relatum, RelationType, DepthLevel, gaps, Provenance
+│   ├── models.py                # Primitive, Depth, Relatum, RelationType, DepthLevel, KnowledgeGap, Provenance
 │   ├── errors.py                # VREError hierarchy — typed exceptions for all failure modes
-│   ├── graph.py                 # PrimitiveRepository (Neo4j)
+│   ├── backends/
+│   │   ├── repository.py        # Repository ABC — abstract persistence contract
+│   │   └── neo4j.py             # Neo4jRepository — Neo4j backend
 │   ├── grounding/
 │   │   ├── resolver.py          # ConceptResolver — spaCy lemmatization + name lookup
 │   │   ├── engine.py            # GroundingEngine — depth-gated query, gap detection

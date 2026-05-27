@@ -7,12 +7,14 @@ Uses a StubRepository to avoid Neo4j dependency.
 from collections import deque
 from uuid import UUID, uuid4
 
+from vre.core.backends import Repository
 from vre.core.grounding import GroundingEngine
 from vre.core.models import (
     Depth,
     DepthLevel,
     EpistemicStep,
     Primitive,
+    PrimitiveMetrics,
     Relatum,
     RelationType,
     ResolvedSubgraph,
@@ -26,9 +28,9 @@ from vre.core.models import (
 _TRANSITIVE_RELS = {RelationType.REQUIRES, RelationType.DEPENDS_ON, RelationType.CONSTRAINED_BY}
 
 
-class StubRepository:
+class StubRepository(Repository):
     """
-    In-memory stand-in for PrimitiveRepository.
+    In-memory stand-in for Repository.
     Supports lookup by name (case-insensitive) and by UUID.
     Implements resolve_subgraph with BFS and relationship type filtering.
     """
@@ -89,6 +91,30 @@ class StubRepository:
                     ))
 
         return ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+
+    def find_by_id(self, id: UUID) -> Primitive | None:
+        raise NotImplementedError
+
+    def find_by_name(self, name: str) -> Primitive | None:
+        raise NotImplementedError
+
+    def save_primitive(self, primitive: Primitive) -> None:
+        raise NotImplementedError
+
+    def delete_primitive(self, id: UUID) -> bool:
+        raise NotImplementedError
+
+    def clear(self) -> int:
+        raise NotImplementedError
+
+    def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
+        raise NotImplementedError
+
+    def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]:
+        raise NotImplementedError
+
+    def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

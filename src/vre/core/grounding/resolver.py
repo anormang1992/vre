@@ -15,7 +15,7 @@ import logging
 from functools import lru_cache
 
 from vre.core.errors import ResolutionError
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Repository
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class ConceptResolver:
     3. Return None if no match found — the caller decides how to handle unknowns.
     """
 
-    def __init__(self, repository: PrimitiveRepository) -> None:
+    def __init__(self, repository: Repository) -> None:
         """
         Initialize the resolver with a primitive repository.
         """

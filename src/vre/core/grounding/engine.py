@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Repository
 from vre.core.grounding.models import GroundingResult
 from vre.core.grounding.resolver import ConceptResolver
 from vre.core.models import (
@@ -58,7 +58,7 @@ class GroundingEngine:
     visibility, and returns a fully closed epistemic response.
     """
 
-    def __init__(self, repository: PrimitiveRepository) -> None:
+    def __init__(self, repository: Repository) -> None:
         """
         Initialize the grounding engine with a primitive repository.
         """

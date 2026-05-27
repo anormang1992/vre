@@ -13,7 +13,7 @@ import argparse
 import importlib
 from uuid import UUID
 
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository, Repository
 from vre.core.models import DepthLevel, RelationType, Relatum, format_depth_label
 from vre.core.policy.models import Cardinality, Policy
 
@@ -76,7 +76,7 @@ def _validate_callback(path: str) -> bool:
 def _display_relata_table(
     primitive,
     name_cache: dict[UUID, str],
-    repo: PrimitiveRepository,
+    repo: Repository,
 ) -> None:
     """
     Print a formatted table of all relata on the primitive, highlighting APPLIES_TO edges.
@@ -181,7 +181,7 @@ def _print_policy_summary(policy: Policy) -> None:
     print()
 
 
-def run_wizard(repo: PrimitiveRepository) -> None:
+def run_wizard(repo: Repository) -> None:
     """
     Run the interactive policy wizard against the given repository.
     """
@@ -273,7 +273,7 @@ def main() -> None:
     parser.add_argument("--neo4j-password", default="password")
     args = parser.parse_args()
 
-    with PrimitiveRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password) as repo:
+    with Neo4jRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password) as repo:
         run_wizard(repo)
 
 
