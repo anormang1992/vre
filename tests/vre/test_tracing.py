@@ -9,6 +9,7 @@ from collections import deque
 from uuid import UUID, uuid4
 
 from vre import VRE
+from vre.core.backends import Repository
 from vre.core.grounding import GroundingResult
 from vre.core.models import (
     Depth,
@@ -33,7 +34,7 @@ from vre.tracing import TraceWriter, build_trace_entry
 _TRANSITIVE_RELS = {RelationType.REQUIRES, RelationType.DEPENDS_ON, RelationType.CONSTRAINED_BY}
 
 
-class StubRepository:
+class StubRepository(Repository):
     def __init__(self, primitives: list[Primitive] | None = None) -> None:
         self._by_id: dict[UUID, Primitive] = {}
         self._by_name: dict[str, Primitive] = {}
@@ -100,6 +101,9 @@ class StubRepository:
                         target_depth=rel.target_depth,
                     ))
         return ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+
+    def delete_primitive(self, id: UUID) -> bool: raise NotImplementedError
+    def clear(self) -> int: raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

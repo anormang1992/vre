@@ -12,7 +12,7 @@ Run: python scripts/seed_gaps.py
 import argparse
 
 from scripts.clear_graph import clear_graph
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository, Repository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
@@ -21,7 +21,7 @@ SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
 # ── Fully grounded substrates (D0–D3) ─────────────────────────────────────
 
 
-def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
+def seed_operating_system(repo: Repository) -> Primitive:
     """
     Seed the OperatingSystem primitive at D0–D3.
 
@@ -81,7 +81,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
     return os_prim
 
 
-def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_filesystem(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the Filesystem primitive at D0–D3.
 
@@ -148,7 +148,7 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     return filesystem
 
 
-def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
+def seed_path(repo: Repository, filesystem: Primitive) -> Primitive:
     """
     Seed the Path primitive at D0–D3.
 
@@ -212,7 +212,7 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
     return path
 
 
-def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_permission(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the Permission primitive at D0–D3.
 
@@ -284,7 +284,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
 
 
 def seed_directory(
-    repo: PrimitiveRepository,
+    repo: Repository,
     filesystem: Primitive,
     path: Primitive,
     permission: Primitive,
@@ -377,7 +377,7 @@ def seed_directory(
 # ── Shallow entity (D0–D1) ────────────────────────────────────────────────
 
 
-def seed_file(repo: PrimitiveRepository, path: Primitive) -> Primitive:
+def seed_file(repo: Repository, path: Primitive) -> Primitive:
     """
     Seed the File primitive at D0–D1 only.
 
@@ -416,7 +416,7 @@ def seed_file(repo: PrimitiveRepository, path: Primitive) -> Primitive:
 # ── Safe actions (D0–D2) ──────────────────────────────────────────────────
 
 
-def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
+def seed_read(repo: Repository, file: Primitive) -> Primitive:
     """
     Seed the Read primitive at D0–D2.
 
@@ -466,7 +466,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     return read
 
 
-def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
+def seed_list(repo: Repository, directory: Primitive) -> Primitive:
     """
     Seed the List primitive at D0–D2.
 
@@ -521,7 +521,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
 # ── Destructive actions ───────────────────────────────────────────────────
 
 
-def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
+def seed_delete(repo: Repository, file: Primitive, directory: Primitive) -> Primitive:
     """
     Seed the Delete primitive at D0–D2 only.
 
@@ -563,7 +563,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     return delete
 
 
-def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
+def seed_create(repo: Repository, file: Primitive, directory: Primitive) -> Primitive:
     """
     Seed the Create primitive at D0–D1 + D3 (non-contiguous).
 
@@ -626,9 +626,8 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
 # ── Main ──────────────────────────────────────────────────────────────────
 
 
-def main(repository: PrimitiveRepository) -> None:
+def main(repository: Repository) -> None:
     with repository as repo:
-        repo.ensure_constraints()
         deleted = clear_graph(repo)
 
         print(f"Cleared {deleted} existing primitive(s).")
@@ -689,7 +688,7 @@ if __name__ == "__main__":
     parser.add_argument("--neo4j-password", default="password")
     args = parser.parse_args()
 
-    repo = PrimitiveRepository(
+    repo = Neo4jRepository(
         uri=args.neo4j_uri,
         user=args.neo4j_user,
         password=args.neo4j_password,

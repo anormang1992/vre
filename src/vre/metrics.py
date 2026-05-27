@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Repository
 from vre.core.grounding.models import GroundingResult
 from vre.core.models import (
     PrimitiveMetrics,
@@ -27,7 +27,7 @@ class MetricsManager:
     Internal coordinator for primitive-level grounding metrics.
     """
 
-    def __init__(self, repository: PrimitiveRepository) -> None:
+    def __init__(self, repository: Repository) -> None:
         self._repo = repository
 
     def update_grounding(self, result: GroundingResult) -> None:

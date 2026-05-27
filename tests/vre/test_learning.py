@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from vre.core.backends import Repository
 from vre.core.errors import CandidateValidationError, CyclicRelationshipError
 from vre.core.models import (
     Depth,
@@ -17,9 +18,11 @@ from vre.core.models import (
     DepthLevel,
     ExistenceGap,
     Primitive,
+    PrimitiveMetrics,
     Provenance,
     ProvenanceSource,
     ReachabilityGap,
+    ResolvedSubgraph,
     Relatum,
     RelationalGap,
     RelationType,
@@ -68,7 +71,7 @@ def _depth(
     )
 
 
-class StubRepository:
+class StubRepository(Repository):
     """
     In-memory repository for learning engine tests.
     """
@@ -119,6 +122,27 @@ class StubRepository:
         self._by_id[primitive.id] = primitive
         self._by_name[primitive.name.lower()] = primitive
         self.saved.append(primitive)
+
+    def list_names(self) -> list[str]:
+        raise NotImplementedError
+
+    def delete_primitive(self, id: UUID) -> bool:
+        raise NotImplementedError
+
+    def clear(self) -> int:
+        raise NotImplementedError
+
+    def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
+        raise NotImplementedError
+
+    def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]:
+        raise NotImplementedError
+
+    def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
+        raise NotImplementedError
+
+    def resolve_subgraph(self, names: list[str]) -> ResolvedSubgraph:
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------

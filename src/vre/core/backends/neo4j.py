@@ -2,9 +2,9 @@
 # Licensed under the Apache License, Version 2.0
 
 """
-Neo4j persistence layer for the Volute Reasoning Engine.
+Neo4j persistence backend for the Volute Reasoning Engine.
 
-Provides PrimitiveRepository — the bridge between Pydantic epistemic
+Provides Neo4jRepository — the bridge between Pydantic epistemic
 models and the Neo4j graph database. Primitives are stored as nodes
 with embedded depth JSON; relata are stored as typed Neo4j relationships.
 """
@@ -17,6 +17,7 @@ from uuid import UUID
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError
 
+from vre.core.backends.repository import Repository
 from vre.core.errors import (
     CyclicRelationshipError,
     GraphError,
@@ -43,9 +44,9 @@ _TRANSITIVE_RELS = [rt.value for rt in TRANSITIVE_RELATION_TYPES]
 logger = logging.getLogger(__name__)
 
 
-class PrimitiveRepository:
+class Neo4jRepository(Repository):
     """
-    Neo4j persistence layer for epistemic primitives.
+    Neo4j persistence backend for epistemic primitives.
     """
 
     def __init__(
@@ -55,38 +56,19 @@ class PrimitiveRepository:
         password: str,
         database: str = "neo4j",
     ) -> None:
-        """
-        Connect to a Neo4j instance at the given URI with the provided credentials.
-        """
         self._driver = GraphDatabase.driver(
             uri,
             auth=(user, password),
             notifications_disabled_categories=["UNRECOGNIZED"],
         )
         self._database = database
+        self._ensure_constraints()
 
     def close(self) -> None:
-        """
-        Close the underlying Neo4j driver and release all connections.
-        """
+        """Close the underlying Neo4j driver and release all connections."""
         self._driver.close()
 
-    def __enter__(self) -> "PrimitiveRepository":
-        """
-        Enter the context manager, returning self.
-        """
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """
-        Exit the context manager, closing the driver.
-        """
-        self.close()
-
-    def ensure_constraints(self) -> None:
-        """
-        Create uniqueness constraint on Primitive.id.
-        """
+    def _ensure_constraints(self) -> None:
         logger.debug("Ensuring uniqueness constraint on Primitive.id")
         try:
             with self._driver.session(database=self._database) as session:
@@ -101,11 +83,13 @@ class PrimitiveRepository:
             logger.error("Failed to ensure Neo4j constraints: %s", exc)
             raise GraphError(f"Failed to ensure constraints: {exc}") from exc
 
+    # ------------------------------------------------------------------
+    # Serialization helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _depths_to_json(depths: list[Depth]) -> str:
-        """
-        Serialize depth levels and their properties to a JSON string for Neo4j storage.
-        """
+        """Serialize depth levels and their properties to a JSON string for Neo4j storage."""
         stripped = []
         for depth in depths:
             entry: dict[str, Any] = {
@@ -119,23 +103,17 @@ class PrimitiveRepository:
 
     @staticmethod
     def _parse_json_field(value: Any) -> Any:
-        """
-        Parse a Neo4j property that may be a JSON string or already-decoded dict/list.
-        """
+        """Parse a Neo4j property that may be a JSON string or already-decoded dict/list."""
         return json.loads(value) if isinstance(value, str) else value
 
     @staticmethod
     def _dump_model_json(model: Any) -> str | None:
-        """
-        Serialize an optional Pydantic model to a JSON string, or None when absent.
-        """
+        """Serialize an optional Pydantic model to a JSON string, or None when absent."""
         return json.dumps(model.model_dump(mode="json")) if model is not None else None
 
     @staticmethod
     def _record_to_node_data(record: Any) -> dict[str, Any]:
-        """
-        Extract the node property dict from a Cypher record row.
-        """
+        """Extract the node property dict from a Cypher record row."""
         return {
             "id": record["id"],
             "name": record["name"],
@@ -146,9 +124,7 @@ class PrimitiveRepository:
 
     @staticmethod
     def _record_to_relationships(record: Any) -> list[dict[str, Any]]:
-        """
-        Extract the relationship list from a Cypher record row.
-        """
+        """Extract the relationship list from a Cypher record row."""
         return [
             {
                 "rel_type": r["rel_type"],
@@ -170,9 +146,7 @@ class PrimitiveRepository:
         node_data: dict[str, Any],
         relationships: list[dict[str, Any]],
     ) -> Primitive:
-        """
-        Reconstruct a Primitive from raw Neo4j node data and its relationship records.
-        """
+        """Reconstruct a Primitive from raw Neo4j node data and its relationship records."""
         try:
             raw_depths = json.loads(node_data["depths_json"])
             depths_by_level: dict[int, Depth] = {}
@@ -198,7 +172,7 @@ class PrimitiveRepository:
                 rel_prov_json = rel_props.get("provenance")
                 rel_prov = None
                 if rel_prov_json:
-                    rel_prov = Provenance(**PrimitiveRepository._parse_json_field(rel_prov_json))
+                    rel_prov = Provenance(**Neo4jRepository._parse_json_field(rel_prov_json))
 
                 relatum = Relatum(
                     relation_type=RelationType(rel["rel_type"]),
@@ -217,12 +191,12 @@ class PrimitiveRepository:
             node_prov_json = node_data.get("provenance")
             node_prov = None
             if node_prov_json:
-                node_prov = Provenance(**PrimitiveRepository._parse_json_field(node_prov_json))
+                node_prov = Provenance(**Neo4jRepository._parse_json_field(node_prov_json))
 
             node_metrics_json = node_data.get("metrics_json")
             node_metrics = None
             if node_metrics_json:
-                node_metrics = PrimitiveMetrics(**PrimitiveRepository._parse_json_field(node_metrics_json))
+                node_metrics = PrimitiveMetrics(**Neo4jRepository._parse_json_field(node_metrics_json))
 
             return Primitive(
                 id=UUID(node_data["id"]),
@@ -287,10 +261,12 @@ class PrimitiveRepository:
                     f"{rp['target_id']} would create a cycle"
                 )
 
+    # ------------------------------------------------------------------
+    # Abstract method implementations
+    # ------------------------------------------------------------------
+
     def save_primitive(self, primitive: Primitive) -> None:
-        """
-        Persist a Primitive — full replace of depths and relata.
-        """
+        """Persist a Primitive — full replace of depths and relata."""
         primitive.validate_provenance()
         depths_json = self._depths_to_json(primitive.depths)
 
@@ -343,7 +319,7 @@ class PrimitiveRepository:
                     id=str(primitive.id),
                 )
 
-            PrimitiveRepository._check_transitive_cycles(
+            Neo4jRepository._check_transitive_cycles(
                 tx, str(primitive.id), relata_params, _TRANSITIVE_RELS,
             )
 
@@ -379,31 +355,8 @@ class PrimitiveRepository:
             logger.error("Neo4j error saving primitive %r: %s", primitive.name, exc)
             raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
 
-    def upsert_primitive(self, primitive: Primitive) -> Primitive:
-        """
-        Save `primitive`, preserving the id of any existing primitive with the
-        same name. Returns the reconciled primitive so callers can cite its
-        canonical id in downstream relata.
-
-        Within-domain idempotency only: depths and relata are full-replaced
-        (per save_primitive). Cross-domain merging is not handled here.
-        """
-        existing = self.find_by_name(primitive.name)
-        if existing is None:
-            canonical = primitive
-        else:
-            logger.info(
-                "Upserting %r: overwriting existing primitive (id=%s)",
-                primitive.name, existing.id,
-            )
-            canonical = primitive.model_copy(update={"id": existing.id})
-        self.save_primitive(canonical)
-        return canonical
-
     def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
-        """
-        Update only the metrics JSON on an existing primitive node.
-        """
+        """Update only the metrics JSON on an existing primitive node."""
         metrics_json = json.dumps(metrics.model_dump(mode="json"))
         try:
             with self._driver.session(database=self._database) as session:
@@ -421,9 +374,7 @@ class PrimitiveRepository:
             raise PersistenceError(f"Failed to update metrics for '{primitive_id}': {exc}") from exc
 
     def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]:
-        """
-        Read current metrics for multiple primitives in a single query.
-        """
+        """Read current metrics for multiple primitives in a single query."""
         result: dict[UUID, PrimitiveMetrics | None] = {}
         if primitive_ids:
             cypher = cast(
@@ -454,9 +405,7 @@ class PrimitiveRepository:
         return result
 
     def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None:
-        """
-        Persist metrics for multiple primitives in a single query.
-        """
+        """Persist metrics for multiple primitives in a single query."""
         if not updates:
             return
         params = [
@@ -476,9 +425,7 @@ class PrimitiveRepository:
             raise PersistenceError(f"Failed to batch-update metrics: {exc}") from exc
 
     def list_names(self) -> list[str]:
-        """
-        Return the names of all primitives in the graph, sorted alphabetically.
-        """
+        """Return the names of all primitives in the graph, sorted alphabetically."""
         try:
             with self._driver.session(database=self._database) as session:
                 result = session.run(
@@ -489,9 +436,7 @@ class PrimitiveRepository:
             raise GraphError(f"Failed to list primitive names: {exc}") from exc
 
     def find_by_id(self, id: UUID) -> Primitive | None:
-        """
-        Look up a primitive by its UUID, returning None if not found.
-        """
+        """Look up a primitive by its UUID, returning None if not found."""
         cypher = cast(
             LiteralString,
             """
@@ -534,9 +479,7 @@ class PrimitiveRepository:
         return primitive
 
     def find_by_name(self, name: str) -> Primitive | None:
-        """
-        Look up a primitive by name (case-insensitive), returning None if not found.
-        """
+        """Look up a primitive by name (case-insensitive), returning None if not found."""
         cypher = cast(
             LiteralString,
             """
@@ -580,9 +523,7 @@ class PrimitiveRepository:
         return primitive
 
     def delete_primitive(self, id: UUID) -> bool:
-        """
-        Delete the primitive with the given UUID and all its relationships. Returns True if deleted.
-        """
+        """Delete the primitive with the given UUID and all its relationships. Returns True if deleted."""
         try:
             with self._driver.session(database=self._database) as session:
                 result = session.run(
@@ -596,13 +537,25 @@ class PrimitiveRepository:
         except Neo4jError as exc:
             raise PersistenceError(f"Failed to delete primitive '{id}': {exc}") from exc
 
+    def clear(self) -> int:
+        """Delete every Primitive node and its relationships. Returns the count deleted."""
+        try:
+            with self._driver.session(database=self._database) as session:
+                result = session.run(
+                    cast(
+                        LiteralString,
+                        "MATCH (p:Primitive) DETACH DELETE p RETURN count(p) AS deleted",
+                    ),
+                ).single()
+                return result["deleted"] if result else 0
+        except Neo4jError as exc:
+            raise PersistenceError(f"Failed to clear graph: {exc}") from exc
+
     def resolve_subgraph(
         self,
         names: list[str],
     ) -> ResolvedSubgraph:
-        """
-        Single-query Cypher traversal that resolves a subgraph for the given names.
-        """
+        """Single-query Cypher traversal that resolves a subgraph for the given names."""
         logger.debug("Resolving subgraph for names=%s", names)
         lowered = [n.lower() for n in names]
 

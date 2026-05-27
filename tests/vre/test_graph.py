@@ -1,15 +1,24 @@
 """
-Unit tests for PrimitiveRepository methods that have pure Python logic
-on top of the Neo4j calls. We bypass __init__ (which would require a
-live driver) and substitute the lower-level methods we need.
+Unit tests for Repository.upsert_primitive — the concrete method on the
+abstract base class. _FakeRepo implements the minimum abstract surface
+needed by upsert_primitive.
 """
 
 import logging
+from uuid import UUID
 
 import pytest
 
-from vre.core.graph import PrimitiveRepository
-from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource
+from vre.core.backends import Repository
+from vre.core.models import (
+    Depth,
+    DepthLevel,
+    Primitive,
+    PrimitiveMetrics,
+    Provenance,
+    ProvenanceSource,
+    ResolvedSubgraph,
+)
 
 
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
@@ -23,8 +32,8 @@ def _make_primitive(name: str) -> Primitive:
     )
 
 
-class _FakeRepo(PrimitiveRepository):
-    """PrimitiveRepository with find_by_name and save_primitive stubbed."""
+class _FakeRepo(Repository):
+    """Repository with find_by_name and save_primitive stubbed."""
 
     def __init__(self) -> None:
         self._existing: Primitive | None = None
@@ -35,6 +44,15 @@ class _FakeRepo(PrimitiveRepository):
 
     def save_primitive(self, primitive: Primitive) -> None:
         self._saved.append(primitive)
+
+    def find_by_id(self, id: UUID) -> Primitive | None: raise NotImplementedError
+    def list_names(self) -> list[str]: raise NotImplementedError
+    def delete_primitive(self, id: UUID) -> bool: raise NotImplementedError
+    def clear(self) -> int: raise NotImplementedError
+    def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None: raise NotImplementedError
+    def batch_read_metrics(self, primitive_ids: list[UUID]) -> dict[UUID, PrimitiveMetrics | None]: raise NotImplementedError
+    def batch_update_metrics(self, updates: dict[UUID, PrimitiveMetrics]) -> None: raise NotImplementedError
+    def resolve_subgraph(self, names: list[str]) -> ResolvedSubgraph: raise NotImplementedError
 
 
 def test_upsert_creates_when_no_existing() -> None:
@@ -66,7 +84,7 @@ def test_upsert_logs_on_overwrite(caplog: pytest.LogCaptureFixture) -> None:
     repo._existing = _make_primitive("file")
     incoming = _make_primitive("file")
 
-    with caplog.at_level(logging.INFO, logger="vre.core.graph"):
+    with caplog.at_level(logging.INFO, logger="vre.core.backends.repository"):
         repo.upsert_primitive(incoming)
 
     assert any("Upserting 'file'" in r.message for r in caplog.records)
@@ -76,7 +94,7 @@ def test_upsert_does_not_log_when_new(caplog: pytest.LogCaptureFixture) -> None:
     repo = _FakeRepo()
     incoming = _make_primitive("file")
 
-    with caplog.at_level(logging.INFO, logger="vre.core.graph"):
+    with caplog.at_level(logging.INFO, logger="vre.core.backends.repository"):
         repo.upsert_primitive(incoming)
 
     assert not any("Upserting" in r.message for r in caplog.records)

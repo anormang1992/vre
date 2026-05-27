@@ -1,6 +1,7 @@
 # Copyright 2026 Andrew Greene
 # Licensed under the Apache License, Version 2.0
 
+from vre.core.backends import Repository
 from vre.core.errors import (
     CandidateValidationError,
     CyclicRelationshipError,
@@ -26,6 +27,7 @@ __all__ = [
     "PersistenceError",
     "Provenance",
     "ProvenanceSource",
+    "Repository",
     "ResolutionError",
     "TRANSITIVE_RELATION_TYPES",
     "VREError",

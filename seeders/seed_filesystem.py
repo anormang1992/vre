@@ -12,13 +12,13 @@ Run: python seeders/seed_filesystem.py
 """
 import argparse
 
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository, Repository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
 
 
-def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
+def seed_operating_system(repo: Repository) -> Primitive:
     """
     Seed the OperatingSystem primitive at D0–D3.
 
@@ -79,7 +79,7 @@ def seed_operating_system(repo: PrimitiveRepository) -> Primitive:
     return os_prim
 
 
-def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_filesystem(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the Filesystem primitive at D0–D3.
 
@@ -149,7 +149,7 @@ def seed_filesystem(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     return filesystem
 
 
-def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
+def seed_path(repo: Repository, filesystem: Primitive) -> Primitive:
     """
     Seed the Path primitive at D0–D3.
 
@@ -224,7 +224,7 @@ def seed_path(repo: PrimitiveRepository, filesystem: Primitive) -> Primitive:
     return path
 
 
-def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_permission(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the Permission primitive at D0–D3.
 
@@ -299,7 +299,7 @@ def seed_permission(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     return permission
 
 
-def seed_ownership(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_ownership(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the Ownership primitive at D0–D3.
 
@@ -372,7 +372,7 @@ def seed_ownership(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     return ownership
 
 
-def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
+def seed_directory(repo: Repository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
     """
     Seed the Directory primitive at D0–D3.
 
@@ -465,7 +465,7 @@ def seed_directory(repo: PrimitiveRepository, filesystem: Primitive, path: Primi
     return directory
 
 
-def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
+def seed_file(repo: Repository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
     """
     Seed the File primitive at D0–D3.
 
@@ -556,7 +556,7 @@ def seed_file(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive,
     return file
 
 
-def seed_symlink(repo: PrimitiveRepository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
+def seed_symlink(repo: Repository, filesystem: Primitive, path: Primitive, permission: Primitive) -> Primitive:
     """
     Seed the Symlink primitive at D0–D3.
 
@@ -656,7 +656,7 @@ def seed_symlink(repo: PrimitiveRepository, filesystem: Primitive, path: Primiti
     return symlink
 
 
-def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_user(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the User primitive at D0–D3.
 
@@ -728,7 +728,7 @@ def seed_user(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     return user
 
 
-def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -> Primitive:
+def seed_group(repo: Repository, os_prim: Primitive, user: Primitive) -> Primitive:
     """
     Seed the Group primitive at D0–D3.
 
@@ -803,7 +803,7 @@ def seed_group(repo: PrimitiveRepository, os_prim: Primitive, user: Primitive) -
     return group
 
 
-def seed_process(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
+def seed_process(repo: Repository, os_prim: Primitive) -> Primitive:
     """
     Seed the Process primitive at D0–D3.
 
@@ -890,7 +890,7 @@ def seed_process(repo: PrimitiveRepository, os_prim: Primitive) -> Primitive:
     return process
 
 
-def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
+def seed_create(repo: Repository, file: Primitive, directory: Primitive) -> Primitive:
     """
     Seed the Create primitive at D0–D3 with APPLIES_TO relata to File and Directory.
     """
@@ -958,7 +958,7 @@ def seed_create(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     return create
 
 
-def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
+def seed_read(repo: Repository, file: Primitive) -> Primitive:
     """
     Seed the Read primitive at D0–D3.
 
@@ -1023,7 +1023,7 @@ def seed_read(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     return read
 
 
-def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
+def seed_write(repo: Repository, file: Primitive) -> Primitive:
     """
     Seed the Write primitive at D0–D3.
 
@@ -1090,7 +1090,7 @@ def seed_write(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     return write
 
 
-def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive) -> Primitive:
+def seed_delete(repo: Repository, file: Primitive, directory: Primitive) -> Primitive:
     """
     Seed the Delete primitive at D0–D4.
 
@@ -1178,7 +1178,7 @@ def seed_delete(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     return delete
 
 
-def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
+def seed_list(repo: Repository, directory: Primitive) -> Primitive:
     """
     Seed the List primitive at D0–D3.
 
@@ -1243,7 +1243,7 @@ def seed_list(repo: PrimitiveRepository, directory: Primitive) -> Primitive:
     return list_prim
 
 
-def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, path: Primitive) -> Primitive:
+def seed_move(repo: Repository, file: Primitive, directory: Primitive, path: Primitive) -> Primitive:
     """
     Seed the Move primitive at D0–D3.
 
@@ -1333,7 +1333,7 @@ def seed_move(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
     return move
 
 
-def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, path: Primitive) -> Primitive:
+def seed_copy(repo: Repository, file: Primitive, directory: Primitive, path: Primitive) -> Primitive:
     """
     Seed the Copy primitive at D0–D3.
 
@@ -1420,7 +1420,7 @@ def seed_copy(repo: PrimitiveRepository, file: Primitive, directory: Primitive, 
     return copy
 
 
-def seed_modify(repo: PrimitiveRepository, file: Primitive, directory: Primitive, symlink: Primitive) -> Primitive:
+def seed_modify(repo: Repository, file: Primitive, directory: Primitive, symlink: Primitive) -> Primitive:
     """
     Seed the Modify primitive at D0–D3.
 
@@ -1512,7 +1512,7 @@ def seed_modify(repo: PrimitiveRepository, file: Primitive, directory: Primitive
     return modify
 
 
-def seed_execute(repo: PrimitiveRepository, file: Primitive) -> Primitive:
+def seed_execute(repo: Repository, file: Primitive) -> Primitive:
     """
     Seed the Execute primitive at D0–D4.
 
@@ -1601,10 +1601,8 @@ def seed_execute(repo: PrimitiveRepository, file: Primitive) -> Primitive:
     return execute
 
 
-def main(repository: PrimitiveRepository) -> None:
+def main(repository: Repository) -> None:
     with repository as repo:
-        repo.ensure_constraints()
-
         # ── Substrates ───────────────────────────────────────────────────
         os_prim = seed_operating_system(repo)
         filesystem = seed_filesystem(repo, os_prim)
@@ -2112,7 +2110,7 @@ if __name__ == "__main__":
     parser.add_argument("--neo4j-password", default="password")
     args = parser.parse_args()
 
-    repo = PrimitiveRepository(
+    repo = Neo4jRepository(
         uri=args.neo4j_uri,
         user=args.neo4j_user,
         password=args.neo4j_password,

@@ -231,7 +231,7 @@ Run: python seeders/seed_<domain>.py
 """
 import argparse
 
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Neo4jRepository, Repository
 from vre.core.models import (
     Depth, DepthLevel, Primitive, Provenance, ProvenanceSource,
     Relatum, RelationType,
@@ -240,7 +240,7 @@ from vre.core.models import (
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
 
 
-def seed_substrate(repo: PrimitiveRepository) -> Primitive:
+def seed_substrate(repo: Repository) -> Primitive:
     """Seed the foundational substrate at D0–D3."""
     substrate = Primitive(
         name="substrate",
@@ -260,7 +260,7 @@ def seed_substrate(repo: PrimitiveRepository) -> Primitive:
     return substrate
 
 
-def seed_entity(repo: PrimitiveRepository, substrate: Primitive) -> Primitive:
+def seed_entity(repo: Repository, substrate: Primitive) -> Primitive:
     """Seed an entity that depends on the substrate."""
     entity = Primitive(
         name="entity",
@@ -287,7 +287,7 @@ def seed_entity(repo: PrimitiveRepository, substrate: Primitive) -> Primitive:
     return entity
 
 
-def seed_action(repo: PrimitiveRepository, entity: Primitive) -> Primitive:
+def seed_action(repo: Repository, entity: Primitive) -> Primitive:
     """Seed an action whose APPLIES_TO targeting lives at D2."""
     action = Primitive(
         name="action",
@@ -319,9 +319,8 @@ def seed_action(repo: PrimitiveRepository, entity: Primitive) -> Primitive:
     return action
 
 
-def main(repository: PrimitiveRepository) -> None:
+def main(repository: Repository) -> None:
     with repository as repo:
-        repo.ensure_constraints()
         substrate = seed_substrate(repo)
         entity = seed_entity(repo, substrate)
         seed_action(repo, entity)
@@ -334,7 +333,7 @@ if __name__ == "__main__":
     parser.add_argument("--neo4j-password", default="password")
     args = parser.parse_args()
 
-    repo = PrimitiveRepository(
+    repo = Neo4jRepository(
         uri=args.neo4j_uri,
         user=args.neo4j_user,
         password=args.neo4j_password,

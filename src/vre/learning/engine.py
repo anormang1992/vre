@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from vre.core.errors import CandidateValidationError, CyclicRelationshipError
-from vre.core.graph import PrimitiveRepository
+from vre.core.backends import Repository
 from vre.core.models import (
     Depth,
     DepthLevel,
@@ -66,7 +66,7 @@ class LearningEngine:
     and persists it to the graph.
     """
 
-    def __init__(self, repository: PrimitiveRepository) -> None:
+    def __init__(self, repository: Repository) -> None:
         self._repo = repository
 
     def reachability_prerequisites(
