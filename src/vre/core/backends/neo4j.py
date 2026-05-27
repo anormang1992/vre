@@ -62,11 +62,12 @@ class Neo4jRepository(Repository):
             notifications_disabled_categories=["UNRECOGNIZED"],
         )
         self._database = database
+        self._ensure_constraints()
 
     def close(self) -> None:
         self._driver.close()
 
-    def ensure_constraints(self) -> None:
+    def _ensure_constraints(self) -> None:
         logger.debug("Ensuring uniqueness constraint on Primitive.id")
         try:
             with self._driver.session(database=self._database) as session:

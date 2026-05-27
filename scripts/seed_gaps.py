@@ -628,7 +628,6 @@ def seed_create(repo: Repository, file: Primitive, directory: Primitive) -> Prim
 
 def main(repository: Repository) -> None:
     with repository as repo:
-        repo.ensure_constraints()
         deleted = clear_graph(repo)
 
         print(f"Cleared {deleted} existing primitive(s).")

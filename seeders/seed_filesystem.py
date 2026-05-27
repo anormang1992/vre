@@ -1603,8 +1603,6 @@ def seed_execute(repo: Repository, file: Primitive) -> Primitive:
 
 def main(repository: Repository) -> None:
     with repository as repo:
-        repo.ensure_constraints()
-
         # ── Substrates ───────────────────────────────────────────────────
         os_prim = seed_operating_system(repo)
         filesystem = seed_filesystem(repo, os_prim)

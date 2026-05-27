@@ -321,7 +321,6 @@ def seed_action(repo: Repository, entity: Primitive) -> Primitive:
 
 def main(repository: Repository) -> None:
     with repository as repo:
-        repo.ensure_constraints()
         substrate = seed_substrate(repo)
         entity = seed_entity(repo, substrate)
         seed_action(repo, entity)
