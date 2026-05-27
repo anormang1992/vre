@@ -7,7 +7,7 @@ Run: python scripts/clear_graph.py
 """
 import argparse
 
-from vre.core.backends import Neo4jRepository, Repository
+from vre.core.backends import Repository
 
 
 def clear_graph(repo: Repository) -> int:
@@ -18,18 +18,14 @@ def clear_graph(repo: Repository) -> int:
 
 
 if __name__ == "__main__":
+    import argparse
+    from scripts import add_backend_args, make_repository
+
     parser = argparse.ArgumentParser(description="Clear all VRE graph data")
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
+    add_backend_args(parser)
     args = parser.parse_args()
 
-    repo = Neo4jRepository(
-        uri=args.neo4j_uri,
-        user=args.neo4j_user,
-        password=args.neo4j_password,
-    )
-
+    repo = make_repository(args)
     with repo:
         deleted = clear_graph(repo)
         print(f"Cleared {deleted} primitive(s) from the graph.")

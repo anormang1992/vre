@@ -246,11 +246,18 @@ def _run_hook() -> None:
         config = json.loads(_VRE_CONFIG_PATH.read_text())
 
         from vre import VRE, PolicyAction
-        from vre.core.backends import Neo4jRepository
 
-        with Neo4jRepository(
-            config["uri"], config["user"], config["password"], config.get("database", "neo4j")
-        ) as repo:
+        backend = config.get("backend", "neo4j")
+        if backend == "sqlite":
+            from vre.core.backends import SQLiteRepository
+            repo_ctx = SQLiteRepository(config.get("path"))
+        else:
+            from vre.core.backends import Neo4jRepository
+            repo_ctx = Neo4jRepository(
+                config["uri"], config["user"], config["password"],
+                config.get("database", "neo4j"),
+            )
+        with repo_ctx as repo:
             vre = VRE(repo)
             grounding = vre.check(concepts)
 
