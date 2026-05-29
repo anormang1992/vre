@@ -21,7 +21,7 @@ Schema
     CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
         ON primitives(name COLLATE NOCASE);
 
-    CREATE TABLE IF NOT EXISTS relationships (
+    CREATE TABLE IF NOT EXISTS relata (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         source_id     TEXT NOT NULL REFERENCES primitives(id),
         target_id     TEXT NOT NULL REFERENCES primitives(id),
@@ -32,9 +32,9 @@ Schema
         policies      TEXT NOT NULL DEFAULT '[]',
         provenance    TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id);
-    CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id);
-    CREATE INDEX IF NOT EXISTS idx_rel_type   ON relationships(rel_type);
+    CREATE INDEX IF NOT EXISTS idx_rel_source ON relata(source_id);
+    CREATE INDEX IF NOT EXISTS idx_rel_target ON relata(target_id);
+    CREATE INDEX IF NOT EXISTS idx_rel_type   ON relata(rel_type);
 """
 
 import json
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS primitives (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
     ON primitives(name COLLATE NOCASE);
 
-CREATE TABLE IF NOT EXISTS relationships (
+CREATE TABLE IF NOT EXISTS relata (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id     TEXT NOT NULL REFERENCES primitives(id),
     target_id     TEXT NOT NULL REFERENCES primitives(id),
@@ -93,9 +93,9 @@ CREATE TABLE IF NOT EXISTS relationships (
     policies      TEXT NOT NULL DEFAULT '[]',
     provenance    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id);
-CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id);
-CREATE INDEX IF NOT EXISTS idx_rel_type   ON relationships(rel_type);
+CREATE INDEX IF NOT EXISTS idx_rel_source ON relata(source_id);
+CREATE INDEX IF NOT EXISTS idx_rel_target ON relata(target_id);
+CREATE INDEX IF NOT EXISTS idx_rel_type   ON relata(rel_type);
 """
 
 
@@ -104,7 +104,7 @@ class SQLiteRepository(Repository):
     SQLite persistence backend for epistemic primitives.
 
     Stores primitives in a local SQLite database with depths serialized as
-    JSON and relata stored in a separate ``relationships`` table. Provides
+    JSON and relata stored in a separate ``relata`` table. Provides
     transitive cycle detection via recursive CTEs and subgraph resolution
     for the grounding engine.
     """
@@ -152,9 +152,9 @@ class SQLiteRepository(Repository):
     @staticmethod
     def _hydrate_primitive(
         node_data: dict[str, Any],
-        relationships: list[dict[str, Any]],
+        relata: list[dict[str, Any]],
     ) -> Primitive:
-        """Reconstruct a Primitive from raw SQLite row data and its relationship records."""
+        """Reconstruct a Primitive from raw SQLite row data and its relata records."""
         try:
             raw_depths = json.loads(node_data["depths_json"])
             depths_by_level: dict[int, Depth] = {}
@@ -166,7 +166,7 @@ class SQLiteRepository(Repository):
                 )
                 depths_by_level[int(depth.level)] = depth
 
-            for rel in relationships:
+            for rel in relata:
                 source_depth = rel["source_depth"]
                 target_depth_val = rel["target_depth"]
                 metadata_raw = rel.get("metadata_json", "{}")
@@ -258,7 +258,7 @@ class SQLiteRepository(Repository):
                     SELECT ?
                     UNION
                     SELECT r.target_id
-                    FROM relationships r
+                    FROM relata r
                     INNER JOIN reachable rc ON r.source_id = rc.id
                     WHERE r.rel_type IN ({placeholders})
                 )
@@ -340,20 +340,20 @@ class SQLiteRepository(Repository):
                 ),
             )
 
-            # Delete old outgoing relationships
+            # Delete old outgoing relata
             cursor.execute(
-                "DELETE FROM relationships WHERE source_id = ?",
+                "DELETE FROM relata WHERE source_id = ?",
                 (str(primitive.id),),
             )
 
             # Check for transitive cycles
             self._check_transitive_cycles(cursor, str(primitive.id), relata_params)
 
-            # Insert new relationships
+            # Insert new relata
             for rp in relata_params:
                 cursor.execute(
                     """
-                    INSERT INTO relationships
+                    INSERT INTO relata
                         (source_id, target_id, rel_type, source_depth,
                          target_depth, metadata_json, policies, provenance)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -394,8 +394,8 @@ class SQLiteRepository(Repository):
             return None
 
         node_data = dict(row)
-        relationships = self._fetch_outgoing_relationships(str(id))
-        return self._hydrate_primitive(node_data, relationships)
+        relata = self._fetch_outgoing_relata(str(id))
+        return self._hydrate_primitive(node_data, relata)
 
     def find_by_name(self, name: str) -> Primitive | None:
         """Look up a primitive by name (case-insensitive). Returns None if not found."""
@@ -410,16 +410,16 @@ class SQLiteRepository(Repository):
             return None
 
         node_data = dict(row)
-        relationships = self._fetch_outgoing_relationships(node_data["id"])
-        return self._hydrate_primitive(node_data, relationships)
+        relata = self._fetch_outgoing_relata(node_data["id"])
+        return self._hydrate_primitive(node_data, relata)
 
-    def _fetch_outgoing_relationships(self, primitive_id: str) -> list[dict[str, Any]]:
-        """Fetch all outgoing relationships for a primitive as dicts."""
+    def _fetch_outgoing_relata(self, primitive_id: str) -> list[dict[str, Any]]:
+        """Fetch all outgoing relata for a primitive as dicts."""
         rows = self._conn.execute(
             """
             SELECT rel_type, target_id, source_depth, target_depth,
                    metadata_json, policies, provenance
-            FROM relationships
+            FROM relata
             WHERE source_id = ?
             """,
             (primitive_id,),
@@ -434,12 +434,12 @@ class SQLiteRepository(Repository):
         return [r["name"] for r in rows]
 
     def delete_primitive(self, id: UUID) -> bool:
-        """Delete the primitive with the given UUID and all its relationships. Returns True if deleted."""
+        """Delete the primitive with the given UUID and all its relata. Returns True if deleted."""
         sid = str(id)
         try:
             self._conn.execute("BEGIN")
             self._conn.execute(
-                "DELETE FROM relationships WHERE source_id = ? OR target_id = ?",
+                "DELETE FROM relata WHERE source_id = ? OR target_id = ?",
                 (sid, sid),
             )
             cursor = self._conn.execute(
@@ -455,10 +455,10 @@ class SQLiteRepository(Repository):
             ) from exc
 
     def clear(self) -> int:
-        """Delete every primitive and its relationships. Returns the count deleted."""
+        """Delete every primitive and its relata. Returns the count deleted."""
         try:
             self._conn.execute("BEGIN")
-            self._conn.execute("DELETE FROM relationships")
+            self._conn.execute("DELETE FROM relata")
             cursor = self._conn.execute("DELETE FROM primitives")
             self._conn.commit()
             return cursor.rowcount
@@ -560,7 +560,7 @@ class SQLiteRepository(Repository):
                 SELECT id FROM primitives WHERE LOWER(name) IN ({name_placeholders})
                 UNION
                 SELECT r.target_id
-                FROM relationships r
+                FROM relata r
                 INNER JOIN reachable rc ON r.source_id = rc.id
                 WHERE r.rel_type IN ({transitive_placeholders})
             )
@@ -589,7 +589,7 @@ class SQLiteRepository(Repository):
             f"""
             SELECT source_id, target_id, rel_type, source_depth, target_depth,
                    metadata_json, policies, provenance
-            FROM relationships
+            FROM relata
             WHERE source_id IN ({node_placeholders})
               AND target_id IN ({node_placeholders})
             """,

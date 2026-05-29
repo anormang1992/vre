@@ -151,7 +151,7 @@ class TestSQLiteLifecycle:
             )
             tables = [row["name"] for row in cursor.fetchall()]
             assert "primitives" in tables
-            assert "relationships" in tables
+            assert "relata" in tables
 
     def test_context_manager_closes_connection(self) -> None:
         repo = SQLiteRepository(":memory:")
@@ -488,7 +488,7 @@ class TestListDeleteClear:
 
             assert repo.delete_primitive(uuid4()) is False
 
-    def test_delete_removes_outgoing_relationships(self) -> None:
+    def test_delete_removes_outgoing_relata(self) -> None:
         with SQLiteRepository(":memory:") as repo:
             target = _make_primitive("Target")
             repo.save_primitive(target)
@@ -516,11 +516,11 @@ class TestListDeleteClear:
             repo.delete_primitive(source.id)
             # Relationships should be gone
             count = repo._conn.execute(
-                "SELECT COUNT(*) FROM relationships"
+                "SELECT COUNT(*) FROM relata"
             ).fetchone()[0]
             assert count == 0
 
-    def test_delete_removes_incoming_relationships(self) -> None:
+    def test_delete_removes_incoming_relata(self) -> None:
         with SQLiteRepository(":memory:") as repo:
             target = _make_primitive("Target")
             repo.save_primitive(target)
@@ -548,7 +548,7 @@ class TestListDeleteClear:
             repo.delete_primitive(target.id)
             # Relationship row should be gone (deleted as incoming)
             count = repo._conn.execute(
-                "SELECT COUNT(*) FROM relationships"
+                "SELECT COUNT(*) FROM relata"
             ).fetchone()[0]
             assert count == 0
 

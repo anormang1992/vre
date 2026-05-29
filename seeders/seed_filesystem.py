@@ -12,6 +12,7 @@ Run: python seeders/seed_filesystem.py
 """
 import argparse
 
+from scripts import add_backend_args, make_repository
 from vre.core.backends import Repository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 
@@ -2104,8 +2105,6 @@ def main(repository: Repository) -> None:
 
 
 if __name__ == "__main__":
-    from scripts import add_backend_args, make_repository
-
     parser = argparse.ArgumentParser(description="Fully Grounded Graph Seeder")
     add_backend_args(parser)
     args = parser.parse_args()

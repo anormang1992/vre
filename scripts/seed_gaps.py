@@ -11,7 +11,7 @@ Run: python scripts/seed_gaps.py
 """
 import argparse
 
-from scripts.clear_graph import clear_graph
+from scripts import add_backend_args, make_repository
 from vre.core.backends import Repository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 
@@ -628,7 +628,7 @@ def seed_create(repo: Repository, file: Primitive, directory: Primitive) -> Prim
 
 def main(repository: Repository) -> None:
     with repository as repo:
-        deleted = clear_graph(repo)
+        deleted = repo.clear()
 
         print(f"Cleared {deleted} existing primitive(s).")
         print("Seeding gap-demonstration graph (10 primitives):\n")
@@ -682,8 +682,6 @@ Expected gap scenarios:
 
 
 if __name__ == "__main__":
-    from scripts import add_backend_args, make_repository
-
     parser = argparse.ArgumentParser(description="Depth-Gated Gap Demonstration Seeder")
     add_backend_args(parser)
     args = parser.parse_args()
