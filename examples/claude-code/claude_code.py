@@ -17,10 +17,14 @@ VRE grounding and policy evaluation using a two-pass protocol:
 This lets Claude — the LLM — propose the concepts itself rather than
 relying on a static command-to-concept map.
 
-Setup::
+Setup (SQLite — default, zero config)::
+
+    python examples/claude-code/claude_code.py install
+
+Setup (Neo4j)::
 
     python examples/claude-code/claude_code.py install \
-        --uri neo4j://localhost:7687 --user neo4j --password password
+        --backend neo4j --uri neo4j://localhost:7687 --user neo4j --password password
 
 Removal::
 
@@ -39,6 +43,10 @@ import re
 import shlex
 import sys
 from pathlib import Path
+
+from vre import VRE, PolicyAction
+from vre.core.backends import Neo4jRepository, SQLiteRepository
+
 
 _SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 _VRE_CONFIG_PATH = Path.home() / ".vre" / "config.json"
@@ -122,19 +130,35 @@ def _block(message: str) -> None:
     sys.exit(_EXIT_BLOCK)
 
 
-def install(uri: str, user: str, password: str, database: str = "neo4j") -> None:
+def install(
+    backend: str = "sqlite",
+    uri: str | None = None,
+    user: str | None = None,
+    password: str | None = None,
+    database: str = "neo4j",
+    path: str | None = None,
+) -> None:
     """
     Install the VRE PreToolUse hook into Claude Code's settings.
 
-    Writes Neo4j connection details to ~/.vre/config.json and injects
+    Writes backend configuration to ~/.vre/config.json and injects
     the hook entry into ~/.claude/settings.json. Safe to call multiple
     times — existing VRE hook entries are replaced, not duplicated.
     """
     _VRE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _VRE_CONFIG_PATH.write_text(json.dumps(
-        {"uri": uri, "user": user, "password": password, "database": database},
-        indent=2,
-    ))
+    if backend == "sqlite":
+        config: dict = {"backend": "sqlite"}
+        if path is not None:
+            config["path"] = path
+    else:
+        config = {
+            "backend": "neo4j",
+            "uri": uri,
+            "user": user,
+            "password": password,
+            "database": database,
+        }
+    _VRE_CONFIG_PATH.write_text(json.dumps(config, indent=2))
     _VRE_CONFIG_PATH.chmod(0o600)
 
     _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -245,12 +269,15 @@ def _run_hook() -> None:
 
         config = json.loads(_VRE_CONFIG_PATH.read_text())
 
-        from vre import VRE, PolicyAction
-        from vre.core.backends import Neo4jRepository
-
-        with Neo4jRepository(
-            config["uri"], config["user"], config["password"], config.get("database", "neo4j")
-        ) as repo:
+        backend = config.get("backend", "sqlite")
+        if backend == "sqlite":
+            repo_ctx = SQLiteRepository(config.get("path"))
+        else:
+            repo_ctx = Neo4jRepository(
+                config["uri"], config["user"], config["password"],
+                config.get("database", "neo4j"),
+            )
+        with repo_ctx as repo:
             vre = VRE(repo)
             grounding = vre.check(concepts)
 
@@ -285,17 +312,34 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="command")
 
     inst = sub.add_parser("install", help="Install the VRE PreToolUse hook")
-    inst.add_argument("--uri", required=True)
-    inst.add_argument("--user", required=True)
-    inst.add_argument("--password", required=True)
-    inst.add_argument("--database", default="neo4j")
+    inst.add_argument("--backend", choices=["neo4j", "sqlite"], default="sqlite",
+                      help="Persistence backend (default: sqlite)")
+
+    neo4j = inst.add_argument_group("neo4j", "Options for --backend neo4j")
+    neo4j.add_argument("--uri", default=None)
+    neo4j.add_argument("--user", default=None)
+    neo4j.add_argument("--password", default=None)
+    neo4j.add_argument("--database", default="neo4j")
+
+    sqlite = inst.add_argument_group("sqlite", "Options for --backend sqlite")
+    sqlite.add_argument("--path", default=None,
+                        help="Database path (default: ~/.vre/graph.db)")
 
     sub.add_parser("uninstall", help="Remove the VRE PreToolUse hook")
 
     args = parser.parse_args()
 
     if args.command == "install":
-        install(args.uri, args.user, args.password, args.database)
+        if args.backend == "neo4j" and not all([args.uri, args.user, args.password]):
+            parser.error("--backend neo4j requires --uri, --user, and --password")
+        install(
+            backend=args.backend,
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+            path=args.path,
+        )
     elif args.command == "uninstall":
         uninstall()
     else:

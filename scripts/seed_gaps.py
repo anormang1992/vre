@@ -11,8 +11,8 @@ Run: python scripts/seed_gaps.py
 """
 import argparse
 
-from scripts.clear_graph import clear_graph
-from vre.core.backends import Neo4jRepository, Repository
+from scripts import add_backend_args, make_repository
+from vre.core.backends import Repository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
@@ -628,7 +628,7 @@ def seed_create(repo: Repository, file: Primitive, directory: Primitive) -> Prim
 
 def main(repository: Repository) -> None:
     with repository as repo:
-        deleted = clear_graph(repo)
+        deleted = repo.clear()
 
         print(f"Cleared {deleted} existing primitive(s).")
         print("Seeding gap-demonstration graph (10 primitives):\n")
@@ -683,15 +683,8 @@ Expected gap scenarios:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Depth-Gated Gap Demonstration Seeder")
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
+    add_backend_args(parser)
     args = parser.parse_args()
 
-    repo = Neo4jRepository(
-        uri=args.neo4j_uri,
-        user=args.neo4j_user,
-        password=args.neo4j_password,
-    )
-
+    repo = make_repository(args)
     main(repository=repo)

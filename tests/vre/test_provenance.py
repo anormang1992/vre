@@ -18,7 +18,7 @@ from vre.core.models import (
     Relatum,
     RelationType,
 )
-from vre.core.backends.neo4j import Neo4jRepository
+from vre.core.backends.sqlite import SQLiteRepository
 from vre.core.grounding.models import _fmt_depth, _fmt_primitive, _fmt_relatum
 
 
@@ -214,7 +214,7 @@ def test_depths_to_json_includes_provenance():
     """
     prov = Provenance(source=ProvenanceSource.AUTHORED)
     depths = [Depth(level=DepthLevel.EXISTENCE, provenance=prov)]
-    result = json.loads(Neo4jRepository._depths_to_json(depths))
+    result = json.loads(SQLiteRepository._depths_to_json(depths))
     assert len(result) == 1
     assert "provenance" in result[0]
     assert result[0]["provenance"]["source"] == "authored"
@@ -225,7 +225,7 @@ def test_depths_to_json_omits_provenance_when_none():
     _depths_to_json omits the provenance key entirely when provenance is None.
     """
     depths = [Depth(level=DepthLevel.EXISTENCE)]
-    result = json.loads(Neo4jRepository._depths_to_json(depths))
+    result = json.loads(SQLiteRepository._depths_to_json(depths))
     assert "provenance" not in result[0]
 
 
@@ -259,7 +259,7 @@ def test_hydrate_primitive_with_provenance():
     )
 
     # Serialize
-    depths_json = Neo4jRepository._depths_to_json(primitive.depths)
+    depths_json = SQLiteRepository._depths_to_json(primitive.depths)
     node_prov_json = json.dumps(prov.model_dump(mode="json"))
     rel_prov = Provenance(source=ProvenanceSource.CONVERSATIONAL)
     rel_prov_json = json.dumps(rel_prov.model_dump(mode="json"))
@@ -269,23 +269,22 @@ def test_hydrate_primitive_with_provenance():
         "name": "file",
         "depths_json": depths_json,
         "provenance": node_prov_json,
+        "metrics_json": None,
     }
     relationships = [
         {
             "rel_type": "APPLIES_TO",
             "target_id": str(target_id),
-            "rel_props": {
-                "source_depth": 2,
-                "target_depth": 2,
-                "metadata_json": "{}",
-                "policies": "[]",
-                "provenance": rel_prov_json,
-            },
+            "source_depth": 2,
+            "target_depth": 2,
+            "metadata_json": "{}",
+            "policies": "[]",
+            "provenance": rel_prov_json,
         },
     ]
 
     # Deserialize
-    hydrated = Neo4jRepository._hydrate_primitive(node_data, relationships)
+    hydrated = SQLiteRepository._hydrate_primitive(node_data, relationships)
 
     # Node provenance
     assert hydrated.provenance is not None
@@ -315,8 +314,10 @@ def test_hydrate_primitive_without_provenance():
         "id": str(uuid4()),
         "name": "legacy",
         "depths_json": json.dumps([{"level": 0, "properties": {}}]),
+        "provenance": None,
+        "metrics_json": None,
     }
-    hydrated = Neo4jRepository._hydrate_primitive(node_data, [])
+    hydrated = SQLiteRepository._hydrate_primitive(node_data, [])
     assert hydrated.provenance is None
     assert hydrated.depths[0].provenance is None
 

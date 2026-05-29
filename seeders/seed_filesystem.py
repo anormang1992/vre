@@ -12,7 +12,8 @@ Run: python seeders/seed_filesystem.py
 """
 import argparse
 
-from vre.core.backends import Neo4jRepository, Repository
+from scripts import add_backend_args, make_repository
+from vre.core.backends import Repository
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource, Relatum, RelationType
 
 SEED_PROVENANCE = Provenance(source=ProvenanceSource.AUTHORED)
@@ -2105,15 +2106,8 @@ def main(repository: Repository) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fully Grounded Graph Seeder")
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
+    add_backend_args(parser)
     args = parser.parse_args()
 
-    repo = Neo4jRepository(
-        uri=args.neo4j_uri,
-        user=args.neo4j_user,
-        password=args.neo4j_password,
-    )
-
+    repo = make_repository(args)
     main(repository=repo)
