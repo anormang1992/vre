@@ -469,7 +469,7 @@ class TestListDeleteClear:
             for name in ["Zebra", "Alpha", "middle"]:
                 repo.save_primitive(_make_primitive(name))
             names = repo.list_names()
-            assert names == ["Alpha", "Zebra", "middle"]
+            assert names == ["Alpha", "middle", "Zebra"]
 
     def test_list_names_empty(self) -> None:
         with SQLiteRepository(":memory:") as repo:

@@ -23,8 +23,8 @@ Schema
 
     CREATE TABLE IF NOT EXISTS relata (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        source_id     TEXT NOT NULL REFERENCES primitives(id),
-        target_id     TEXT NOT NULL REFERENCES primitives(id),
+        source_id     TEXT NOT NULL REFERENCES primitives(id) ON DELETE CASCADE,
+        target_id     TEXT NOT NULL REFERENCES primitives(id) ON DELETE CASCADE,
         rel_type      TEXT NOT NULL,
         source_depth  INTEGER NOT NULL,
         target_depth  INTEGER NOT NULL,
@@ -84,8 +84,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
 
 CREATE TABLE IF NOT EXISTS relata (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_id     TEXT NOT NULL REFERENCES primitives(id),
-    target_id     TEXT NOT NULL REFERENCES primitives(id),
+    source_id     TEXT NOT NULL REFERENCES primitives(id) ON DELETE CASCADE,
+    target_id     TEXT NOT NULL REFERENCES primitives(id) ON DELETE CASCADE,
     rel_type      TEXT NOT NULL,
     source_depth  INTEGER NOT NULL,
     target_depth  INTEGER NOT NULL,
@@ -429,41 +429,29 @@ class SQLiteRepository(Repository):
     def list_names(self) -> list[str]:
         """Return the names of all primitives, sorted alphabetically."""
         rows = self._conn.execute(
-            "SELECT name FROM primitives ORDER BY name"
+            "SELECT name FROM primitives ORDER BY name COLLATE NOCASE"
         ).fetchall()
         return [r["name"] for r in rows]
 
     def delete_primitive(self, id: UUID) -> bool:
-        """Delete the primitive with the given UUID and all its relata. Returns True if deleted."""
-        sid = str(id)
+        """Delete the primitive with the given UUID. Relata are cascade-deleted by the FK constraint."""
         try:
-            self._conn.execute("BEGIN")
-            self._conn.execute(
-                "DELETE FROM relata WHERE source_id = ? OR target_id = ?",
-                (sid, sid),
-            )
             cursor = self._conn.execute(
                 "DELETE FROM primitives WHERE id = ?",
-                (sid,),
+                (str(id),),
             )
-            self._conn.commit()
             return cursor.rowcount > 0
         except sqlite3.Error as exc:
-            self._conn.rollback()
             raise PersistenceError(
                 f"Failed to delete primitive '{id}': {exc}"
             ) from exc
 
     def clear(self) -> int:
-        """Delete every primitive and its relata. Returns the count deleted."""
+        """Delete every primitive. Relata are cascade-deleted by the FK constraint."""
         try:
-            self._conn.execute("BEGIN")
-            self._conn.execute("DELETE FROM relata")
             cursor = self._conn.execute("DELETE FROM primitives")
-            self._conn.commit()
             return cursor.rowcount
         except sqlite3.Error as exc:
-            self._conn.rollback()
             raise PersistenceError(f"Failed to clear graph: {exc}") from exc
 
     # ------------------------------------------------------------------
