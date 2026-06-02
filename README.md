@@ -1,4 +1,5 @@
-<img width="800" height="800" alt="vre_logo" src="https://github.com/user-attachments/assets/b5431335-c4a7-4a85-a251-601c5b11627f" />
+<img width="2048" height="2048" alt="vre_logo" src="https://github.com/user-attachments/assets/9419c6a6-4be6-418f-8199-090bdf5437a9" />
+
 
 # VRE — Volute Reasoning Engine
 
