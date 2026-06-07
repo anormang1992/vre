@@ -89,7 +89,6 @@ def init_learn_tool(vre, learner):
                         vre.learning_engine.learn_gap(depth_gap, depth_filled)
                     else:
                         vre.learning_engine.learn_gap(gap, filled)
-                        vre.resolver.invalidate()
                         grounding = vre.check(concept_list)
                         skipped.clear()
                         continue
@@ -97,7 +96,6 @@ def init_learn_tool(vre, learner):
                     continue
 
                 vre.learning_engine.learn_gap(gap, filled)
-                vre.resolver.invalidate()
                 grounding = vre.check(concept_list)
                 skipped.clear()
 
