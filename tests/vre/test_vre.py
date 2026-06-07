@@ -20,7 +20,7 @@ from vre.core.models import (
     ResolvedSubgraph,
 )
 from vre.core.policy import Cardinality, Policy, PolicyAction, PolicyResult
-from vre.core.grounding import GroundingResult, ConceptResolver
+from vre.core.grounding import GroundingResult
 from vre.learning import LearningEngine
 
 
@@ -196,12 +196,6 @@ class TestVRECheck:
         assert isinstance(result, GroundingResult)
         assert result.grounded is False
 
-    def test_resolve_returns_list(self):
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-        result = vre.resolve(["file"])
-        assert isinstance(result, list)
-
     def test_check_min_depth_passthrough(self):
         """
         min_depth is forwarded through VRE.check to the engine.
@@ -347,10 +341,6 @@ class TestVREProperties:
     def test_learning_engine_property(self):
         vre = _make_vre_with_stub([])
         assert isinstance(vre.learning_engine, LearningEngine)
-
-    def test_resolver_property(self):
-        vre = _make_vre_with_stub([])
-        assert isinstance(vre.resolver, ConceptResolver)
 
 
 # ---------------------------------------------------------------------------

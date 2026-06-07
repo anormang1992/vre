@@ -3,11 +3,8 @@
 
 from vre.core.grounding.engine import GroundingEngine
 from vre.core.grounding.models import GroundingResult
-from vre.core.grounding.resolver import ConceptResolver, lemmatize
 
 __all__ = [
-    "ConceptResolver",
     "GroundingEngine",
     "GroundingResult",
-    "lemmatize",
 ]

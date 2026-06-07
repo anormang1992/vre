@@ -35,7 +35,7 @@ try:
     from vre.core.backends import Neo4jRepository
 except ImportError:
     pass
-from vre.core.grounding import ConceptResolver, GroundingEngine, GroundingResult
+from vre.core.grounding import GroundingEngine, GroundingResult
 from vre.core.models import (
     DepthLevel,
     PrimitiveMetrics,
@@ -70,7 +70,6 @@ __all__ = [
     "Neo4jRepository",
     "Repository",
     "SQLiteRepository",
-    "ConceptResolver",
     "GroundingEngine",
     "GroundingResult",
     "DepthLevel",
@@ -93,7 +92,7 @@ class VRE:
     """
     Volute Reasoning Engine — public interface.
 
-    Wraps ConceptResolver and GroundingEngine. Depth requirements are
+    Wraps GroundingEngine. Depth requirements are
     derived from graph structure; an optional min_depth override lets
     integrators enforce a stricter floor.
     """
@@ -115,7 +114,6 @@ class VRE:
         files under `~/.vre/traces/` when `persist_traces` is True.
         """
         self._repo = repository
-        self._resolver = ConceptResolver(repository)
         self._engine = GroundingEngine(repository)
         self._learning_engine = LearningEngine(repository)
         self._metrics = MetricsManager(repository)
@@ -140,13 +138,6 @@ class VRE:
         """
         return self._learning_engine
 
-    @property
-    def resolver(self) -> ConceptResolver:
-        """
-        The concept resolver for name-to-primitive resolution and cache invalidation.
-        """
-        return self._resolver
-
     def _stamp_identity(self, result: GroundingResult) -> GroundingResult:
         """
         Set `agent_id` on the result if this instance has an identity and the result doesn't already have one.
@@ -154,12 +145,6 @@ class VRE:
         if self._identity is not None and result.agent_id is None:
             result.agent_id = self._identity.agent_id
         return result
-
-    def resolve(self, concepts: list[str]) -> list[str]:
-        """
-        Resolve free-form concept names to canonical primitive names.
-        """
-        return self._resolver.resolve(concepts)
 
     def check(
         self,
