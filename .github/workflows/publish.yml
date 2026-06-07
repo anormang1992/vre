@@ -24,8 +24,6 @@ jobs:
           key: venv-${{ runner.os }}-3.12-${{ hashFiles('pyproject.toml') }}
       - name: Install dependencies
         run: poetry install
-      - name: Download spaCy model
-        run: poetry run python -m spacy download en_core_web_sm
       - name: Lint
         run: poetry run ruff check src/ tests/
       - name: Test
