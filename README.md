@@ -515,7 +515,6 @@ while not grounding.grounded and grounding.gaps:
     if filled is None:
         break
     vre.learning_engine.learn_gap(gap, filled)
-    vre.resolver.invalidate()
     grounding = vre.check(["delete", "file"])
 ```
 
