@@ -21,7 +21,6 @@ from uuid import UUID
 
 from vre.core.backends import Repository
 from vre.core.grounding.models import GroundingResult
-from vre.core.grounding.resolver import ConceptResolver
 from vre.core.models import (
     DepthGap,
     DepthLevel,
@@ -331,37 +330,38 @@ class GroundingEngine:
     def ground(
         self,
         concepts: list[str],
-        resolver: ConceptResolver,
         min_depth: DepthLevel | None = None,
     ) -> GroundingResult:
         """
-        Resolve and ground concepts in one step.
+        Ground concepts against the graph in one step.
 
-        Each concept is resolved to its canonical name where possible;
-        unknown concepts pass through as-is and become ExistenceGaps in the
-        query result. Returns a GroundingResult with grounded=True only when
-        all concepts are grounded with no gaps.
+        Concepts are matched case-insensitively against graph names by the
+        repository; unknown concepts surface as ExistenceGaps in the query
+        result. Normalization or synonymy of input is the integrator's
+        concern, never the engine's. Returns a GroundingResult with
+        grounded=True only when all concepts are grounded with no gaps.
         """
         if not concepts:
             logger.debug("Ground called with empty concepts")
             result = GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
         else:
-            # Resolve to canonical names where possible; unknown names pass through
-            # as-is — the engine will surface ExistenceGaps for them.
-            name_map = resolver.build_name_map()
-            canonical = [
-                (resolver.lookup(c, name_map) or c)
-                for c in concepts
-            ]
             logger.info("Grounding %d concept(s)", len(concepts))
-            logger.debug("Grounding concepts: %s -> canonical: %s", concepts, canonical)
+            response = self.query(concepts, min_depth=min_depth)
 
-            response = self.query(canonical, min_depth=min_depth)
+            # Echo canonical (stored-case) names for matched concepts; unknown
+            # concepts pass through unchanged — they are the ExistenceGap nodes.
+            canonical_by_lower = {
+                p.name.lower(): p.name for p in response.result.primitives
+            }
+            resolved = [canonical_by_lower.get(c.lower(), c) for c in concepts]
+
             grounded = len(response.result.gaps) == 0
-            logger.info("Grounding result: grounded=%s, gaps=%d", grounded, len(response.result.gaps))
+            logger.info(
+                "Grounding result: grounded=%s, gaps=%d", grounded, len(response.result.gaps)
+            )
             result = GroundingResult(
                 grounded=grounded,
-                resolved=canonical,
+                resolved=resolved,
                 gaps=response.result.gaps,
                 trace=response,
             )

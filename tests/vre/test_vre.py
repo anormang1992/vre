@@ -402,3 +402,29 @@ class TestAgentIdentityIntegration:
         # Pass concepts as list to trigger internal grounding path
         policy_result = vre.check_policy(["file"])
         assert policy_result.action == PolicyAction.PASS
+
+
+# ---------------------------------------------------------------------------
+# Grounding contract: membership is a graph fact (no normalization)
+# ---------------------------------------------------------------------------
+
+def test_check_inflected_input_surfaces_existence_gap():
+    """'files' is not in the graph; it must surface as an ExistenceGap, not be coerced to 'file'."""
+    from vre.core.models import ExistenceGap
+    file_p = _make_fully_grounded("file")
+    vre = _make_vre_with_stub([file_p])
+    result = vre.check(["files"])
+    assert result.grounded is False
+    assert any(
+        isinstance(g, ExistenceGap) and g.primitive.name == "files"
+        for g in result.gaps
+    )
+
+
+def test_check_case_insensitive_match_echoes_canonical_casing():
+    """'FILE' matches stored 'file' case-insensitively; resolved echoes the canonical casing."""
+    file_p = _make_fully_grounded("file")
+    vre = _make_vre_with_stub([file_p])
+    result = vre.check(["FILE"])
+    assert result.grounded is True
+    assert result.resolved == ["file"]

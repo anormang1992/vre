@@ -173,7 +173,7 @@ class VRE:
         concepts are fully grounded with no gaps. `min_depth` is an optional
         integrator override that can only raise the floor, never lower it.
         """
-        result = self._stamp_identity(self._engine.ground(concepts, self._resolver, min_depth=min_depth))
+        result = self._stamp_identity(self._engine.ground(concepts, min_depth=min_depth))
         self._metrics.update_grounding(result)
         self._traces.write_check(concepts, result)
         return result
@@ -205,7 +205,7 @@ class VRE:
         if isinstance(concepts, GroundingResult):
             grounding = concepts
         else:
-            grounding = self._stamp_identity(self._engine.ground(concepts, self._resolver))
+            grounding = self._stamp_identity(self._engine.ground(concepts))
 
         if grounding.trace is None:
             policy_result = PolicyResult(action=PolicyAction.PASS)
