@@ -348,8 +348,10 @@ class GroundingEngine:
             logger.info("Grounding %d concept(s)", len(concepts))
             response = self.query(concepts, min_depth=min_depth)
 
-            # Echo canonical (stored-case) names for matched concepts; unknown
-            # concepts pass through unchanged — they are the ExistenceGap nodes.
+            # Build a name map from the primitives in the response. Real graph
+            # nodes carry their stored canonical casing; transient (unknown)
+            # nodes echo the raw input — either way the per-input mapping below
+            # is correct. Unknown concepts remain ExistenceGaps in the result.
             canonical_by_lower = {
                 p.name.lower(): p.name for p in response.result.primitives
             }

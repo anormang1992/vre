@@ -418,3 +418,15 @@ def test_check_case_insensitive_match_echoes_canonical_casing():
     result = vre.check(["FILE"])
     assert result.grounded is True
     assert result.resolved == ["file"]
+
+
+def test_check_preserves_order_and_canonical_casing_across_list():
+    """Each input in a list maps to its stored canonical casing, in input order."""
+    file_p = _make_fully_grounded("file")
+    write_p = _make_fully_grounded("write")
+    vre = _make_vre_with_stub([file_p, write_p])
+    result = vre.check(["FILE", "write"])
+    # resolved echoes canonical stored casing for every input, order preserved.
+    # (Do NOT assert on `grounded` here — two unconnected roots legitimately
+    #  produce a ReachabilityGap; this test is only about the resolved list.)
+    assert result.resolved == ["file", "write"]
