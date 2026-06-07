@@ -10,8 +10,6 @@ readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "pydantic>=2.0",
-    "spacy>=3.8",
-    "click>=8.0",
 ]
 
 [project.optional-dependencies]
