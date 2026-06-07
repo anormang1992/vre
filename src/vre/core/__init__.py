@@ -9,7 +9,6 @@ from vre.core.errors import (
     GraphIntegrityError,
     HydrationError,
     PersistenceError,
-    ResolutionError,
     VREError,
 )
 from vre.core.models import (
@@ -28,7 +27,6 @@ __all__ = [
     "Provenance",
     "ProvenanceSource",
     "Repository",
-    "ResolutionError",
     "TRANSITIVE_RELATION_TYPES",
     "VREError",
 ]

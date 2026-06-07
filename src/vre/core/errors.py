@@ -37,10 +37,6 @@ class HydrationError(VREError):
     """Failed to reconstruct a domain object from stored data."""
 
 
-class ResolutionError(VREError):
-    """Failed to resolve a concept name or identifier."""
-
-
 class CandidateValidationError(VREError):
     """A learning candidate is missing required fields or references invalid data."""
 

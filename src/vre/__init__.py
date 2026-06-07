@@ -26,7 +26,6 @@ from vre.core.errors import (
     HydrationError,
     PersistenceError,
     RegistryError,
-    ResolutionError,
     VREError,
 )
 from vre.core.backends import Repository, SQLiteRepository
@@ -65,7 +64,6 @@ __all__ = [
     "HydrationError",
     "PersistenceError",
     "RegistryError",
-    "ResolutionError",
     "VREError",
     "Neo4jRepository",
     "Repository",
