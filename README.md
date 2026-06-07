@@ -185,12 +185,6 @@ pip install vre
 poetry add vre
 ```
 
-After installation, download the spaCy language model:
-
-```bash
-python -m spacy download en_core_web_sm
-```
-
 VRE ships with a **SQLite backend** that works out of the box — no external services required.
 The database defaults to `~/.vre/graph.db` and is created automatically on first use.
 
@@ -521,7 +515,6 @@ while not grounding.grounded and grounding.gaps:
     if filled is None:
         break
     vre.learning_engine.learn_gap(gap, filled)
-    vre.resolver.invalidate()
     grounding = vre.check(["delete", "file"])
 ```
 
@@ -875,7 +868,7 @@ grounding history, and affect the agent's confidence in related concepts.
 |--------------------|-----------------------------------------------|
 | Language           | Python 3.12+                                  |
 | Epistemic graph    | SQLite (default) or Neo4j (`pip install vre[neo4j]`) |
-| Concept resolution | spaCy (`en_core_web_sm`)                      |
+| Concept resolution | Exact, case-insensitive name match (no NLP)   |
 | Data models        | Pydantic v2                                   |
 | Package management | Poetry                                        |
 
@@ -903,7 +896,6 @@ src/vre/
 │   │   ├── sqlite.py            # SQLiteRepository — SQLite backend (default)
 │   │   └── neo4j.py             # Neo4jRepository — Neo4j backend (optional)
 │   ├── grounding/
-│   │   ├── resolver.py          # ConceptResolver — spaCy lemmatization + name lookup
 │   │   ├── engine.py            # GroundingEngine — depth-gated query, gap detection
 │   │   └── models.py            # GroundingResult
 │   └── policy/

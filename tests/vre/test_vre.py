@@ -20,7 +20,7 @@ from vre.core.models import (
     ResolvedSubgraph,
 )
 from vre.core.policy import Cardinality, Policy, PolicyAction, PolicyResult
-from vre.core.grounding import GroundingResult, ConceptResolver
+from vre.core.grounding import GroundingResult
 from vre.learning import LearningEngine
 
 
@@ -196,12 +196,6 @@ class TestVRECheck:
         assert isinstance(result, GroundingResult)
         assert result.grounded is False
 
-    def test_resolve_returns_list(self):
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-        result = vre.resolve(["file"])
-        assert isinstance(result, list)
-
     def test_check_min_depth_passthrough(self):
         """
         min_depth is forwarded through VRE.check to the engine.
@@ -348,10 +342,6 @@ class TestVREProperties:
         vre = _make_vre_with_stub([])
         assert isinstance(vre.learning_engine, LearningEngine)
 
-    def test_resolver_property(self):
-        vre = _make_vre_with_stub([])
-        assert isinstance(vre.resolver, ConceptResolver)
-
 
 # ---------------------------------------------------------------------------
 # Agent identity integration
@@ -402,3 +392,41 @@ class TestAgentIdentityIntegration:
         # Pass concepts as list to trigger internal grounding path
         policy_result = vre.check_policy(["file"])
         assert policy_result.action == PolicyAction.PASS
+
+
+# ---------------------------------------------------------------------------
+# Grounding contract: membership is a graph fact (no normalization)
+# ---------------------------------------------------------------------------
+
+def test_check_inflected_input_surfaces_existence_gap():
+    """'files' is not in the graph; it must surface as an ExistenceGap, not be coerced to 'file'."""
+    from vre.core.models import ExistenceGap
+    file_p = _make_fully_grounded("file")
+    vre = _make_vre_with_stub([file_p])
+    result = vre.check(["files"])
+    assert result.grounded is False
+    assert any(
+        isinstance(g, ExistenceGap) and g.primitive.name == "files"
+        for g in result.gaps
+    )
+
+
+def test_check_case_insensitive_match_echoes_canonical_casing():
+    """'FILE' matches stored 'file' case-insensitively; resolved echoes the canonical casing."""
+    file_p = _make_fully_grounded("file")
+    vre = _make_vre_with_stub([file_p])
+    result = vre.check(["FILE"])
+    assert result.grounded is True
+    assert result.resolved == ["file"]
+
+
+def test_check_preserves_order_and_canonical_casing_across_list():
+    """Each input in a list maps to its stored canonical casing, in input order."""
+    file_p = _make_fully_grounded("file")
+    write_p = _make_fully_grounded("write")
+    vre = _make_vre_with_stub([file_p, write_p])
+    result = vre.check(["FILE", "write"])
+    # resolved echoes canonical stored casing for every input, order preserved.
+    # (Do NOT assert on `grounded` here — two unconnected roots legitimately
+    #  produce a ReachabilityGap; this test is only about the resolved list.)
+    assert result.resolved == ["file", "write"]
