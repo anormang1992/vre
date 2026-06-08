@@ -4,16 +4,21 @@
 """
 Policy Wizard — interactive tool for attaching policies to APPLIES_TO relata.
 
-Run: python -m vre.core.policy.wizard
+`run_wizard` is a helper: construct a repository and pass it in.
+
+    from vre.core.backends import SQLiteRepository
+    from vre.core.policy.wizard import run_wizard
+
+    with SQLiteRepository() as repo:
+        run_wizard(repo)
 """
 
 from __future__ import annotations
 
-import argparse
 import importlib
 from uuid import UUID
 
-from vre.core.backends import Neo4jRepository, Repository
+from vre.core.backends import Repository
 from vre.core.models import DepthLevel, RelationType, Relatum, format_depth_label
 from vre.core.policy.models import Cardinality, Policy
 
@@ -261,21 +266,3 @@ def run_wizard(repo: Repository) -> None:
                 f"\n  Saved policy '{policy.name}' on "
                 f"{source.name} --[APPLIES_TO @ {format_depth_label(chosen_depth_level)}]--> {target.name}\n"
             )
-
-
-def main() -> None:
-    """
-    Entry point: parse CLI arguments and launch the policy wizard.
-    """
-    parser = argparse.ArgumentParser(description="VRE Policy Wizard")
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
-    args = parser.parse_args()
-
-    with Neo4jRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password) as repo:
-        run_wizard(repo)
-
-
-if __name__ == "__main__":
-    main()

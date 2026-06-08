@@ -669,10 +669,15 @@ filesystem state.
 
 ### Policy Wizard
 
-The wizard provides an interactive CLI to attach policies to `APPLIES_TO` relata without manually editing seed scripts:
+`run_wizard(repo)` is an interactive helper for attaching policies to `APPLIES_TO` relata without manually editing seed
+scripts. Construct a repository and pass it in:
 
-```bash
-poetry run python -m vre.core.policy.wizard
+```python
+from vre.core.backends import SQLiteRepository
+from vre.core.policy.wizard import run_wizard
+
+with SQLiteRepository() as repo:
+    run_wizard(repo)
 ```
 
 It walks you through selecting source and target primitives, viewing the relata table, defining policy fields, and
