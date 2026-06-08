@@ -282,6 +282,10 @@ class LearningEngine:
                 self._persist_relational(gap, candidate, provenance)
             case (ReachabilityGap(), ReachabilityCandidate()):
                 self._persist_reachability(gap, candidate, provenance)
+            case _:
+                raise CandidateValidationError(
+                    f"No persistence path for gap '{gap.kind}' with candidate '{candidate.kind}'"
+                )
 
     def learn_gap(
         self,
@@ -295,6 +299,10 @@ class LearningEngine:
         Raises CandidateValidationError if the candidate is invalid.
         """
         logger.info("Learning gap: %s", gap.kind)
+        if gap.kind != candidate.kind:
+            raise CandidateValidationError(
+                f"Candidate kind '{candidate.kind}' does not match gap kind '{gap.kind}'"
+            )
         candidate.validate_for_gap(gap)
         provenance = _make_provenance(source)
         self._persist(gap, candidate, provenance)

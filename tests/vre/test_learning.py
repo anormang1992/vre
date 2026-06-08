@@ -556,6 +556,34 @@ class TestLearnGap:
         saved = repo.saved[0]
         assert saved.provenance.source == ProvenanceSource.CONVERSATIONAL
 
+    def test_rejects_mismatched_gap_candidate_kind(self):
+        # ExistenceGap fed a well-formed DepthCandidate: the kind guard must
+        # reject the pair before any persistence is attempted.
+        repo = StubRepository()
+        engine = LearningEngine(repo)
+        gap = ExistenceGap(primitive=_primitive("Widget"))
+        filled = DepthCandidate(
+            new_depths=[ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "x"})],
+        )
+
+        with pytest.raises(CandidateValidationError, match="does not match gap kind"):
+            engine.learn_gap(gap, filled)
+        assert repo.saved == []
+
+    def test_persist_rejects_unhandled_pair(self):
+        # Direct _persist bypasses the learn_gap kind guard; the match's case _
+        # backstop must still raise instead of silently persisting nothing.
+        repo = StubRepository()
+        engine = LearningEngine(repo)
+        gap = ExistenceGap(primitive=_primitive("Widget"))
+        filled = DepthCandidate(
+            new_depths=[ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "x"})],
+        )
+
+        with pytest.raises(CandidateValidationError, match="No persistence path"):
+            engine._persist(gap, filled, _make_provenance(ProvenanceSource.LEARNED))
+        assert repo.saved == []
+
 
 # ---------------------------------------------------------------------------
 # Reachability prerequisites tests
