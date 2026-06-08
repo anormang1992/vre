@@ -1,6 +1,11 @@
 import argparse
 
-from vre.core.backends import Neo4jRepository, Repository, SQLiteRepository
+from vre.core.backends import Repository, SQLiteRepository
+
+try:
+    from vre.core.backends import Neo4jRepository
+except ImportError:
+    Neo4jRepository = None
 
 
 def add_backend_args(parser: argparse.ArgumentParser) -> None:
@@ -27,4 +32,6 @@ def add_backend_args(parser: argparse.ArgumentParser) -> None:
 def make_repository(args: argparse.Namespace) -> Repository:
     if args.backend == "sqlite":
         return SQLiteRepository(args.sqlite_path)
+    if Neo4jRepository is None:
+        raise SystemExit("The neo4j backend requires the optional 'neo4j' extra: pip install 'vre[neo4j]'")
     return Neo4jRepository(args.neo4j_uri, args.neo4j_user, args.neo4j_password)

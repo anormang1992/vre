@@ -209,16 +209,19 @@ class GroundingEngine:
     @staticmethod
     def _reachable_undirected(root_id: UUID, neighbors: dict[UUID, set[UUID]]) -> set[UUID]:
         """
-        BFS from root_id over the undirected neighbor graph; returns all reachable node IDs.
+        DFS from root_id over the undirected neighbor graph; returns all reachable node IDs.
+
+        Traversal order does not affect the result — the full connected component
+        is returned regardless — so a stack (DFS) is used.
         """
         visited: set[UUID] = {root_id}
-        queue: list[UUID] = [root_id]
-        while queue:
-            current = queue.pop()
+        stack: list[UUID] = [root_id]
+        while stack:
+            current = stack.pop()
             for neighbor in neighbors.get(current, set()):
                 if neighbor not in visited:
                     visited.add(neighbor)
-                    queue.append(neighbor)
+                    stack.append(neighbor)
         return visited
 
     @staticmethod
