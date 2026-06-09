@@ -950,6 +950,21 @@ class TestResolveSubgraph:
                 assert isinstance(edge.source_depth, DepthLevel)
                 assert isinstance(edge.target_depth, DepthLevel)
 
+    def test_anchor_uses_name_index_not_table_scan(self) -> None:
+        """The resolve_subgraph CTE anchor must hit idx_primitives_name_lower
+        rather than full-scanning primitives (issue #82). Mirrors the production
+        anchor in resolve_subgraph: a LOWER(name) wrapper would force a SCAN."""
+        with SQLiteRepository(":memory:") as repo:
+            _seed_filesystem_graph(repo)
+            plan = repo._conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT id FROM primitives WHERE name COLLATE NOCASE IN (?, ?)",
+                ["file", "directory"],
+            ).fetchall()
+            detail = " ".join(row["detail"] for row in plan)
+            assert "idx_primitives_name_lower" in detail
+            assert "SCAN primitives" not in detail
+
 
 # ------------------------------------------------------------------
 # TestUpsertPrimitive
