@@ -232,12 +232,17 @@ class SQLiteRepository(Repository):
         Verify that no new transitive edge would create a cycle.
 
         Called inside a transaction after old edges have been deleted.
-        For each new transitive relatum, checks whether the target can
-        already reach the source via transitive edges. Raises
-        CyclicRelationshipError on the first cycle found.
+        Seeds a single recursive CTE with every proposed transitive target at
+        once -- carrying each target along as ``origin`` -- and asks which
+        origins can reach ``source_id`` via existing transitive edges. Any such
+        origin would close a cycle (source -> target -> ... -> source). This
+        replaces a per-edge query loop with one round-trip per save. Raises
+        CyclicRelationshipError on the first offending edge.
         """
-        placeholders = ",".join("?" for _ in _TRANSITIVE_RELS)
-
+        # Map each distinct transitive target to a rel_type for diagnostics, and
+        # short-circuit self-references (which a recursive walk would also catch,
+        # but this gives a clearer message and avoids the query entirely).
+        target_rel_type: dict[str, str] = {}
         for rp in relata_params:
             if rp["rel_type"] not in _TRANSITIVE_RELS:
                 continue
@@ -252,31 +257,43 @@ class SQLiteRepository(Repository):
                     f"Self-referential {rp['rel_type']} on {source_id}"
                 )
 
-            row = cursor.execute(
+            target_rel_type.setdefault(rp["target_id"], rp["rel_type"])
+
+        # With no transitive targets there is nothing reachable to close a
+        # cycle, so the query is skipped and the method falls through.
+        if target_rel_type:
+            targets = list(target_rel_type)
+            seed_placeholders = ",".join("(?)" for _ in targets)
+            rel_placeholders = ",".join("?" for _ in _TRANSITIVE_RELS)
+
+            rows = cursor.execute(
                 f"""
-                WITH RECURSIVE reachable(id) AS (
-                    SELECT ?
+                WITH RECURSIVE reachable(origin, id) AS (
+                    -- seed each proposed target as both its own origin and start
+                    -- node (column1 is SQLite's auto-name for the VALUES column)
+                    SELECT column1, column1 FROM (VALUES {seed_placeholders})
                     UNION
-                    SELECT r.target_id
+                    SELECT rc.origin, r.target_id
                     FROM relata r
                     INNER JOIN reachable rc ON r.source_id = rc.id
-                    WHERE r.rel_type IN ({placeholders})
+                    WHERE r.rel_type IN ({rel_placeholders})
                 )
-                SELECT EXISTS(SELECT 1 FROM reachable WHERE id = ?) AS would_cycle
+                SELECT DISTINCT origin FROM reachable WHERE id = ?
                 """,
-                [rp["target_id"]] + _TRANSITIVE_RELS + [source_id],
-            ).fetchone()
+                targets + _TRANSITIVE_RELS + [source_id],
+            ).fetchall()
 
-            if row and row["would_cycle"]:
+            if rows:
+                offending = rows[0]["origin"]
+                rel_type = target_rel_type[offending]
                 logger.warning(
                     "Cycle detected: %s from %s to %s would create a cycle",
-                    rp["rel_type"],
+                    rel_type,
                     source_id,
-                    rp["target_id"],
+                    offending,
                 )
                 raise CyclicRelationshipError(
-                    f"{rp['rel_type']} from {source_id} to "
-                    f"{rp['target_id']} would create a cycle"
+                    f"{rel_type} from {source_id} to {offending} would create a cycle"
                 )
 
     # ------------------------------------------------------------------
@@ -537,15 +554,18 @@ class SQLiteRepository(Repository):
         if not names:
             return ResolvedSubgraph(roots=[], nodes=[], edges=[])
 
-        lowered = [n.lower() for n in names]
-        name_placeholders = ",".join("?" for _ in lowered)
+        name_placeholders = ",".join("?" for _ in names)
         transitive_placeholders = ",".join("?" for _ in _TRANSITIVE_RELS)
 
-        # Phase 1: Find all transitively reachable node IDs from roots
+        # Phase 1: Find all transitively reachable node IDs from roots.
+        # The anchor uses `name COLLATE NOCASE` (mirroring find_by_name) so the
+        # case-insensitive idx_primitives_name_lower index can satisfy it; a
+        # LOWER(name) wrapper would force a full table scan. Raw names are passed
+        # as params -- the NOCASE collation handles case-folding in the engine.
         reachable_ids_rows = self._conn.execute(
             f"""
             WITH RECURSIVE reachable(id) AS (
-                SELECT id FROM primitives WHERE LOWER(name) IN ({name_placeholders})
+                SELECT id FROM primitives WHERE name COLLATE NOCASE IN ({name_placeholders})
                 UNION
                 SELECT r.target_id
                 FROM relata r
@@ -554,7 +574,7 @@ class SQLiteRepository(Repository):
             )
             SELECT id FROM reachable
             """,
-            lowered + _TRANSITIVE_RELS,
+            list(names) + _TRANSITIVE_RELS,
         ).fetchall()
 
         reachable_ids = [row["id"] for row in reachable_ids_rows]
@@ -591,8 +611,8 @@ class SQLiteRepository(Repository):
             sid = ed["source_id"]
             edges_by_source.setdefault(sid, []).append(ed)
 
-        # Identify root names (lowered) for root filtering
-        lowered_set = set(lowered)
+        # Identify root names (case-insensitive) for root filtering
+        lowered_set = {n.lower() for n in names}
 
         # Hydrate all nodes
         nodes: list[Primitive] = []
