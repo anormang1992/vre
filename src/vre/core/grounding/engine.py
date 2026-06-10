@@ -346,6 +346,7 @@ class GroundingEngine:
         """
         if not concepts:
             logger.debug("Ground called with empty concepts")
+            # TODO: Why not use the _empty_response for the trace here?
             result = GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
         else:
             logger.info("Grounding %d concept(s)", len(concepts))
