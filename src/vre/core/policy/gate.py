@@ -53,12 +53,7 @@ class PolicyGate:
                                 logger.debug("Policy %r passed by callback", policy.name)
                                 continue  # action passed the policy — no violation
 
-                        try:
-                            message = policy.confirmation_message.format(
-                                action=primitive.name
-                            )
-                        except (KeyError, ValueError):
-                            message = policy.confirmation_message
+                        message = policy.confirmation_message
 
                         logger.info(
                             "Policy violation: %r — %s (requires_confirmation=%s)",

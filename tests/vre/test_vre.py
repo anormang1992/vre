@@ -254,7 +254,7 @@ class TestCheckPolicyOrchestration:
         policy = Policy(
             name="TestPolicy",
             requires_confirmation=requires_confirmation,
-            confirmation_message="Confirm {action}?",
+            confirmation_message="Confirm?",
         )
         src = _make_primitive_with_policy("write", target, policy)
         vre = _make_vre_with_stub([src, target])

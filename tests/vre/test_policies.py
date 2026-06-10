@@ -93,7 +93,7 @@ def test_step_cardinality_single_no_trigger():
     policy = Policy(
         name="BulkDelete",
         trigger_cardinality=Cardinality.MULTIPLE,
-        confirmation_message="Bulk {action} requires confirmation.",
+        confirmation_message="Bulk delete requires confirmation.",
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
@@ -106,7 +106,7 @@ def test_step_cardinality_multiple_triggers():
     policy = Policy(
         name="BulkDelete",
         trigger_cardinality=Cardinality.MULTIPLE,
-        confirmation_message="Bulk {action} requires confirmation.",
+        confirmation_message="Bulk delete requires confirmation.",
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
@@ -120,7 +120,7 @@ def test_policy_trigger_cardinality_none_always_fires():
     policy = Policy(
         name="AlwaysConfirm",
         trigger_cardinality=None,
-        confirmation_message="Always confirm {action}.",
+        confirmation_message="Always confirm write.",
     )
     primitive = _make_primitive_with_applies_to("write", [policy])
     response = _make_step_result(primitive)
@@ -134,7 +134,7 @@ def test_no_callback_fires_violation():
     policy = Policy(
         name="NoCallback",
         callback=None,
-        confirmation_message="Confirm {action}.",
+        confirmation_message="Confirm delete.",
     )
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
@@ -143,8 +143,8 @@ def test_no_callback_fires_violation():
     assert violations[0].message is not None
 
 
-def test_confirmation_message_formatted():
-    """{action} in confirmation_message is interpolated from primitive.name."""
+def test_confirmation_message_verbatim():
+    """confirmation_message is used verbatim — {action} is NOT interpolated."""
     policy = Policy(
         name="Confirm",
         confirmation_message="About to {action} — proceed?",
@@ -152,7 +152,7 @@ def test_confirmation_message_formatted():
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
     violations = PolicyGate().evaluate(response, Cardinality.SINGLE)
-    assert violations[0].message == "About to delete — proceed?"
+    assert violations[0].message == "About to {action} — proceed?"
 
 
 def test_non_applies_to_relata_ignored():
