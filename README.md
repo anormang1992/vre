@@ -608,8 +608,11 @@ A `PolicyCallback` is a callable attached to a `Policy` that runs *during* evalu
 decisions. This is distinct from `on_policy`, which handles human confirmation
 *after* violations are collected. A policy callback determines whether a violation fires at all.
 
-The callback receives a `PolicyCallContext` containing the tool name, the full grounding result, and the original
-function arguments. It returns a `PolicyCallbackResult` — `passed=True` suppresses the
+The callback receives a `PolicyCallContext` composed of four parts: `tool_call` (the invocation —
+`tool_name`, `call_args`, `call_kwargs`), `grounding` (a bounded facade — `agent_id` and the
+`resolved_concepts` grounded in this call), `triggering_edge` (the specific edge that fired the
+callback — source/target concept and the source/target depths), and `policy` (the `Policy` that
+fired, including its `metadata`). It returns a `PolicyCallbackResult` — `passed=True` suppresses the
 violation, `passed=False` fires it.
 
 ```python
@@ -621,7 +624,7 @@ class BlockProtectedFiles:
     """Block deletion of files matching 'protected*'."""
 
     def __call__(self, context: PolicyCallContext) -> PolicyCallbackResult:
-        command = context.call_args[0] if context.call_args else ""
+        command = context.tool_call.call_args[0] if context.tool_call.call_args else ""
         targets = [t for t in command.split()[1:] if not t.startswith("-")]
 
         for target in targets:
