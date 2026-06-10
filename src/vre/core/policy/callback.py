@@ -5,7 +5,10 @@
 PolicyCallback Protocol and PolicyCallContext — the user-facing callback contract.
 
 Users implementing custom policy logic should type-annotate against
-PolicyCallback and accept a PolicyCallContext argument.
+PolicyCallback and accept a PolicyCallContext argument. PolicyCallContext is a
+composition of four orthogonal pieces — the tool call (`tool_call`), a bounded
+grounding facade (`grounding`), the edge that fired (`triggering_edge`), and the
+policy itself (`policy`).
 
 Example::
 
@@ -14,7 +17,7 @@ Example::
 
     class AllowTempWrites:
         def __call__(self, context: PolicyCallContext) -> PolicyCallbackResult:
-            path = context.call_kwargs.get("path", "")
+            path = context.tool_call.call_kwargs.get("path", "")
             if path.startswith("/tmp"):
                 return PolicyCallbackResult(passed=True, message="Temp writes allowed")
             return PolicyCallbackResult(passed=False)
@@ -25,9 +28,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from vre.core.grounding import GroundingResult
 from vre.core.models import DepthLevel
-from vre.core.policy.models import PolicyCallbackResult
+from vre.core.policy.models import Policy, PolicyCallbackResult
 
 
 class ToolCallContext(BaseModel):
@@ -75,26 +77,17 @@ class TriggeringEdge(BaseModel):
 
 class PolicyCallContext(BaseModel):
     """
-    Context passed to a policy callback at evaluation time.
+    Complete, per-edge context passed to a policy callback.
 
-    Attributes
-    ----------
-    tool_name:
-        Name of the decorated function that triggered the policy check.
-    grounding:
-        The GroundingResult from grounding, including the full epistemic trace.
-    call_args:
-        Positional arguments the decorated function was called with.
-    call_kwargs:
-        Keyword arguments the decorated function was called with.
+    A composition of four orthogonal pieces: the tool call, the grounding
+    facade, the edge that fired, and the policy that fired. All are populated
+    by the gate before the callback runs.
     """
 
-    model_config = {"arbitrary_types_allowed": True}
-
-    tool_name: str
-    grounding: GroundingResult
-    call_args: tuple[Any, ...]
-    call_kwargs: dict[str, Any]
+    tool_call: ToolCallContext
+    grounding: GroundingContext
+    triggering_edge: TriggeringEdge
+    policy: Policy
 
 
 class PolicyCallback(Protocol):

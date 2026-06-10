@@ -26,10 +26,10 @@ def _extract_command(context: PolicyCallContext) -> str:
     """
     Pull the command string from call_args or call_kwargs.
     """
-    if context.call_args:
-        command = str(context.call_args[0])
+    if context.tool_call.call_args:
+        command = str(context.tool_call.call_args[0])
     else:
-        command = str(context.call_kwargs.get("command", ""))
+        command = str(context.tool_call.call_kwargs.get("command", ""))
     return command
 
 
@@ -116,7 +116,7 @@ def protected_file_delete(context: PolicyCallContext) -> PolicyCallbackResult:
     `passed=False` (violation fires) when protected files are at risk.
     """
     command: str = _extract_command(context)
-    cwd: str = context.call_kwargs.get("cwd", ".")
+    cwd: str = context.tool_call.call_kwargs.get("cwd", ".")
 
     if not command:
         callback_result = PolicyCallbackResult(passed=True)

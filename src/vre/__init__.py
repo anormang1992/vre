@@ -42,7 +42,12 @@ from vre.core.models import (
     ProvenanceSource,
 )
 from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult, PolicyViolation
-from vre.core.policy.callback import PolicyCallContext
+from vre.core.policy.callback import (
+    GroundingContext,
+    PolicyCallContext,
+    ToolCallContext,
+    TriggeringEdge,
+)
 from vre.core.policy.gate import PolicyGate
 from vre.identity import AgentIdentity, AgentRegistry
 from vre.learning import LearningEngine, template_for_gap
@@ -80,6 +85,9 @@ __all__ = [
     "PolicyResult",
     "PolicyViolation",
     "PolicyCallContext",
+    "ToolCallContext",
+    "GroundingContext",
+    "TriggeringEdge",
     "PolicyGate",
     "LearningEngine",
     "template_for_gap",
@@ -165,7 +173,7 @@ class VRE:
         self,
         concepts: list[str] | GroundingResult,
         cardinality: str | None = None,
-        call_context: PolicyCallContext | None = None,
+        tool_call: ToolCallContext | None = None,
         on_policy: Callable[[list[PolicyViolation]], bool] | None = None,
     ) -> PolicyResult:
         """
@@ -174,9 +182,9 @@ class VRE:
         `concepts` may be a list of concept names (grounding is run) or a
         pre-computed `GroundingResult` (grounding is skipped).
 
-        `call_context` carries the tool name, grounding result, and the args/
-        kwargs of the decorated function so that policy callbacks can make
-        domain-specific decisions. Omit when calling outside a guarded context.
+        `tool_call` carries the tool name and the args/kwargs of the decorated
+        function so that policy callbacks can make domain-specific decisions.
+        Omit when calling outside a guarded context.
 
         `on_policy` is an optional handler consulted when any violation has
         `requires_confirmation=True`. It receives all violations and returns
@@ -201,7 +209,13 @@ class VRE:
                     card_enum = None  # unknown -> fire all policies
 
             gate = PolicyGate()
-            violations = gate.evaluate(grounding.trace, card_enum, call_context)
+            grounding_ctx = GroundingContext(
+                agent_id=grounding.agent_id,
+                resolved_concepts=grounding.resolved,
+            )
+            violations = gate.evaluate(
+                grounding.trace, card_enum, tool_call=tool_call, grounding=grounding_ctx,
+            )
 
             if not violations:
                 policy_result = PolicyResult(action=PolicyAction.PASS)

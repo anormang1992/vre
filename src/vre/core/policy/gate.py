@@ -8,7 +8,12 @@ PolicyGate — evaluates policy violations against an epistemic trace.
 import logging
 
 from vre.core.models import EpistemicResponse, RelationType
-from vre.core.policy.callback import PolicyCallContext
+from vre.core.policy.callback import (
+    GroundingContext,
+    PolicyCallContext,
+    ToolCallContext,
+    TriggeringEdge,
+)
 from vre.core.policy.models import Cardinality, PolicyCallbackResult, PolicyViolation
 
 logger = logging.getLogger(__name__)
@@ -22,15 +27,19 @@ class PolicyGate:
     def _collect_violations(
         response: EpistemicResponse,
         cardinality: Cardinality | None = None,
-        call_context: PolicyCallContext | None = None,
+        tool_call: ToolCallContext | None = None,
+        grounding: GroundingContext | None = None,
     ) -> list[PolicyViolation]:
         """
         Walk all APPLIES_TO relata in the trace and collect triggered policy violations.
 
         When cardinality is None (unknown), all policies fire — we cannot justify
-        skipping any policy without knowing the cardinality.
+        skipping any policy without knowing the cardinality. A `PolicyCallContext`
+        is built per edge, but only when the policy has a callback and a `tool_call`
+        is present; otherwise no context is allocated and the policy simply fires.
         """
         violations: list[PolicyViolation] = []
+        id_to_name = {p.id: p.name for p in response.result.primitives}
         for primitive in response.result.primitives:
             for depth in primitive.depths:
                 for relatum in depth.relata:
@@ -47,8 +56,21 @@ class PolicyGate:
                             continue
                         cb = policy.resolve_callback()
                         cb_result: PolicyCallbackResult | None = None
-                        if cb is not None and call_context is not None:
-                            cb_result = cb(call_context)
+                        if cb is not None and tool_call is not None:
+                            context = PolicyCallContext(
+                                tool_call=tool_call,
+                                grounding=grounding or GroundingContext(),
+                                triggering_edge=TriggeringEdge(
+                                    source_name=primitive.name,
+                                    target_name=id_to_name.get(
+                                        relatum.target_id, str(relatum.target_id)
+                                    ),
+                                    source_depth=depth.level,
+                                    target_depth=relatum.target_depth,
+                                ),
+                                policy=policy,
+                            )
+                            cb_result = cb(context)
                             if cb_result.passed:
                                 logger.debug("Policy %r passed by callback", policy.name)
                                 continue  # action passed the policy — no violation
@@ -71,13 +93,17 @@ class PolicyGate:
         self,
         response: EpistemicResponse,
         cardinality: Cardinality | None = None,
-        call_context: PolicyCallContext | None = None,
+        tool_call: ToolCallContext | None = None,
+        grounding: GroundingContext | None = None,
     ) -> list[PolicyViolation]:
         """
         Evaluate all policies in the trace and return triggered violations.
         """
-        logger.debug("Evaluating policies (cardinality=%s, has_context=%s)", cardinality, call_context is not None)
-        violations = self._collect_violations(response, cardinality, call_context)
+        logger.debug(
+            "Evaluating policies (cardinality=%s, has_tool_call=%s)",
+            cardinality, tool_call is not None,
+        )
+        violations = self._collect_violations(response, cardinality, tool_call, grounding)
         if violations:
             logger.info("Policy evaluation: %d violation(s)", len(violations))
         else:

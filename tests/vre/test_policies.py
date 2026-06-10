@@ -189,50 +189,53 @@ def test_requires_confirmation_false_produces_violations():
 
 def test_callback_passed_true_suppresses_violation():
     """Callback returning passed=True — action passes the policy, no violation."""
+    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="WithCallback",
         callback="tests.vre.test_policies._cb_pass",
-        confirmation_message="Confirm {action}.",
+        confirmation_message="Confirm write.",
     )
     primitive = _make_primitive_with_applies_to("write", [policy])
     response = _make_step_result(primitive)
-
-    from vre.core.policy.callback import PolicyCallContext
-    from vre.core.grounding import GroundingResult
-
-    ctx = PolicyCallContext(
-        tool_name="test_fn",
-        grounding=GroundingResult(grounded=True, resolved=["write"], gaps=[]),
-        call_args=(),
-        call_kwargs={},
-    )
-    violations = PolicyGate().evaluate(response, Cardinality.SINGLE, ctx)
+    tool_call = ToolCallContext(tool_name="test_fn")
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE, tool_call=tool_call)
     assert len(violations) == 0
 
 
 def test_callback_passed_false_fires_violation():
     """Callback returning passed=False — action fails the policy, violation carries result."""
+    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="WithCallback",
         callback="tests.vre.test_policies._cb_fail",
-        confirmation_message="Confirm {action}.",
+        confirmation_message="Confirm write.",
     )
     primitive = _make_primitive_with_applies_to("write", [policy])
     response = _make_step_result(primitive)
-
-    from vre.core.policy.callback import PolicyCallContext
-    from vre.core.grounding import GroundingResult
-
-    ctx = PolicyCallContext(
-        tool_name="test_fn",
-        grounding=GroundingResult(grounded=True, resolved=["write"], gaps=[]),
-        call_args=(),
-        call_kwargs={},
-    )
-    violations = PolicyGate().evaluate(response, Cardinality.SINGLE, ctx)
+    tool_call = ToolCallContext(tool_name="test_fn")
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE, tool_call=tool_call)
     assert len(violations) == 1
     assert violations[0].callback_result is not None
     assert violations[0].callback_result.passed is False
+
+
+def test_callback_receives_triggering_edge():
+    """The callback sees the source/target names and depths of the edge that fired it."""
+    from vre.core.policy.callback import ToolCallContext
+    policy = Policy(
+        name="EdgeAware",
+        callback="tests.vre.test_policies._cb_record_edge",
+        confirmation_message="Confirm.",
+    )
+    primitive = _make_primitive_with_applies_to("delete", [policy])
+    response = _make_step_result(primitive)
+    _RECORDED_EDGES.clear()
+    PolicyGate().evaluate(response, Cardinality.SINGLE, tool_call=ToolCallContext(tool_name="rm"))
+    assert len(_RECORDED_EDGES) == 1
+    edge = _RECORDED_EDGES[0]
+    assert edge.source_name == "delete"
+    assert edge.source_depth == DepthLevel.CAPABILITIES   # _make_primitive_with_applies_to: D2 source
+    assert edge.target_depth == DepthLevel.CONSTRAINTS    # ...and D3 target
 
 
 def test_multiple_policies_on_same_relatum_all_collected():
@@ -258,6 +261,14 @@ def _cb_pass(context) -> PolicyCallbackResult:
 
 def _cb_fail(context) -> PolicyCallbackResult:
     return PolicyCallbackResult(passed=False, message="Failed by callback")
+
+
+_RECORDED_EDGES = []
+
+
+def _cb_record_edge(context) -> PolicyCallbackResult:
+    _RECORDED_EDGES.append(context.triggering_edge)
+    return PolicyCallbackResult(passed=True)
 
 
 # ---------------------------------------------------------------------------
