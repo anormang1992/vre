@@ -56,6 +56,12 @@ class PolicyGate:
                             continue
                         cb = policy.resolve_callback()
                         cb_result: PolicyCallbackResult | None = None
+                        # Without a tool_call we cannot justify that the action is safe (a
+                        # callback may require the call args). Fail closed by construction:
+                        # skip the callback and fire the policy. Do NOT relax to
+                        # `if cb is not None` — that delegates safety to integrator discipline
+                        # (callbacks remembering to guard against a None tool_call), which a
+                        # safety-by-construction framework must not rely on.
                         if cb is not None and tool_call is not None:
                             context = PolicyCallContext(
                                 tool_call=tool_call,
