@@ -35,18 +35,13 @@ class PolicyCallbackResult(BaseModel):
     message: str | None = None
 
     @classmethod
-    def unevaluable(cls) -> "PolicyCallbackResult":
+    def unevaluable(cls, message: str) -> "PolicyCallbackResult":
         """
-        Result for a callback that could not be evaluated because no tool call was
-        available to it. Fails closed with an explicit reason.
+        Result for a callback that could not be evaluated — fails closed, carrying
+        the caller-supplied reason it could not run (a missing tool call is one
+        such reason, but not the only one).
         """
-        return cls(
-            passed=False,
-            message=(
-                "Policy callback could not be evaluated (no tool call in this "
-                "context); firing conservatively."
-            ),
-        )
+        return cls(passed=False, message=message)
 
 
 class PolicyAction(str, Enum):
@@ -125,10 +120,17 @@ class PolicyViolation(BaseModel):
         fired or could not be evaluated) leads, followed by the policy's
         confirmation message; the confirmation message alone when there is no
         callback reason.
+
+        Deliberately a derived property — NOT a stored field or `@computed_field`.
+        Keeping it out of the serialized form means it can never drift from its
+        inputs (`callback_result.message` + `policy.confirmation_message`), which
+        are themselves serialized and so fully reconstruct it.
         """
         if self.callback_result is not None and self.callback_result.message:
-            return f"{self.callback_result.message}\n{self.policy.confirmation_message}"
-        return self.policy.confirmation_message
+            message = f"{self.callback_result.message}\n{self.policy.confirmation_message}"
+        else:
+            message = self.policy.confirmation_message
+        return message
 
     @property
     def requires_confirmation(self) -> bool:

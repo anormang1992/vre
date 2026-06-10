@@ -449,10 +449,10 @@ def test_triggering_edge_fields():
 
 
 def test_policy_callback_result_unevaluable():
-    """unevaluable() is a fail-closed result naming the missing tool call."""
-    r = PolicyCallbackResult.unevaluable()
+    """unevaluable(message) is a fail-closed result carrying the caller's reason."""
+    r = PolicyCallbackResult.unevaluable("could not evaluate: no tool call")
     assert r.passed is False
-    assert "no tool call" in r.message
+    assert r.message == "could not evaluate: no tool call"
 
 
 def test_policy_violation_message_property():

@@ -79,7 +79,10 @@ class PolicyGate:
                             else:
                                 # No tool_call ⇒ the callback cannot be evaluated. Fail closed
                                 # by construction rather than trusting it to handle a missing call.
-                                cb_result = PolicyCallbackResult.unevaluable()
+                                cb_result = PolicyCallbackResult.unevaluable(
+                                    "Policy callback could not be evaluated (no tool call "
+                                    "in this context); firing conservatively."
+                                )
 
                         violation = PolicyViolation(policy=policy, callback_result=cb_result)
                         logger.info(
