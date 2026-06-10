@@ -258,3 +258,40 @@ def _cb_pass(context) -> PolicyCallbackResult:
 
 def _cb_fail(context) -> PolicyCallbackResult:
     return PolicyCallbackResult(passed=False, message="Failed by callback")
+
+
+# ---------------------------------------------------------------------------
+# New context type tests (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_tool_call_context_defaults():
+    """ToolCallContext carries the invocation; args/kwargs default to empty."""
+    from vre.core.policy.callback import ToolCallContext
+    tc = ToolCallContext(tool_name="write_file")
+    assert tc.tool_name == "write_file"
+    assert tc.call_args == ()
+    assert tc.call_kwargs == {}
+
+
+def test_grounding_context_defaults():
+    """GroundingContext defaults to no agent and no resolved concepts."""
+    from vre.core.policy.callback import GroundingContext
+    gc = GroundingContext()
+    assert gc.agent_id is None
+    assert gc.resolved_concepts == []
+
+
+def test_triggering_edge_fields():
+    """TriggeringEdge captures source/target name and the two depths."""
+    from vre.core.policy.callback import TriggeringEdge
+    edge = TriggeringEdge(
+        source_name="delete",
+        target_name="file",
+        source_depth=DepthLevel.CONSTRAINTS,
+        target_depth=DepthLevel.CAPABILITIES,
+    )
+    assert edge.source_name == "delete"
+    assert edge.target_name == "file"
+    assert edge.source_depth == DepthLevel.CONSTRAINTS
+    assert edge.target_depth == DepthLevel.CAPABILITIES
