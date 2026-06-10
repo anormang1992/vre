@@ -247,8 +247,7 @@ def test_policy_str_block():
 def test_policy_str_block_with_violations():
     from vre.core.policy.models import PolicyViolation, Policy
     violation = PolicyViolation(
-        policy=Policy(name="TestPolicy"),
-        message="Confirm delete?",
+        policy=Policy(name="TestPolicy", confirmation_message="Confirm delete?"),
     )
     result = PolicyResult(
         action=PolicyAction.BLOCK,

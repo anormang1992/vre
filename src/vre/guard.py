@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Callable
 
 from vre.core.models import DepthLevel
 from vre.core.policy import PolicyAction
-from vre.core.policy.callback import PolicyCallContext
+from vre.core.policy.callback import ToolCallContext
 from vre.core.policy.models import PolicyViolation
 
 if TYPE_CHECKING:
@@ -107,15 +107,14 @@ def vre_guard(
                 resolved_cardinality = (
                     cardinality(*args, **kwargs) if callable(cardinality) else cardinality
                 )
-                context = PolicyCallContext(
+                tool_call = ToolCallContext(
                     tool_name=tool_name,
-                    grounding=grounding,
                     call_args=args,
                     call_kwargs=kwargs,
                 )
 
                 policy = vre.check_policy(
-                    grounding, resolved_cardinality, context, on_policy=on_policy,
+                    grounding, resolved_cardinality, tool_call, on_policy=on_policy,
                 )
 
                 if policy.action == PolicyAction.BLOCK:
