@@ -20,6 +20,7 @@ from vre.core.models import (
     ResolvedSubgraph,
 )
 from vre.core.policy import Cardinality, Policy, PolicyAction, PolicyResult
+from vre.core.policy.callback import ToolCallContext
 from vre.core.grounding import GroundingResult
 from vre.learning import LearningEngine
 
@@ -450,7 +451,6 @@ class TestCheckPolicyGroundingFacade:
     """check_policy mints the GroundingContext facade from the GroundingResult."""
 
     def test_callback_sees_resolved_concepts(self):
-        from vre.core.policy.callback import ToolCallContext
         target = _make_fully_grounded("file")
         policy = Policy(
             name="FacadeAware",
