@@ -285,6 +285,14 @@ def _cb_block_if_protected(context) -> PolicyCallbackResult:
     return PolicyCallbackResult(passed=True)
 
 
+_RECORDED_TOOL_CALLS = []
+
+
+def _cb_record_tool_call(context) -> PolicyCallbackResult:
+    _RECORDED_TOOL_CALLS.append(context.tool_call)
+    return PolicyCallbackResult(passed=True)
+
+
 # ---------------------------------------------------------------------------
 # New capability-coverage tests (Task 4)
 # ---------------------------------------------------------------------------
@@ -368,6 +376,22 @@ def test_no_tool_call_skips_callback_and_fires():
     response = _make_step_result(primitive)
     violations = PolicyGate().evaluate(response, Cardinality.SINGLE)  # no tool_call
     assert len(violations) == 1
+
+
+def test_callback_receives_tool_call():
+    """The caller-supplied tool_call (name + args + kwargs) is threaded to the callback."""
+    from vre.core.policy.callback import ToolCallContext
+    policy = Policy(name="ToolAware", callback="tests.vre.test_policies._cb_record_tool_call")
+    primitive = _make_primitive_with_applies_to("write", [policy])
+    response = _make_step_result(primitive)
+    _RECORDED_TOOL_CALLS.clear()
+    tc = ToolCallContext(tool_name="write_file", call_args=("a.txt",), call_kwargs={"text": "hi"})
+    PolicyGate().evaluate(response, Cardinality.SINGLE, tool_call=tc)
+    assert len(_RECORDED_TOOL_CALLS) == 1
+    recorded = _RECORDED_TOOL_CALLS[0]
+    assert recorded.tool_name == "write_file"
+    assert recorded.call_args == ("a.txt",)
+    assert recorded.call_kwargs == {"text": "hi"}
 
 
 # ---------------------------------------------------------------------------
