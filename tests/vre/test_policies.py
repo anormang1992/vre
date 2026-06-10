@@ -271,6 +271,105 @@ def _cb_record_edge(context) -> PolicyCallbackResult:
     return PolicyCallbackResult(passed=True)
 
 
+_RECORDED_META = []
+
+
+def _cb_record_metadata(context) -> PolicyCallbackResult:
+    _RECORDED_META.append(dict(context.policy.metadata))
+    return PolicyCallbackResult(passed=True)
+
+
+def _cb_block_if_protected(context) -> PolicyCallbackResult:
+    if "protected" in context.grounding.resolved_concepts:
+        return PolicyCallbackResult(passed=False, message="protected concept co-grounded")
+    return PolicyCallbackResult(passed=True)
+
+
+# ---------------------------------------------------------------------------
+# New capability-coverage tests (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def _make_two_edge_response(source_name, policies, target_a="file", target_b="dir"):
+    """A source primitive with two APPLIES_TO edges (to target_a, target_b), all targets in the trace."""
+    a = Primitive(name=target_a)
+    b = Primitive(name=target_b)
+    depth = Depth(
+        level=DepthLevel.CAPABILITIES,
+        relata=[
+            Relatum(relation_type=RelationType.APPLIES_TO, target_id=a.id,
+                    target_depth=DepthLevel.CONSTRAINTS, policies=policies),
+            Relatum(relation_type=RelationType.APPLIES_TO, target_id=b.id,
+                    target_depth=DepthLevel.CONSTRAINTS, policies=policies),
+        ],
+    )
+    source = Primitive(name=source_name, depths=[depth])
+    query = EpistemicQuery(concept_ids=[source.id])
+    result = EpistemicResult(primitives=[source, a, b])
+    return EpistemicResponse(query=query, result=result)
+
+
+def test_callback_on_two_edges_receives_distinct_targets():
+    """One callback on two edges is told which target each invocation is for."""
+    from vre.core.policy.callback import ToolCallContext
+    policy = Policy(name="EdgeAware", callback="tests.vre.test_policies._cb_record_edge")
+    response = _make_two_edge_response("delete", [policy])
+    _RECORDED_EDGES.clear()
+    PolicyGate().evaluate(response, Cardinality.SINGLE, tool_call=ToolCallContext(tool_name="rm"))
+    targets = sorted(e.target_name for e in _RECORDED_EDGES)
+    assert targets == ["dir", "file"]
+
+
+def test_callback_reads_policy_metadata():
+    """The callback can read its own parameters from the triggering policy's metadata."""
+    from vre.core.policy.callback import ToolCallContext
+    policy = Policy(
+        name="RateLimited",
+        callback="tests.vre.test_policies._cb_record_metadata",
+        metadata={"limit": 5},
+    )
+    primitive = _make_primitive_with_applies_to("send", [policy])
+    response = _make_step_result(primitive)
+    _RECORDED_META.clear()
+    PolicyGate().evaluate(response, Cardinality.SINGLE, tool_call=ToolCallContext(tool_name="send"))
+    assert _RECORDED_META == [{"limit": 5}]
+
+
+def test_callback_branches_on_resolved_concepts():
+    """A callback can fail based on a co-occurring concept in the grounding facade."""
+    from vre.core.policy.callback import GroundingContext, ToolCallContext
+    policy = Policy(name="ProtectedAware", callback="tests.vre.test_policies._cb_block_if_protected")
+    primitive = _make_primitive_with_applies_to("delete", [policy])
+    response = _make_step_result(primitive)
+
+    safe = GroundingContext(resolved_concepts=["delete", "file"])
+    violations = PolicyGate().evaluate(
+        response, Cardinality.SINGLE,
+        tool_call=ToolCallContext(tool_name="rm"), grounding=safe,
+    )
+    assert len(violations) == 0  # callback passed
+
+    risky = GroundingContext(resolved_concepts=["delete", "file", "protected"])
+    violations = PolicyGate().evaluate(
+        response, Cardinality.SINGLE,
+        tool_call=ToolCallContext(tool_name="rm"), grounding=risky,
+    )
+    assert len(violations) == 1  # callback fired
+
+
+def test_no_tool_call_skips_callback_and_fires():
+    """Without a tool_call, the callback is not consulted and the policy fires (behavior preserved)."""
+    policy = Policy(
+        name="WouldPass",
+        callback="tests.vre.test_policies._cb_pass",  # would suppress IF consulted
+        confirmation_message="Confirm.",
+    )
+    primitive = _make_primitive_with_applies_to("write", [policy])
+    response = _make_step_result(primitive)
+    violations = PolicyGate().evaluate(response, Cardinality.SINGLE)  # no tool_call
+    assert len(violations) == 1
+
+
 # ---------------------------------------------------------------------------
 # New context type tests (Task 2)
 # ---------------------------------------------------------------------------

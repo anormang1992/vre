@@ -430,3 +430,35 @@ def test_check_preserves_order_and_canonical_casing_across_list():
     # (Do NOT assert on `grounded` here — two unconnected roots legitimately
     #  produce a ReachabilityGap; this test is only about the resolved list.)
     assert result.resolved == ["file", "write"]
+
+
+# ---------------------------------------------------------------------------
+# Grounding facade derivation (Task 4)
+# ---------------------------------------------------------------------------
+
+
+_CAPTURED_RESOLVED = []
+
+
+def _cb_capture_resolved(context):
+    from vre.core.policy.models import PolicyCallbackResult
+    _CAPTURED_RESOLVED.append(list(context.grounding.resolved_concepts))
+    return PolicyCallbackResult(passed=True)
+
+
+class TestCheckPolicyGroundingFacade:
+    """check_policy mints the GroundingContext facade from the GroundingResult."""
+
+    def test_callback_sees_resolved_concepts(self):
+        from vre.core.policy.callback import ToolCallContext
+        target = _make_fully_grounded("file")
+        policy = Policy(
+            name="FacadeAware",
+            callback="tests.vre.test_vre._cb_capture_resolved",
+        )
+        src = _make_primitive_with_policy("write", target, policy)
+        vre = _make_vre_with_stub([src, target])
+        _CAPTURED_RESOLVED.clear()
+        vre.check_policy(["write", "file"], tool_call=ToolCallContext(tool_name="write_file"))
+        assert _CAPTURED_RESOLVED  # callback was invoked
+        assert set(_CAPTURED_RESOLVED[0]) == {"write", "file"}
