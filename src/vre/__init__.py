@@ -209,12 +209,9 @@ class VRE:
                     card_enum = None  # unknown -> fire all policies
 
             gate = PolicyGate()
-            grounding_ctx = GroundingContext(
-                agent_id=grounding.agent_id,
-                resolved_concepts=grounding.resolved,
-            )
             violations = gate.evaluate(
-                grounding.trace, card_enum, tool_call=tool_call, grounding=grounding_ctx,
+                grounding.trace, card_enum, tool_call=tool_call,
+                grounding=GroundingContext.from_grounding(grounding),
             )
 
             if not violations:

@@ -40,6 +40,7 @@ class PolicyGate:
         """
         violations: list[PolicyViolation] = []
         id_to_name = {p.id: p.name for p in response.result.primitives}
+        grounding = grounding or GroundingContext()
         for primitive in response.result.primitives:
             for depth in primitive.depths:
                 for relatum in depth.relata:
@@ -60,7 +61,7 @@ class PolicyGate:
                             if tool_call is not None:
                                 context = PolicyCallContext(
                                     tool_call=tool_call,
-                                    grounding=grounding or GroundingContext(),
+                                    grounding=grounding,
                                     triggering_edge=TriggeringEdge(
                                         source_name=primitive.name,
                                         target_name=id_to_name.get(
@@ -76,31 +77,16 @@ class PolicyGate:
                                     logger.debug("Policy %r passed by callback", policy.name)
                                     continue  # action passed the policy — no violation
                             else:
-                                # Callback present but unevaluable without a tool call. Fail closed
-                                # by construction — do not trust the callback to have what it needs —
-                                # and record an explicit reason so the conservative fire does not
-                                # masquerade as a plain trigger.
-                                cb_result = PolicyCallbackResult(
-                                    passed=False,
-                                    message="Policy callback could not be evaluated (no tool call in this context); firing conservatively.",
-                                )
+                                # No tool_call ⇒ the callback cannot be evaluated. Fail closed
+                                # by construction rather than trusting it to handle a missing call.
+                                cb_result = PolicyCallbackResult.unevaluable()
 
-                        # Most specific reason first (the callback's, when it fired or could not be
-                        # evaluated), always followed by the integrator's confirmation message.
-                        if cb_result is not None and cb_result.message:
-                            message = f"{cb_result.message}\n{policy.confirmation_message}"
-                        else:
-                            message = policy.confirmation_message
-
+                        violation = PolicyViolation(policy=policy, callback_result=cb_result)
                         logger.info(
                             "Policy violation: %r — %s (requires_confirmation=%s)",
-                            policy.name, message, policy.requires_confirmation,
+                            policy.name, violation.message, policy.requires_confirmation,
                         )
-                        violations.append(PolicyViolation(
-                            policy=policy,
-                            message=message,
-                            callback_result=cb_result,
-                        ))
+                        violations.append(violation)
 
         return violations
 

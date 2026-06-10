@@ -23,13 +23,16 @@ Example::
             return PolicyCallbackResult(passed=False)
 """
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from vre.core.models import DepthLevel
 from vre.core.policy.models import Policy, PolicyCallbackResult
+
+if TYPE_CHECKING:
+    from vre.core.grounding import GroundingResult
 
 
 class ToolCallContext(BaseModel):
@@ -59,6 +62,14 @@ class GroundingContext(BaseModel):
 
     agent_id: UUID | None = None
     resolved_concepts: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_grounding(cls, grounding: "GroundingResult") -> "GroundingContext":
+        """
+        Project the bounded, callback-facing facade from a full GroundingResult —
+        only `agent_id` and the resolved concept names cross this boundary.
+        """
+        return cls(agent_id=grounding.agent_id, resolved_concepts=grounding.resolved)
 
 
 class TriggeringEdge(BaseModel):

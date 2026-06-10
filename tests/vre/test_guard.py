@@ -33,8 +33,8 @@ def _mock_vre(grounding: GroundingResult, policy: PolicyResult | None = None):
 
 def _violation(message="Confirm?", requires_confirmation=True) -> PolicyViolation:
     return PolicyViolation(
-        policy=Policy(name="Test", requires_confirmation=requires_confirmation),
-        message=message,
+        policy=Policy(name="Test", requires_confirmation=requires_confirmation,
+                      confirmation_message=message),
     )
 
 

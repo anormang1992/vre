@@ -15,7 +15,8 @@ from vre.core.models import (
     Relatum,
     RelationType,
 )
-from vre.core.policy import Cardinality, Policy, PolicyCallbackResult, parse_policy
+from vre.core.policy import Cardinality, Policy, PolicyCallbackResult, PolicyViolation, parse_policy
+from vre.core.policy.callback import GroundingContext, ToolCallContext, TriggeringEdge
 from vre.core.policy.gate import PolicyGate
 
 
@@ -189,7 +190,6 @@ def test_requires_confirmation_false_produces_violations():
 
 def test_callback_passed_true_suppresses_violation():
     """Callback returning passed=True — action passes the policy, no violation."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="WithCallback",
         callback="tests.vre.test_policies._cb_pass",
@@ -204,7 +204,6 @@ def test_callback_passed_true_suppresses_violation():
 
 def test_callback_passed_false_fires_violation():
     """Callback returning passed=False — action fails the policy, violation carries result."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="WithCallback",
         callback="tests.vre.test_policies._cb_fail",
@@ -221,7 +220,6 @@ def test_callback_passed_false_fires_violation():
 
 def test_callback_receives_triggering_edge():
     """The callback sees the source/target names and depths of the edge that fired it."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="EdgeAware",
         callback="tests.vre.test_policies._cb_record_edge",
@@ -319,7 +317,6 @@ def _make_two_edge_response(source_name, policies, target_a="file", target_b="di
 
 def test_callback_on_two_edges_receives_distinct_targets():
     """One callback on two edges is told which target each invocation is for."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(name="EdgeAware", callback="tests.vre.test_policies._cb_record_edge")
     response = _make_two_edge_response("delete", [policy])
     _RECORDED_EDGES.clear()
@@ -330,7 +327,6 @@ def test_callback_on_two_edges_receives_distinct_targets():
 
 def test_callback_reads_policy_metadata():
     """The callback can read its own parameters from the triggering policy's metadata."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="RateLimited",
         callback="tests.vre.test_policies._cb_record_metadata",
@@ -345,7 +341,6 @@ def test_callback_reads_policy_metadata():
 
 def test_callback_branches_on_resolved_concepts():
     """A callback can fail based on a co-occurring concept in the grounding facade."""
-    from vre.core.policy.callback import GroundingContext, ToolCallContext
     policy = Policy(name="ProtectedAware", callback="tests.vre.test_policies._cb_block_if_protected")
     primitive = _make_primitive_with_applies_to("delete", [policy])
     response = _make_step_result(primitive)
@@ -385,7 +380,6 @@ def test_no_tool_call_fires_with_unevaluated_callback():
 
 def test_failing_callback_message_leads_violation_message():
     """A callback that fires with a message → that message leads, then the confirmation_message."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(
         name="WithReason",
         callback="tests.vre.test_policies._cb_fail",  # returns passed=False, message="Failed by callback"
@@ -402,7 +396,6 @@ def test_failing_callback_message_leads_violation_message():
 
 def test_callback_receives_tool_call():
     """The caller-supplied tool_call (name + args + kwargs) is threaded to the callback."""
-    from vre.core.policy.callback import ToolCallContext
     policy = Policy(name="ToolAware", callback="tests.vre.test_policies._cb_record_tool_call")
     primitive = _make_primitive_with_applies_to("write", [policy])
     response = _make_step_result(primitive)
@@ -423,7 +416,6 @@ def test_callback_receives_tool_call():
 
 def test_tool_call_context_defaults():
     """ToolCallContext carries the invocation; args/kwargs default to empty."""
-    from vre.core.policy.callback import ToolCallContext
     tc = ToolCallContext(tool_name="write_file")
     assert tc.tool_name == "write_file"
     assert tc.call_args == ()
@@ -432,7 +424,6 @@ def test_tool_call_context_defaults():
 
 def test_grounding_context_defaults():
     """GroundingContext defaults to no agent and no resolved concepts."""
-    from vre.core.policy.callback import GroundingContext
     gc = GroundingContext()
     assert gc.agent_id is None
     assert gc.resolved_concepts == []
@@ -440,7 +431,6 @@ def test_grounding_context_defaults():
 
 def test_triggering_edge_fields():
     """TriggeringEdge captures source/target name and the two depths."""
-    from vre.core.policy.callback import TriggeringEdge
     edge = TriggeringEdge(
         source_name="delete",
         target_name="file",
@@ -451,3 +441,37 @@ def test_triggering_edge_fields():
     assert edge.target_name == "file"
     assert edge.source_depth == DepthLevel.CONSTRAINTS
     assert edge.target_depth == DepthLevel.CAPABILITIES
+
+
+# ---------------------------------------------------------------------------
+# Frozen 1.0 contract: model-owned composition
+# ---------------------------------------------------------------------------
+
+
+def test_policy_callback_result_unevaluable():
+    """unevaluable() is a fail-closed result naming the missing tool call."""
+    r = PolicyCallbackResult.unevaluable()
+    assert r.passed is False
+    assert "no tool call" in r.message
+
+
+def test_policy_violation_message_property():
+    """PolicyViolation.message composes the callback reason + confirmation, or falls back."""
+    p = Policy(name="P", confirmation_message="Confirm.")
+    assert PolicyViolation(policy=p).message == "Confirm."
+    assert PolicyViolation(
+        policy=p, callback_result=PolicyCallbackResult(passed=False, message="why")
+    ).message == "why\nConfirm."
+    # failing result with no message → falls back to confirmation_message
+    assert PolicyViolation(
+        policy=p, callback_result=PolicyCallbackResult(passed=False)
+    ).message == "Confirm."
+
+
+def test_grounding_context_from_grounding():
+    """from_grounding projects only agent_id + resolved from a GroundingResult."""
+    from vre.core.grounding import GroundingResult
+    gr = GroundingResult(grounded=True, resolved=["a", "b"], gaps=[])
+    gc = GroundingContext.from_grounding(gr)
+    assert gc.resolved_concepts == ["a", "b"]
+    assert gc.agent_id is None

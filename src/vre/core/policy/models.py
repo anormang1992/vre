@@ -34,6 +34,20 @@ class PolicyCallbackResult(BaseModel):
     passed: bool
     message: str | None = None
 
+    @classmethod
+    def unevaluable(cls) -> "PolicyCallbackResult":
+        """
+        Result for a callback that could not be evaluated because no tool call was
+        available to it. Fails closed with an explicit reason.
+        """
+        return cls(
+            passed=False,
+            message=(
+                "Policy callback could not be evaluated (no tool call in this "
+                "context); firing conservatively."
+            ),
+        )
+
 
 class PolicyAction(str, Enum):
     """
@@ -102,8 +116,19 @@ class PolicyViolation(BaseModel):
     """
 
     policy: Policy
-    message: str
     callback_result: PolicyCallbackResult | None = None
+
+    @property
+    def message(self) -> str:
+        """
+        Human-readable reason the violation fired. The callback's message (when it
+        fired or could not be evaluated) leads, followed by the policy's
+        confirmation message; the confirmation message alone when there is no
+        callback reason.
+        """
+        if self.callback_result is not None and self.callback_result.message:
+            return f"{self.callback_result.message}\n{self.policy.confirmation_message}"
+        return self.policy.confirmation_message
 
     @property
     def requires_confirmation(self) -> bool:
