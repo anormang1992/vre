@@ -225,7 +225,9 @@ class VRE:
 
                 # Hard blocks do not consult on_policy — they are immediate BLOCKs with their own messages
                 if hard_blocks:
-                    messages = "; ".join(v.message for v in hard_blocks)
+                    # Violation messages are multi-line (callback reason + confirmation);
+                    # separate distinct hard blocks with a blank line to keep them readable.
+                    messages = "\n\n".join(v.message for v in hard_blocks)
                     policy_result = PolicyResult(
                         action=PolicyAction.BLOCK,
                         reason=messages,
