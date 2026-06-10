@@ -365,8 +365,8 @@ def test_callback_branches_on_resolved_concepts():
     assert len(violations) == 1  # callback fired
 
 
-def test_no_tool_call_skips_callback_and_fires():
-    """Without a tool_call, the callback is not consulted and the policy fires (behavior preserved)."""
+def test_no_tool_call_fires_with_unevaluated_callback():
+    """Without a tool_call the callback can't be evaluated → conservative fire with an explicit reason."""
     policy = Policy(
         name="WouldPass",
         callback="tests.vre.test_policies._cb_pass",  # would suppress IF consulted
@@ -376,6 +376,28 @@ def test_no_tool_call_skips_callback_and_fires():
     response = _make_step_result(primitive)
     violations = PolicyGate().evaluate(response, Cardinality.SINGLE)  # no tool_call
     assert len(violations) == 1
+    v = violations[0]
+    assert v.callback_result is not None
+    assert v.callback_result.passed is False
+    assert "no tool call" in v.message
+    assert "Confirm." in v.message  # integrator confirmation_message always included
+
+
+def test_failing_callback_message_leads_violation_message():
+    """A callback that fires with a message → that message leads, then the confirmation_message."""
+    from vre.core.policy.callback import ToolCallContext
+    policy = Policy(
+        name="WithReason",
+        callback="tests.vre.test_policies._cb_fail",  # returns passed=False, message="Failed by callback"
+        confirmation_message="Confirm write.",
+    )
+    primitive = _make_primitive_with_applies_to("write", [policy])
+    response = _make_step_result(primitive)
+    violations = PolicyGate().evaluate(
+        response, Cardinality.SINGLE, tool_call=ToolCallContext(tool_name="w")
+    )
+    assert len(violations) == 1
+    assert violations[0].message == "Failed by callback\nConfirm write."
 
 
 def test_callback_receives_tool_call():

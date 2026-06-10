@@ -34,9 +34,9 @@ class PolicyGate:
         Walk all APPLIES_TO relata in the trace and collect triggered policy violations.
 
         When cardinality is None (unknown), all policies fire — we cannot justify
-        skipping any policy without knowing the cardinality. A `PolicyCallContext`
-        is built per edge, but only when the policy has a callback and a `tool_call`
-        is present; otherwise no context is allocated and the policy simply fires.
+        skipping any policy without knowing the cardinality. A callback is consulted
+        only when a `tool_call` is present; without one it cannot be evaluated, so the
+        policy fires conservatively with an explicit reason (see the else branch).
         """
         violations: list[PolicyViolation] = []
         id_to_name = {p.id: p.name for p in response.result.primitives}
@@ -56,32 +56,41 @@ class PolicyGate:
                             continue
                         cb = policy.resolve_callback()
                         cb_result: PolicyCallbackResult | None = None
-                        # Without a tool_call we cannot justify that the action is safe (a
-                        # callback may require the call args). Fail closed by construction:
-                        # skip the callback and fire the policy. Do NOT relax to
-                        # `if cb is not None` — that delegates safety to integrator discipline
-                        # (callbacks remembering to guard against a None tool_call), which a
-                        # safety-by-construction framework must not rely on.
-                        if cb is not None and tool_call is not None:
-                            context = PolicyCallContext(
-                                tool_call=tool_call,
-                                grounding=grounding or GroundingContext(),
-                                triggering_edge=TriggeringEdge(
-                                    source_name=primitive.name,
-                                    target_name=id_to_name.get(
-                                        relatum.target_id, str(relatum.target_id)
+                        if cb is not None:
+                            if tool_call is not None:
+                                context = PolicyCallContext(
+                                    tool_call=tool_call,
+                                    grounding=grounding or GroundingContext(),
+                                    triggering_edge=TriggeringEdge(
+                                        source_name=primitive.name,
+                                        target_name=id_to_name.get(
+                                            relatum.target_id, str(relatum.target_id)
+                                        ),
+                                        source_depth=depth.level,
+                                        target_depth=relatum.target_depth,
                                     ),
-                                    source_depth=depth.level,
-                                    target_depth=relatum.target_depth,
-                                ),
-                                policy=policy,
-                            )
-                            cb_result = cb(context)
-                            if cb_result.passed:
-                                logger.debug("Policy %r passed by callback", policy.name)
-                                continue  # action passed the policy — no violation
+                                    policy=policy,
+                                )
+                                cb_result = cb(context)
+                                if cb_result.passed:
+                                    logger.debug("Policy %r passed by callback", policy.name)
+                                    continue  # action passed the policy — no violation
+                            else:
+                                # Callback present but unevaluable without a tool call. Fail closed
+                                # by construction — do not trust the callback to have what it needs —
+                                # and record an explicit reason so the conservative fire does not
+                                # masquerade as a plain trigger.
+                                cb_result = PolicyCallbackResult(
+                                    passed=False,
+                                    message="Policy callback could not be evaluated (no tool call in this context); firing conservatively.",
+                                )
 
-                        message = policy.confirmation_message
+                        # Most specific reason first (the callback's, when it fired or could not be
+                        # evaluated), always followed by the integrator's confirmation message.
+                        if cb_result is not None and cb_result.message:
+                            message = f"{cb_result.message}\n{policy.confirmation_message}"
+                        else:
+                            message = policy.confirmation_message
 
                         logger.info(
                             "Policy violation: %r — %s (requires_confirmation=%s)",
