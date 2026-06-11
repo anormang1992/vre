@@ -232,9 +232,17 @@ class TestTraceEntrySerialization:
 
         expected_keys = {
             "timestamp", "operation", "concepts", "resolved",
-            "grounded", "gaps", "steps", "agent_id",
+            "grounded", "gaps", "steps", "agent_id", "active_policies",
         }
         assert set(parsed.keys()) == expected_keys
+
+    def test_active_policies_recorded(self):
+        """The registered policy keys are recorded on the trace for audit (empty by default)."""
+        result = _grounding_result()
+        assert build_trace_entry("check", ["file"], result).active_policies == []
+        assert build_trace_entry("check", ["file"], result, ["protected_file"]).active_policies == [
+            "protected_file"
+        ]
 
 
 # ---------------------------------------------------------------------------

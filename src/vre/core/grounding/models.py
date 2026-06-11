@@ -49,17 +49,13 @@ def _fmt_gap(gap: KnowledgeGap) -> str:
 
 def _fmt_relatum(r: Relatum, id_to_name: dict[UUID, str]) -> list[str]:
     """
-    Format a single Relatum as display lines, including metadata, policy count, and provenance.
+    Format a single Relatum as display lines, including metadata and provenance.
     """
     target_name = id_to_name.get(r.target_id, str(r.target_id))
     lines = [f"      → {target_name}  [{r.relation_type.value}, target@D{r.target_depth.value}]"]
     if r.metadata:
         meta_str = ", ".join(f"{k}={v}" for k, v in r.metadata.items())
         lines.append(f"        metadata: {meta_str}")
-    if r.policies:
-        n = len(r.policies)
-        word = "policy" if n == 1 else "policies"
-        lines.append(f"        policies: {n} {word}")
     if r.provenance:
         date_str = r.provenance.created_at.strftime("%Y-%m-%d")
         lines.append(f"        provenance: {r.provenance.source.value} ({date_str})")

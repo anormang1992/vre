@@ -43,13 +43,12 @@ knowledge boundary a first-class object — one that can be queried, audited, an
     - [Reachability Prerequisites](#reachability-prerequisites)
     - [Reference Loop](#reference-loop)
 - [Policy System](#policy-system)
-    - [Defining Policies](#defining-policies)
+    - [Declaring a Policy](#declaring-a-policy)
     - [Policy Callbacks](#policy-callbacks)
     - [Evaluation Flow](#evaluation-flow)
-    - [Policy Wizard](#policy-wizard)
+    - [Registration & Validation](#registration--validation)
 - [Integrations](#integrations)
     - [LangChain + Ollama Reference Agent](#langchain--ollama-reference-agent)
-    - [Claude Code Hook](#claude-code-hook)
 - [Future](#future)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
@@ -329,6 +328,9 @@ if policy.action == "BLOCK":
         print(f"  - {v.message}")
 ```
 
+Called without a `tool_call` (as here), a callback-bearing policy can't be evaluated, so the gate **fails closed** and
+the policy fires — pass `tool_call=ToolCallContext(...)` (as `vre_guard` does) when you want the callback consulted.
+
 `cardinality` hints whether the operation targets a single entity (`"single"`) or many (`"multiple"`, e.g. recursive or
 glob). An optional `on_policy` callback handles violations that require human
 confirmation — it receives only the confirmation-required violations and returns `True` to proceed or `False` to block.
@@ -585,22 +587,45 @@ command is blocked, the agent calls `learn_gaps` to resolve the gaps and retries
 
 ## Policy System
 
-Policies live on `APPLIES_TO` relata. They define human-in-the-loop gates for specific concept relationships: which
-actions require confirmation, under what cardinality conditions they fire, and what
-confirmation message to surface.
+Policies gate specific concept relationships: which actions require confirmation, under
+what cardinality conditions they fire, and what confirmation message to surface.
 
-### Defining Policies
+Policies are **code-resident**. You declare them in your own Python with the
+`policy_callback` decorator, binding a callable to one `APPLIES_TO` edge
+(`source_primitive` → `target_primitive` at a `source_depth`). The graph stores only
+knowledge; policies are never persisted — so a tampered `~/.vre/graph.db` can neither
+inject code nor re-point a callback. The gate only ever invokes callables your own
+imported code handed it.
+
+### Declaring a Policy
 
 ```python
-from vre.core.policy.models import Policy, Cardinality
+from vre import policy_callback, DepthLevel, PolicyCallContext, PolicyCallbackResult
 
-Policy(
-    name="confirm_file_deletion",
-    requires_confirmation=True,
-    trigger_cardinality=Cardinality.MULTIPLE,  # fires on recursive/glob ops
-    confirmation_message="This will delete multiple files. Proceed?",
+
+@policy_callback(
+    source_primitive="delete",
+    target_primitive="file",
+    source_depth=DepthLevel.CONSTRAINTS,   # pins exactly one APPLIES_TO edge (D3 / execution)
+    # key="..." identifies the policy; omitted here, so it defaults to the function name
+    name="Protected file guard",
+    requires_confirmation=False,           # hard block — no confirmation prompt
+    confirmation_message="Deletion blocked by protected file policy.",
 )
+def protected_file(context: PolicyCallContext) -> PolicyCallbackResult:
+    """Block deletion of files matching 'protected*'."""
+    command = context.tool_call.call_args[0] if context.tool_call.call_args else ""
+    targets = [t for t in command.split()[1:] if not t.startswith("-")]
+    for target in targets:
+        if target.startswith("protected"):
+            return PolicyCallbackResult(passed=False, message=f"'{target}' is a protected file.")
+    return PolicyCallbackResult(passed=True, message="No protected files affected.")
 ```
+
+Importing the module that holds this declaration registers it. **Import your policy
+modules before constructing `VRE`** — registration is an import-time side effect, and
+`VRE(...)` validates every declared placement against the graph and then freezes the
+registry (see *Registration & validation* below).
 
 ### Policy Callbacks
 
@@ -615,44 +640,30 @@ callback — source/target concept and the source/target depths), and `policy` (
 fired, including its `metadata`). It returns a `PolicyCallbackResult` — `passed=True` suppresses the
 violation, `passed=False` fires it.
 
-```python
-from vre.core.policy.callback import PolicyCallback, PolicyCallContext
-from vre.core.policy.models import PolicyCallbackResult
-
-
-class BlockProtectedFiles:
-    """Block deletion of files matching 'protected*'."""
-
-    def __call__(self, context: PolicyCallContext) -> PolicyCallbackResult:
-        command = context.tool_call.call_args[0] if context.tool_call.call_args else ""
-        targets = [t for t in command.split()[1:] if not t.startswith("-")]
-
-        for target in targets:
-            if target.startswith("protected"):
-                return PolicyCallbackResult(
-                    passed=False,
-                    message=f"'{target}' is a protected file.",
-                )
-
-        return PolicyCallbackResult(passed=True, message="No protected files affected.")
-```
-
-Callbacks are registered on a `Policy` via a dotted import path, resolved at evaluation time:
+**Stateful callbacks** (instances that can't be decorated) use the imperative twin,
+`register_policy`:
 
 ```python
-Policy(
-    name="protected_file_guard",
-    requires_confirmation=False,  # hard block — no confirmation prompt
-    trigger_cardinality=None,
-    # fires on any cardinality
-    callback="myproject.policies.BlockProtectedFiles",  # dotted path to the callable
-    confirmation_message="Deletion blocked by protected file policy.",
+from vre import register_policy, DepthLevel
+
+register_policy(
+    RateLimiter(per_minute=5),                # any callable taking a PolicyCallContext
+    key="rate_limit",
+    source_primitive="send", target_primitive="email",
+    source_depth=DepthLevel.CONSTRAINTS, name="Rate limit",
 )
 ```
 
-A single relatum can carry multiple policies with different callbacks — one that checks file patterns, another that
-checks time-of-day, another that checks user role — and each independently decides
-whether its violation fires.
+**One callback, several edges** — stack decorators, each with a distinct key (the
+decorator returns the original function, so it composes):
+
+```python
+@policy_callback(key="protected_file", source_primitive="delete",
+                 target_primitive="file", source_depth=DepthLevel.CONSTRAINTS, name="Protected file")
+@policy_callback(key="protected_dir", source_primitive="delete",
+                 target_primitive="directory", source_depth=DepthLevel.CONSTRAINTS, name="Protected dir")
+def protected_delete(context): ...
+```
 
 The repository includes a reference `protected_file_delete` callback (`examples/langchain_ollama/policies.py`) that
 inspects `rm` commands across three detection modes: literal filename match, glob
@@ -664,29 +675,53 @@ filesystem state.
 
 1. **Cardinality filter** — if the policy specifies a `trigger_cardinality`, it only fires when the operation's
    cardinality matches
-2. **Callback evaluation** — if a callback is registered, it runs with the full call context. `passed=True` suppresses
-   the violation entirely
+2. **Callback evaluation** — the callback runs with the full call context; `passed=True` suppresses the violation. The
+   gate **fails closed** with a detailed reason (the policy fires) when the callback cannot be evaluated — no `tool_call`
+   in context, or the callback raises — so a buggy callback never weakens a gate or escapes as a raw exception
 3. **Violation collection** — unsuppressed policies produce `PolicyViolation` objects
 4. **Hard blocks vs confirmation** — violations with `requires_confirmation=False` are immediate blocks. Those with
    `requires_confirmation=True` are deferred to the `on_policy` handler
 
-### Policy Wizard
+### Registration & Validation
 
-`run_wizard(repo)` is an interactive helper for attaching policies to `APPLIES_TO` relata without manually editing seed
-scripts. Construct a repository and pass it in:
+Declared policies live in a `PolicyRegistry`; the `policy_callback` decorator and `register_policy` write to a
+module-global one that `VRE` reads by default (pass `policy_registry=` to use your own). At construction `VRE`:
+
+- logs the registered policy keys — a `0 registered` line is your cue that a policy module was never imported;
+- validates every declared placement against the graph. A placement whose `APPLIES_TO` edge is **absent** (typo,
+  missing knowledge, or wrong depth) raises `PolicyPlacementError`, because a declared gate that protects nothing is the
+  one dangerous, otherwise-silent case. Pass `validate_policies=False` to defer, then call
+  `vre.validate_policy_placements()` yourself;
+- freezes the registry, so the invariant *everything enforced was validated* holds.
+
+The symmetry: a missing **callback** fails closed (the policy fires); a missing **edge** fails loud (`VRE` refuses to
+start). Pass `expect_policies=N` to additionally assert the registered count.
+
+**Multiple graphs in one process.** Freeze is per-registry, so give each graph its own `PolicyRegistry` and decorate
+with *its* `.policy_callback`; constructing one VRE validates and freezes only that registry, never another graph's:
 
 ```python
-from vre.core.backends import SQLiteRepository
-from vre.core.policy.wizard import run_wizard
+from vre import VRE, PolicyRegistry, DepthLevel
 
-with SQLiteRepository() as repo:
-    run_wizard(repo)
+reg_a = PolicyRegistry()
+
+@reg_a.policy_callback(source_primitive="delete", target_primitive="file",
+                       source_depth=DepthLevel.CONSTRAINTS, name="Protect A's files")
+def protect_a(ctx): ...
+
+vre_a = VRE(repo_a, policy_registry=reg_a)   # validates + enforces only reg_a, against graph A
+vre_b = VRE(repo_b, policy_registry=reg_b)   # independent: reg_b, against graph B
 ```
 
-It walks you through selecting source and target primitives, viewing the relata table, defining policy fields, and
-persisting the result to the graph.
+The module-level `policy_callback` / `register_policy` are just this bound to a shared default registry — fine for the
+common single-graph case.
 
-<img width="1968" height="1592" alt="image" src="https://github.com/user-attachments/assets/81257f0f-4273-4235-85ca-dcb50c21439b" />
+**Validated at init ≠ guaranteed to fire.** Validation confirms the declared edge *exists* in the graph; it does not
+guarantee the edge is *grounded* on a given call. `APPLIES_TO` is non-transitive, so grounding `["delete"]` alone
+strips the `delete → file` relatum from the trace — the placement validates clean yet never fires, and `delete` can
+fully ground and PASS. Enforcement still requires the action **and** the object concept in the query (the same static
+conjunction the tool declares or the extractor emits). This isn't a regression — a graph-resident policy on a stripped
+relatum behaved identically — but the init check verifies the edge is *reachable*, not that any given call will hit it.
 
 ---
 
@@ -785,64 +820,6 @@ def shell_tool(command: str) -> str:
 The agent is given two tools: `shell_tool` (guarded) and `learn_gaps` (the integrator-owned learning loop).
 When the guarded shell_tool blocks on knowledge gaps, the agent invokes `learn_gaps` to resolve them and retries.
 
-### Claude Code Hook
-
-`examples/claude-code/` contains a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks)
-for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) that intercepts
-every Bash tool call before execution and gates it through VRE grounding and policy evaluation. Unlike the LangChain
-example — which uses a local Ollama model for concept extraction — this integration
-lets Claude itself propose the conceptual primitives, using a two-pass protocol.
-
-#### Install
-
-```bash
-# SQLite (default — zero config)
-poetry run python examples/claude-code/claude_code.py install
-
-# Neo4j
-poetry run python examples/claude-code/claude_code.py install \
-    --backend neo4j --uri neo4j://localhost:7687 --user neo4j --password password
-```
-
-This writes your backend configuration to `~/.vre/config.json` and injects a `PreToolUse` hook entry into
-`~/.claude/settings.json` that matches all `Bash` tool calls. Safe to call multiple times —
-existing VRE hook entries are replaced, not duplicated.
-
-#### How It Works
-
-The hook uses a **two-pass protocol** that lets Claude propose the concepts:
-
-**Pass 1 — Concept Request:**
-
-1. Claude invokes a Bash command (e.g. `rm -rf foo/`)
-2. The hook sees no `# vre:` prefix and blocks (exit 2), asking Claude to identify the conceptual primitives and retry
-   with a `# vre:concept1,concept2` prefix
-
-**Pass 2 — Epistemic Check:**
-
-3. Claude reasons about the command, identifies primitives, and retries: `# vre:delete,file,directory\nrm -rf foo/`
-4. The hook extracts the concepts and grounds them against the graph
-5. **If not grounded** — blocks with the full grounding trace as context
-6. **If confirmation-required** — returns `permissionDecision: "ask"`, deferring to Claude Code's native TUI approval
-   prompt
-7. **If hard blocks or user declines** — blocks with the policy result
-8. **If grounded, no violations** — allows execution with the `# vre:` prefix stripped
-
-The `# vre:` line is a shell comment — inert if executed directly. The hook strips it via `updatedInput` before the
-command runs.
-
-<img width="1638" height="788" alt="Screenshot 2026-03-04 at 10 34 15 AM" src="https://github.com/user-attachments/assets/d8bbf86e-fe71-4fa5-b6a2-c4865aedf291" />
-
-<img width="1627" height="780" alt="Screenshot 2026-03-04 at 10 55 10 AM" src="https://github.com/user-attachments/assets/a8c6f466-8fe2-4831-8c88-9e4d463e1f13" />
-
-#### Uninstall
-
-```bash
-poetry run python examples/claude-code/claude_code.py uninstall
-```
-
-Removes the VRE hook entry from `~/.claude/settings.json` and leaves `~/.vre/config.json` in place.
-
 ---
 
 ## Future
@@ -908,9 +885,9 @@ src/vre/
 │   │   └── models.py            # GroundingResult
 │   └── policy/
 │       ├── models.py            # Policy, Cardinality, PolicyResult, PolicyViolation
-│       ├── gate.py              # PolicyGate — collects violations from a trace
-│       ├── callback.py          # PolicyCallContext, PolicyCallback protocol
-│       └── wizard.py            # Interactive policy attachment CLI
+│       ├── registry.py          # PolicyRegistry, policy_callback, register_policy — code-resident policies
+│       ├── gate.py              # PolicyGate — overlays registry placements onto a trace
+│       └── callback.py          # PolicyCallContext, PolicyCallback protocol
 │
 └── learning/
     ├── models.py                # Candidate models with validate_for_gap methods
@@ -925,14 +902,12 @@ seeders/
 └── seed_filesystem.py           # Filesystem domain — 20 primitives, idempotent upsert
 
 examples/
-├── claude-code/
-│   └── claude_code.py           # Claude Code PreToolUse hook — two-pass concept protocol
 └── langchain_ollama/
-    ├── main.py                  # Entry point — argparse + agent setup
+    ├── main.py                  # Entry point — imports policies, then argparse + agent setup
     ├── agent.py                 # ToolAgent — LangChain + Ollama streaming loop
     ├── tools.py                 # shell_tool (guarded) and learn_gaps (integrator loop)
     ├── callbacks.py             # ConceptExtractor, on_trace, on_policy, get_cardinality
-    ├── policies.py              # Demo PolicyCallback — protected file deletion guard
+    ├── policies.py              # Code-resident policies — stacked @policy_callback decorators
     ├── learner.py               # DemoLearner — ChatOllama structured output + Rich UI
     └── repl.py                  # Streaming REPL with Rich Live display
 ```

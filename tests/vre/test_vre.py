@@ -19,10 +19,18 @@ from vre.core.models import (
     RelationType,
     ResolvedSubgraph,
 )
-from vre.core.policy import Cardinality, Policy, PolicyAction, PolicyResult
+import pytest
+
+from vre.core.errors import PolicyPlacementError, VREError
+from vre.core.policy import Cardinality, PolicyAction, PolicyCallbackResult, PolicyResult
 from vre.core.policy.callback import ToolCallContext
+from vre.core.policy.registry import OrphanedPlacement, PolicyRegistry
 from vre.core.grounding import GroundingResult
 from vre.learning import LearningEngine
+
+
+def _cb_always_fail(context) -> PolicyCallbackResult:
+    return PolicyCallbackResult(passed=False, message="blocked")
 
 
 # ---------------------------------------------------------------------------
@@ -115,71 +123,82 @@ def _make_fully_grounded(name: str) -> Primitive:
     ])
 
 
-def _make_vre_with_stub(primitives: list[Primitive]) -> VRE:
-    """Create a VRE instance with a stub repository."""
+def _make_vre_with_stub(primitives: list[Primitive], registry: PolicyRegistry | None = None) -> VRE:
+    """Create a VRE instance with a stub repository and an isolated (empty) policy registry."""
     repo = StubRepository(primitives)
-    return VRE(repo, persist_traces=False)
+    return VRE(repo, persist_traces=False, policy_registry=registry or PolicyRegistry())
 
 
-def _make_primitive_with_policy(
+def _make_primitive_with_edge(
     name: str,
     target: Primitive,
-    policy: Policy,
+    source_depth: DepthLevel = DepthLevel.CAPABILITIES,
+    target_depth: DepthLevel = DepthLevel.CONSTRAINTS,
 ) -> Primitive:
-    """Return a fully-grounded primitive whose APPLIES_TO relatum carries a policy."""
+    """Return a fully-grounded primitive with an APPLIES_TO edge to `target` (no policy data)."""
     relatum = Relatum(
         relation_type=RelationType.APPLIES_TO,
         target_id=target.id,
-        target_depth=DepthLevel.CONSTRAINTS,
-        policies=[policy],
+        target_depth=target_depth,
     )
-    return Primitive(name=name, depths=[
-        Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY),
-        Depth(level=DepthLevel.CAPABILITIES, relata=[relatum]),
-        Depth(level=DepthLevel.CONSTRAINTS),
-    ])
+    levels = [DepthLevel.EXISTENCE, DepthLevel.IDENTITY, DepthLevel.CAPABILITIES, DepthLevel.CONSTRAINTS]
+    depths = [Depth(level=lvl, relata=[relatum] if lvl == source_depth else []) for lvl in levels]
+    return Primitive(name=name, depths=depths)
+
+
+def _registry_with(
+    callback,
+    *,
+    source: str,
+    target: str = "file",
+    source_depth: DepthLevel = DepthLevel.CAPABILITIES,
+    key: str = "k",
+    name: str = "TestPolicy",
+    **policy_kwargs,
+) -> PolicyRegistry:
+    """A registry with a single placement on the source -> target edge at source_depth."""
+    reg = PolicyRegistry()
+    reg.register(callback, key=key, source_primitive=source, target_primitive=target,
+                 source_depth=source_depth, name=name, **policy_kwargs)
+    return reg
 
 
 class TestCheckPolicyCardinality:
     """Integration tests: cardinality string wires through to PolicyGate."""
 
+    _TC = ToolCallContext(tool_name="t")
+
     def _setup(self, trigger_cardinality: Cardinality | None):
-        """Return a VRE + concept name wired to a policy with the given trigger."""
+        """Return a VRE wired to a write -> file policy with the given trigger."""
         target = _make_fully_grounded("file")
-        policy = Policy(
-            name="TestPolicy",
-            requires_confirmation=True,
-            trigger_cardinality=trigger_cardinality,
-            confirmation_message="Confirm?",
-        )
-        src = _make_primitive_with_policy("write", target, policy)
-        vre = _make_vre_with_stub([src, target])
-        return vre
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_always_fail, source="write", target="file",
+                              trigger_cardinality=trigger_cardinality, confirmation_message="Confirm?")
+        return _make_vre_with_stub([src, target], registry=reg)
 
     def test_cardinality_multiple_triggers_multiple_scoped_policy(self):
         """Passing cardinality="multiple" triggers a MULTIPLE-scoped policy → BLOCK (no handler)."""
         vre = self._setup(Cardinality.MULTIPLE)
-        result = vre.check_policy(["write", "file"], cardinality="multiple")
+        result = vre.check_policy(["write", "file"], cardinality="multiple", tool_call=self._TC)
         assert result.action == PolicyAction.BLOCK
         assert len(result.violations) == 1
 
     def test_cardinality_single_does_not_trigger_multiple_scoped_policy(self):
         """Passing cardinality="single" skips a MULTIPLE-scoped policy → PASS."""
         vre = self._setup(Cardinality.MULTIPLE)
-        result = vre.check_policy(["write", "file"], cardinality="single")
+        result = vre.check_policy(["write", "file"], cardinality="single", tool_call=self._TC)
         assert result.action == PolicyAction.PASS
 
     def test_cardinality_none_triggers_always_on_policy(self):
         """trigger_cardinality=None means the policy always fires regardless of cardinality → BLOCK."""
         vre = self._setup(trigger_cardinality=None)
-        assert vre.check_policy(["write", "file"], cardinality="single").action == PolicyAction.BLOCK
-        assert vre.check_policy(["write", "file"], cardinality="multiple").action == PolicyAction.BLOCK
+        assert vre.check_policy(["write", "file"], cardinality="single", tool_call=self._TC).action == PolicyAction.BLOCK
+        assert vre.check_policy(["write", "file"], cardinality="multiple", tool_call=self._TC).action == PolicyAction.BLOCK
 
     def test_unknown_cardinality_string_fires_all_policies(self):
         """Unrecognised cardinality string → None → all policies fire (safe default)."""
         vre = self._setup(Cardinality.MULTIPLE)
-        result = vre.check_policy(["write", "file"], cardinality="bulk_delete_everything")
+        result = vre.check_policy(["write", "file"], cardinality="bulk_delete_everything", tool_call=self._TC)
         assert result.action == PolicyAction.BLOCK  # unknown cardinality cannot skip any policy
 
 
@@ -238,46 +257,30 @@ class TestVRECheck:
         assert isinstance(result, PolicyResult)
         assert result.action == PolicyAction.PASS
 
-    def test_check_policy_returns_pass_when_no_trace(self):
-        """check_policy returns PASS when GroundingResult has no trace."""
-        file_p = _make_fully_grounded("file")
-        vre = _make_vre_with_stub([file_p])
-        grounding = GroundingResult(grounded=True, resolved=["file"], gaps=[], trace=None)
-        result = vre.check_policy(grounding)
-        assert result.action == PolicyAction.PASS
-
 
 class TestCheckPolicyOrchestration:
     """Tests for the on_policy orchestration in VRE.check_policy()."""
 
+    _TC = ToolCallContext(tool_name="t")
+
     def _setup_with_policy(self, requires_confirmation=True):
         target = _make_fully_grounded("file")
-        policy = Policy(
-            name="TestPolicy",
-            requires_confirmation=requires_confirmation,
-            confirmation_message="Confirm?",
-        )
-        src = _make_primitive_with_policy("write", target, policy)
-        vre = _make_vre_with_stub([src, target])
-        return vre
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_always_fail, source="write", target="file",
+                             requires_confirmation=requires_confirmation, confirmation_message="Confirm?")
+        return _make_vre_with_stub([src, target], registry=reg)
 
     def test_on_policy_true_returns_pass(self):
         """on_policy returning True → PASS with violations for observability."""
         vre = self._setup_with_policy(requires_confirmation=True)
-        result = vre.check_policy(
-            ["write", "file"],
-            on_policy=lambda violations: True,
-        )
+        result = vre.check_policy(["write", "file"], tool_call=self._TC, on_policy=lambda violations: True)
         assert result.action == PolicyAction.PASS
         assert len(result.violations) == 1
 
     def test_on_policy_false_returns_block(self):
         """on_policy returning False → BLOCK."""
         vre = self._setup_with_policy(requires_confirmation=True)
-        result = vre.check_policy(
-            ["write", "file"],
-            on_policy=lambda violations: False,
-        )
+        result = vre.check_policy(["write", "file"], tool_call=self._TC, on_policy=lambda violations: False)
         assert result.action == PolicyAction.BLOCK
         assert result.reason == "User declined"
         assert len(result.violations) == 1
@@ -285,7 +288,7 @@ class TestCheckPolicyOrchestration:
     def test_no_on_policy_confirmation_required_returns_block(self):
         """No on_policy handler + confirmation required → BLOCK (fail-safe)."""
         vre = self._setup_with_policy(requires_confirmation=True)
-        result = vre.check_policy(["write", "file"])
+        result = vre.check_policy(["write", "file"], tool_call=self._TC)
         assert result.action == PolicyAction.BLOCK
         assert "no handler" in result.reason.lower()
 
@@ -293,32 +296,33 @@ class TestCheckPolicyOrchestration:
         """requires_confirmation=False violations → BLOCK without consulting on_policy."""
         vre = self._setup_with_policy(requires_confirmation=False)
         called = []
-        result = vre.check_policy(
-            ["write", "file"],
-            on_policy=lambda v: called.append(True) or True,
-        )
+        result = vre.check_policy(["write", "file"], tool_call=self._TC,
+                                  on_policy=lambda v: called.append(True) or True)
         assert result.action == PolicyAction.BLOCK
         assert len(result.violations) == 1
         assert called == []  # on_policy should NOT have been called
 
+    def test_on_policy_raising_blocks(self):
+        """A raising on_policy handler fails closed → BLOCK with the exception captured (#97)."""
+        vre = self._setup_with_policy(requires_confirmation=True)
+
+        def boom(violations):
+            raise RuntimeError("handler boom")
+
+        result = vre.check_policy(["write", "file"], tool_call=self._TC, on_policy=boom)
+        assert result.action == PolicyAction.BLOCK
+        assert "boom" in result.reason
+
     def test_on_policy_receives_all_violations(self):
-        """on_policy receives all violations at once."""
+        """on_policy receives all violations at once (two placements on the same edge)."""
         target = _make_fully_grounded("file")
-        p1 = Policy(name="P1", confirmation_message="First.")
-        p2 = Policy(name="P2", confirmation_message="Second.")
-        relatum = Relatum(
-            relation_type=RelationType.APPLIES_TO,
-            target_id=target.id,
-            target_depth=DepthLevel.CONSTRAINTS,
-            policies=[p1, p2],
-        )
-        src = Primitive(name="write", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY),
-            Depth(level=DepthLevel.CAPABILITIES, relata=[relatum]),
-            Depth(level=DepthLevel.CONSTRAINTS),
-        ])
-        vre = _make_vre_with_stub([src, target])
+        src = _make_primitive_with_edge("write", target)
+        reg = PolicyRegistry()
+        reg.register(_cb_always_fail, key="p1", source_primitive="write", target_primitive="file",
+                     source_depth=DepthLevel.CAPABILITIES, name="P1", confirmation_message="First.")
+        reg.register(_cb_always_fail, key="p2", source_primitive="write", target_primitive="file",
+                     source_depth=DepthLevel.CAPABILITIES, name="P2", confirmation_message="Second.")
+        vre = _make_vre_with_stub([src, target], registry=reg)
 
         received = []
 
@@ -326,11 +330,9 @@ class TestCheckPolicyOrchestration:
             received.extend(violations)
             return True
 
-        result = vre.check_policy(["write", "file"], on_policy=handler)
+        result = vre.check_policy(["write", "file"], tool_call=self._TC, on_policy=handler)
         assert result.action == PolicyAction.PASS
-        assert len(received) == 2
-        names = {v.policy.name for v in received}
-        assert names == {"P1", "P2"}
+        assert {v.policy.name for v in received} == {"P1", "P2"}
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +444,6 @@ _CAPTURED_RESOLVED = []
 
 
 def _cb_capture_resolved(context):
-    from vre.core.policy.models import PolicyCallbackResult
     _CAPTURED_RESOLVED.append(list(context.grounding.resolved_concepts))
     return PolicyCallbackResult(passed=True)
 
@@ -452,13 +453,123 @@ class TestCheckPolicyGroundingFacade:
 
     def test_callback_sees_resolved_concepts(self):
         target = _make_fully_grounded("file")
-        policy = Policy(
-            name="FacadeAware",
-            callback="tests.vre.test_vre._cb_capture_resolved",
-        )
-        src = _make_primitive_with_policy("write", target, policy)
-        vre = _make_vre_with_stub([src, target])
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_capture_resolved, source="write", target="file", name="FacadeAware")
+        vre = _make_vre_with_stub([src, target], registry=reg)
         _CAPTURED_RESOLVED.clear()
         vre.check_policy(["write", "file"], tool_call=ToolCallContext(tool_name="write_file"))
         assert _CAPTURED_RESOLVED  # callback was invoked
         assert set(_CAPTURED_RESOLVED[0]) == {"write", "file"}
+
+
+class TestPolicyPlacementValidation:
+    """VRE validates declared placements against the graph at construction (fail loud)."""
+
+    def test_orphaned_placement_raises_at_init(self):
+        """A declared placement whose edge is absent → PolicyPlacementError at construction."""
+        target = _make_fully_grounded("file")
+        reg = _registry_with(_cb_always_fail, source="delete", target="file", name="Orphan")
+        with pytest.raises(PolicyPlacementError, match="Orphan"):
+            VRE(StubRepository([target]), persist_traces=False, policy_registry=reg)
+
+    def test_validate_policies_false_suppresses_and_returns_orphan(self):
+        """validate_policies=False skips the init raise; the method still reports the orphan."""
+        target = _make_fully_grounded("file")
+        reg = _registry_with(_cb_always_fail, source="delete", target="file", name="Orphan")
+        vre = VRE(StubRepository([target]), persist_traces=False, policy_registry=reg, validate_policies=False)
+        orphans = vre.validate_policy_placements()
+        assert len(orphans) == 1
+        assert isinstance(orphans[0], OrphanedPlacement)
+        assert orphans[0].name == "Orphan"
+
+    def test_correct_placement_constructs_and_validates_clean(self):
+        """A placement matching a real edge constructs and validates to []."""
+        target = _make_fully_grounded("file")
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_always_fail, source="write", target="file", name="Good")
+        vre = _make_vre_with_stub([src, target], registry=reg)
+        assert vre.validate_policy_placements() == []
+
+    def test_wrong_depth_is_orphaned(self):
+        """A placement at a depth the edge does not live at → orphaned (fail loud)."""
+        target = _make_fully_grounded("file")
+        src = _make_primitive_with_edge("write", target)  # edge lives at CAPABILITIES
+        reg = _registry_with(_cb_always_fail, source="write", target="file",
+                             source_depth=DepthLevel.CONSTRAINTS, name="WrongDepth")
+        with pytest.raises(PolicyPlacementError):
+            VRE(StubRepository([src, target]), persist_traces=False, policy_registry=reg)
+
+    def test_expect_policies_mismatch_raises(self):
+        """expect_policies that does not match the registered count → VREError."""
+        target = _make_fully_grounded("file")
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_always_fail, source="write", target="file", name="Good")
+        with pytest.raises(VREError, match="expected 2"):
+            VRE(StubRepository([src, target]), persist_traces=False, policy_registry=reg, expect_policies=2)
+
+    def test_expect_policies_match_constructs(self):
+        """expect_policies matching the registered count constructs cleanly."""
+        target = _make_fully_grounded("file")
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_always_fail, source="write", target="file", name="Good")
+        vre = VRE(StubRepository([src, target]), persist_traces=False, policy_registry=reg, expect_policies=1)
+        assert vre.validate_policy_placements() == []
+
+    def test_registry_frozen_after_construction(self):
+        """Once VRE is constructed, registering another policy on its registry raises."""
+        target = _make_fully_grounded("file")
+        src = _make_primitive_with_edge("write", target)
+        reg = _registry_with(_cb_always_fail, source="write", target="file", name="Good")
+        _make_vre_with_stub([src, target], registry=reg)
+        with pytest.raises(VREError, match="before constructing VRE"):
+            reg.register(_cb_always_fail, key="late", source_primitive="write", target_primitive="file",
+                         source_depth=DepthLevel.CAPABILITIES, name="Late")
+
+    def test_multiple_graphs_use_separate_registries(self):
+        """Two VREs on disjoint graphs each validate/freeze only their own registry."""
+        file_a = _make_fully_grounded("file")
+        src_a = _make_primitive_with_edge("write", file_a)
+        reg_a = _registry_with(_cb_always_fail, source="write", target="file", name="A")
+
+        email_b = _make_fully_grounded("email")
+        src_b = _make_primitive_with_edge("send", email_b)
+        reg_b = _registry_with(_cb_always_fail, source="send", target="email", name="B")
+
+        # Constructing vre_a validates reg_a against graph A and freezes reg_a only —
+        # it must not freeze reg_b or validate B's policy against A's graph.
+        vre_a = VRE(StubRepository([src_a, file_a]), persist_traces=False, policy_registry=reg_a)
+        vre_b = VRE(StubRepository([src_b, email_b]), persist_traces=False, policy_registry=reg_b)
+
+        assert vre_a.validate_policy_placements() == []
+        assert vre_b.validate_policy_placements() == []
+
+
+class TestCheckPolicyFailClosed:
+    """check_policy fails closed on ungrounded/trace-less input (#93)."""
+
+    def test_ungrounded_grounding_result_blocks(self):
+        """An ungrounded GroundingResult → BLOCK, never a green PASS."""
+        from vre.core.models import ExistenceGap
+        ungrounded = GroundingResult(
+            grounded=False, resolved=["nope"],
+            gaps=[ExistenceGap(primitive=Primitive(name="nope", depths=[]))],
+        )
+        result = _make_vre_with_stub([]).check_policy(ungrounded)
+        assert result.action == PolicyAction.BLOCK
+        assert "grounded" in (result.reason or "")
+
+    def test_ungrounded_concepts_block(self):
+        """An ungrounded concept list → BLOCK, not PASS over a partial trace."""
+        result = _make_vre_with_stub([]).check_policy(["unknown_concept"])
+        assert result.action == PolicyAction.BLOCK
+
+    def test_empty_concepts_block(self):
+        """Empty concepts ground to nothing → BLOCK (was the old trace-None fail-open PASS)."""
+        result = _make_vre_with_stub([]).check_policy([])
+        assert result.action == PolicyAction.BLOCK
+
+    def test_grounded_without_trace_blocks(self):
+        """A hand-built grounded=True result with no trace is malformed → BLOCK, never PASS or crash."""
+        circumvention = GroundingResult(grounded=True, resolved=["file"], gaps=[])  # trace defaults None
+        result = _make_vre_with_stub([]).check_policy(circumvention)
+        assert result.action == PolicyAction.BLOCK

@@ -1,12 +1,12 @@
 """
-Demo PolicyCallback — blocks deletion of files matching `protected*`.
+Demo policy callbacks — block deletion of entities matching `protected*`.
 
-Intended to be attached to the Delete → File APPLIES_TO relatum by the
-integrator (via the policy wizard or a direct attachment), not by the
-domain seeder. Demonstrates a callback that inspects the shell command
-to make a domain-specific policy decision, including filesystem
-inspection when a wildcard or directory deletion could affect protected
-files.
+Declared on the Delete -> File and Delete -> Directory APPLIES_TO edges (at D3, where
+the seeder places them) via stacked `policy_callback` decorators. Importing this module
+registers the declarations; `main.py` imports it before constructing VRE. Demonstrates
+a callback that inspects the shell command to make a domain-specific policy decision,
+including filesystem inspection when a wildcard or directory deletion could affect
+protected files.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import os
 import shlex
 from pathlib import Path
 
+from vre import DepthLevel, policy_callback
 from vre.core.policy.callback import PolicyCallContext
 from vre.core.policy.models import PolicyCallbackResult
 
@@ -98,6 +99,24 @@ def _directory_contains_protected(target: str, cwd: str) -> bool:
     except OSError:
         return False
 
+@policy_callback(
+    key="protected_file",
+    source_primitive="delete",
+    target_primitive="file",
+    source_depth=DepthLevel.CONSTRAINTS,
+    name="Protected file delete guard",
+    requires_confirmation=False,  # hard block when protected files are at risk
+    confirmation_message="Deletion blocked: protected files at risk.",
+)
+@policy_callback(
+    key="protected_dir",
+    source_primitive="delete",
+    target_primitive="directory",
+    source_depth=DepthLevel.CONSTRAINTS,
+    name="Protected directory delete guard",
+    requires_confirmation=False,
+    confirmation_message="Deletion blocked: protected files at risk.",
+)
 def protected_file_delete(context: PolicyCallContext) -> PolicyCallbackResult:
     """
     Inspect an `rm` command and block if it would affect protected files.

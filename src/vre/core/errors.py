@@ -43,3 +43,7 @@ class CandidateValidationError(VREError):
 
 class RegistryError(VREError):
     """A file-based registry operation failed (read, write, or corruption)."""
+
+
+class PolicyPlacementError(VREError):
+    """A declared policy references an APPLIES_TO edge absent from the graph."""

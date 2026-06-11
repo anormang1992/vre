@@ -15,6 +15,7 @@ from langchain_core.tools import StructuredTool
 from vre import VRE
 from vre.core.backends import Neo4jRepository, SQLiteRepository
 
+from examples.langchain_ollama import policies  # noqa: F401 — registers @policy_callback declarations
 from examples.langchain_ollama.agent import make_agent
 from examples.langchain_ollama.callbacks import ConceptExtractor, get_cardinality, on_policy, on_trace
 from examples.langchain_ollama.learner import DemoLearner
