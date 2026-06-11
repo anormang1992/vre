@@ -37,15 +37,21 @@ class TraceEntry(BaseModel):
     gaps: list[dict[str, Any]] = Field(default_factory=list)
     steps: list[dict[str, Any]] = Field(default_factory=list)
     agent_id: str | None = None
+    active_policies: list[str] = Field(default_factory=list)
 
 
 def build_trace_entry(
     operation: Literal["check"],
     concepts: list[str],
     result: GroundingResult,
+    active_policies: list[str] | None = None,
 ) -> TraceEntry:
     """
     Construct a `TraceEntry` from a `GroundingResult`.
+
+    `active_policies` records the policy keys the VRE instance has registered, so an
+    audit of a trace shows which enforcement was in effect (an empty list means no
+    policies were registered for that run).
     """
     gaps = [gap.model_dump(mode="json") for gap in result.gaps]
     steps = [step.model_dump(mode="json") for step in result.get_pathway_steps()]
@@ -58,6 +64,7 @@ def build_trace_entry(
         gaps=gaps,
         steps=steps,
         agent_id=str(result.agent_id) if result.agent_id is not None else None,
+        active_policies=active_policies or [],
     )
 
 
@@ -122,10 +129,17 @@ class TraceManager:
         except Exception:
             logger.warning("Failed to persist trace for %s()", label, exc_info=True)
 
-    def write_check(self, concepts: list[str], result: GroundingResult) -> None:
+    def write_check(
+        self,
+        concepts: list[str],
+        result: GroundingResult,
+        active_policies: list[str] | None = None,
+    ) -> None:
         """
         Persist a 'check' trace entry. No-op when no writer is configured or
         when called inside a `suppress()` block.
         """
         if self._writer is not None and not self._suppressed:
-            self._safe_write(build_trace_entry("check", concepts, result), label="check")
+            self._safe_write(
+                build_trace_entry("check", concepts, result, active_policies), label="check"
+            )

@@ -124,6 +124,20 @@ def test_vre_guard_fires_on_trace_when_grounded():
     assert isinstance(traces[0], GroundingResult)
 
 
+def test_vre_guard_on_trace_raising_is_swallowed_and_execution_continues():
+    """A raising on_trace is logged, not propagated — observability must not break enforcement (#97)."""
+    mock_vre = _mock_vre(_grounding())
+
+    def boom(result):
+        raise RuntimeError("trace boom")
+
+    @vre_guard(mock_vre, concepts=["file"], on_trace=boom)
+    def my_fn():
+        return "executed"
+
+    assert my_fn() == "executed"
+
+
 def test_vre_guard_on_trace_receives_agent_id():
     """on_trace receives GroundingResult with agent_id when VRE stamps it."""
     agent_id = uuid4()

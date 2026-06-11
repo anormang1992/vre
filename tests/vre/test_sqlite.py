@@ -21,7 +21,6 @@ from vre.core.models import (
     Relatum,
     RelationType,
 )
-from vre.core.policy.models import Cardinality, Policy
 
 
 # ------------------------------------------------------------------
@@ -310,18 +309,11 @@ class TestSaveFindPrimitive:
             assert rel.target_id == target.id
             assert rel.target_depth == DepthLevel.IDENTITY
 
-    def test_metadata_and_policies_round_trip(self) -> None:
+    def test_relatum_metadata_round_trip(self) -> None:
         with SQLiteRepository(":memory:") as repo:
             target = _make_primitive("Directory", DepthLevel.CAPABILITIES)
             repo.save_primitive(target)
 
-            policy = Policy(
-                name="confirm_delete",
-                requires_confirmation=True,
-                trigger_cardinality=Cardinality.MULTIPLE,
-                confirmation_message="Are you sure?",
-                metadata={"severity": "high"},
-            )
             source = Primitive(
                 name="Delete",
                 depths=[
@@ -335,7 +327,6 @@ class TestSaveFindPrimitive:
                                 target_id=target.id,
                                 target_depth=DepthLevel.CAPABILITIES,
                                 metadata={"destructive": True, "tags": ["danger"]},
-                                policies=[policy],
                                 provenance=_prov(),
                             )
                         ],
@@ -349,10 +340,6 @@ class TestSaveFindPrimitive:
             assert found is not None
             rel = found.depths[2].relata[0]
             assert rel.metadata == {"destructive": True, "tags": ["danger"]}
-            assert len(rel.policies) == 1
-            assert rel.policies[0].name == "confirm_delete"
-            assert rel.policies[0].trigger_cardinality == Cardinality.MULTIPLE
-            assert rel.policies[0].metadata == {"severity": "high"}
 
     def test_provenance_round_trip(self) -> None:
         with SQLiteRepository(":memory:") as repo:
@@ -1035,3 +1022,36 @@ class TestExports:
     def test_importable_from_vre(self) -> None:
         from vre import SQLiteRepository as S
         assert S is SQLiteRepository
+
+
+# ------------------------------------------------------------------
+# Legacy schema tolerance (#81 clean break)
+# ------------------------------------------------------------------
+
+
+def test_legacy_policies_column_warns(tmp_path, caplog):
+    """A pre-#81 DB with stored policies opens fine and warns that they are now inert."""
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE relata (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id TEXT, target_id TEXT, rel_type TEXT,
+            source_depth INTEGER, target_depth INTEGER,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            policies TEXT NOT NULL DEFAULT '[]',
+            provenance TEXT
+        );
+        INSERT INTO relata (source_id, target_id, rel_type, source_depth, target_depth, policies)
+        VALUES ('s', 't', 'APPLIES_TO', 2, 3, '[{"name": "old_policy"}]');
+        """
+    )
+    conn.close()
+
+    with caplog.at_level("WARNING"):
+        repo = SQLiteRepository(str(db))
+    repo.close()
+    assert any("Legacy graph-resident policies" in r.message for r in caplog.records)

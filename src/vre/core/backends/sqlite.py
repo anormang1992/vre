@@ -29,7 +29,6 @@ Schema
         source_depth  INTEGER NOT NULL,
         target_depth  INTEGER NOT NULL,
         metadata_json TEXT NOT NULL DEFAULT '{}',
-        policies      TEXT NOT NULL DEFAULT '[]',
         provenance    TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_rel_source ON relata(source_id);
@@ -62,7 +61,6 @@ from vre.core.models import (
     ResolvedSubgraph,
     TRANSITIVE_RELATION_TYPES,
 )
-from vre.core.policy.models import parse_policy
 
 
 logger = logging.getLogger(__name__)
@@ -90,7 +88,6 @@ CREATE TABLE IF NOT EXISTS relata (
     source_depth  INTEGER NOT NULL,
     target_depth  INTEGER NOT NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}',
-    policies      TEXT NOT NULL DEFAULT '[]',
     provenance    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_rel_source ON relata(source_id);
@@ -121,6 +118,28 @@ class SQLiteRepository(Repository):
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.executescript(_SCHEMA)
+        self._warn_if_legacy_policies()
+
+    def _warn_if_legacy_policies(self) -> None:
+        """
+        Warn if this database predates #81 and still holds graph-resident policies.
+
+        The `policies` column was dropped when policies became code-resident; an
+        existing column carrying anything but the empty list means those stored
+        policies are now inert and must be re-declared in code. Pre-1.0 migration aid.
+        """
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(relata)")}
+        if "policies" in columns:
+            stale = self._conn.execute(
+                "SELECT 1 FROM relata WHERE policies NOT IN ('[]', '') LIMIT 1"
+            ).fetchone()
+            if stale is not None:
+                logger.warning(
+                    "Legacy graph-resident policies found in %s; policies are code-resident "
+                    "as of #81 and these stored policies are inert. Re-declare them with "
+                    "@policy_callback / register_policy.",
+                    self._path,
+                )
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -172,10 +191,6 @@ class SQLiteRepository(Repository):
                 metadata_raw = rel.get("metadata_json", "{}")
                 metadata = json.loads(metadata_raw) if metadata_raw else {}
 
-                policies_raw = rel.get("policies", "[]")
-                policies_data = json.loads(policies_raw) if policies_raw else []
-                policies = [parse_policy(p) for p in policies_data]
-
                 rel_prov_raw = rel.get("provenance")
                 rel_prov = None
                 if rel_prov_raw:
@@ -186,7 +201,6 @@ class SQLiteRepository(Repository):
                     target_id=UUID(rel["target_id"]),
                     target_depth=DepthLevel(target_depth_val),
                     metadata=metadata,
-                    policies=policies,
                     provenance=rel_prov,
                 )
 
@@ -315,9 +329,6 @@ class SQLiteRepository(Repository):
                         "source_depth": int(depth.level),
                         "target_depth": int(relatum.target_depth),
                         "metadata_json": json.dumps(relatum.metadata) if relatum.metadata else "{}",
-                        "policies": json.dumps(
-                            [p.model_dump() for p in relatum.policies]
-                        ) if relatum.policies else "[]",
                         "provenance": self._dump_model_json(relatum.provenance),
                     }
                 )
@@ -372,8 +383,8 @@ class SQLiteRepository(Repository):
                     """
                     INSERT INTO relata
                         (source_id, target_id, rel_type, source_depth,
-                         target_depth, metadata_json, policies, provenance)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         target_depth, metadata_json, provenance)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(primitive.id),
@@ -382,7 +393,6 @@ class SQLiteRepository(Repository):
                         rp["source_depth"],
                         rp["target_depth"],
                         rp["metadata_json"],
-                        rp["policies"],
                         rp["provenance"],
                     ),
                 )
@@ -435,7 +445,7 @@ class SQLiteRepository(Repository):
         rows = self._conn.execute(
             """
             SELECT rel_type, target_id, source_depth, target_depth,
-                   metadata_json, policies, provenance
+                   metadata_json, provenance
             FROM relata
             WHERE source_id = ?
             """,
@@ -596,7 +606,7 @@ class SQLiteRepository(Repository):
         edge_rows = self._conn.execute(
             f"""
             SELECT source_id, target_id, rel_type, source_depth, target_depth,
-                   metadata_json, policies, provenance
+                   metadata_json, provenance
             FROM relata
             WHERE source_id IN ({node_placeholders})
               AND target_id IN ({node_placeholders})

@@ -75,7 +75,8 @@ def vre_guard(
         root primitives. Can only raise the floor, never lower it.
     on_trace:
         Optional callback called with the GroundingResult after grounding
-        (both grounded and ungrounded).
+        (both grounded and ungrounded). Exceptions it raises are logged and
+        swallowed — an observability hook must never break enforcement.
     on_policy:
         Optional callback called with the list of PolicyViolation when any
         violation requires confirmation. Should return True to proceed,
@@ -97,7 +98,10 @@ def vre_guard(
             logger.debug("Guard %r: concepts %s", tool_name, resolved_concepts)
             grounding = vre.check(resolved_concepts, min_depth=min_depth)
             if on_trace:
-                on_trace(grounding)
+                try:
+                    on_trace(grounding)
+                except Exception:  # noqa: BLE001 — observability must not break enforcement
+                    logger.exception("Guard %r: on_trace raised; continuing", tool_name)
 
             if not grounding.grounded:
                 logger.info("Guard %r: not grounded, returning GroundingResult (%d gaps)", tool_name, len(grounding.gaps))

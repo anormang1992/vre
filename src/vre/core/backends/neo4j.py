@@ -36,7 +36,6 @@ from vre.core.models import (
     ResolvedSubgraph,
     TRANSITIVE_RELATION_TYPES,
 )
-from vre.core.policy.models import parse_policy
 
 
 _TRANSITIVE_RELS = [rt.value for rt in TRANSITIVE_RELATION_TYPES]
@@ -133,7 +132,6 @@ class Neo4jRepository(Repository):
                     "source_depth": r["source_depth"],
                     "target_depth": r["target_depth"],
                     "metadata_json": r.get("metadata_json") or "{}",
-                    "policies": r.get("policies") or "[]",
                     "provenance": r.get("provenance"),
                 },
             }
@@ -165,10 +163,6 @@ class Neo4jRepository(Repository):
                 metadata_json = rel_props.get("metadata_json", "{}")
                 metadata = json.loads(metadata_json) if metadata_json else {}
 
-                policies = rel_props.get("policies", "[]")
-                policies_data = json.loads(policies) if policies else []
-                policies = [parse_policy(p) for p in policies_data]
-
                 rel_prov_json = rel_props.get("provenance")
                 rel_prov = None
                 if rel_prov_json:
@@ -179,7 +173,6 @@ class Neo4jRepository(Repository):
                     target_id=UUID(rel["target_id"]),
                     target_depth=DepthLevel(target_depth_val),
                     metadata=metadata,
-                    policies=policies,
                     provenance=rel_prov,
                 )
 
@@ -280,7 +273,6 @@ class Neo4jRepository(Repository):
                         "source_depth": int(depth.level),
                         "target_depth": int(relatum.target_depth),
                         "metadata_json": json.dumps(relatum.metadata) if relatum.metadata else "{}",
-                        "policies": json.dumps([p.model_dump() for p in relatum.policies]) if relatum.policies else "[]",
                         "provenance": self._dump_model_json(relatum.provenance),
                     }
                 )
@@ -333,7 +325,6 @@ class Neo4jRepository(Repository):
                         f"source_depth: $source_depth, "
                         f"target_depth: $target_depth, "
                         f"metadata_json: $metadata_json, "
-                        f"policies: $policies, "
                         f"provenance: $provenance"
                         f"}}]->(t)",
                     ),
@@ -342,7 +333,6 @@ class Neo4jRepository(Repository):
                     source_depth=rp["source_depth"],
                     target_depth=rp["target_depth"],
                     metadata_json=rp["metadata_json"],
-                    policies=rp["policies"],
                     provenance=rp["provenance"],
                 )
 
@@ -454,7 +444,6 @@ class Neo4jRepository(Repository):
                 source_depth: r.source_depth,
                 target_depth: r.target_depth,
                 metadata_json: coalesce(r.metadata_json, "{}"),
-                policies: coalesce(r.policies, "[]"),
                 provenance: r.provenance
               }) AS rels
             """,
@@ -498,7 +487,6 @@ class Neo4jRepository(Repository):
                 source_depth: r.source_depth,
                 target_depth: r.target_depth,
                 metadata_json: coalesce(r.metadata_json, "{}"),
-                policies: coalesce(r.policies, "[]"),
                 provenance: r.provenance
               }) AS rels
             """,
@@ -590,7 +578,6 @@ class Neo4jRepository(Repository):
                   source_id: src.id, target_id: tgt.id, rel_type: type(r),
                   source_depth: r.source_depth, target_depth: r.target_depth,
                   metadata_json: coalesce(r.metadata_json, "{}"),
-                  policies: coalesce(r.policies, "[]"),
                   provenance: r.provenance
               }) WHERE e.rel_type IS NOT NULL] AS edges
             """,
@@ -621,7 +608,6 @@ class Neo4jRepository(Repository):
                                 "source_depth": e["source_depth"],
                                 "target_depth": e["target_depth"],
                                 "metadata_json": e.get("metadata_json", "{}"),
-                                "policies": e.get("policies", "[]"),
                                 "provenance": e.get("provenance"),
                             },
                         })

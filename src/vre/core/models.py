@@ -13,8 +13,6 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from vre.core.policy.models import Policy
-
 
 class DepthLevel(IntEnum):
     """
@@ -108,7 +106,6 @@ class Relatum(BaseModel):
     target_id: UUID
     target_depth: DepthLevel
     metadata: dict[str, Any] = Field(default_factory=dict)
-    policies: list[Policy] = Field(default_factory=list)
     provenance: Provenance | None = None
 
     def validate_provenance(self, context: str = "") -> None:

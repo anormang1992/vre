@@ -346,8 +346,10 @@ class GroundingEngine:
         """
         if not concepts:
             logger.debug("Ground called with empty concepts")
-            # TODO: Why not use the _empty_response for the trace here?
-            result = GroundingResult(grounded=False, resolved=[], gaps=[], trace=None)
+            # Mirror query()'s empty-case trace so a grounded/ungrounded result always
+            # carries a (possibly empty) trace — never None. Grounding then has a single
+            # signal, `grounded`, and callers never special-case a missing trace.
+            result = GroundingResult(grounded=False, resolved=[], gaps=[], trace=_empty_response())
         else:
             logger.info("Grounding %d concept(s)", len(concepts))
             response = self.query(concepts, min_depth=min_depth)

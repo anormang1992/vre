@@ -8,7 +8,12 @@ from vre.core.policy.models import (
     PolicyCallbackResult,
     PolicyResult,
     PolicyViolation,
-    parse_policy,
+)
+from vre.core.policy.registry import (
+    OrphanedPlacement,
+    PolicyRegistry,
+    policy_callback,
+    register_policy,
 )
 
 __all__ = [
@@ -18,5 +23,8 @@ __all__ = [
     "PolicyCallbackResult",
     "PolicyResult",
     "PolicyViolation",
-    "parse_policy",
+    "PolicyRegistry",
+    "OrphanedPlacement",
+    "policy_callback",
+    "register_policy",
 ]
