@@ -554,9 +554,9 @@ existing connected node *back* to the orphan is just as valid as one originating
 ### Provenance
 
 `learn_gap` accepts an optional `source: ProvenanceSource` parameter (default `LEARNED`). The integrator decides
-how to stamp persisted knowledge based on its own loop semantics — `LEARNED` for LLM-proposed fills accepted as-is,
-`CONVERSATIONAL` for human-modified proposals, etc. The graph remembers not just what it knows, but how it came to
-know it.
+how to stamp persisted knowledge based on its own loop semantics — `LEARNED` for agent-proposed fills approved at
+the persistence boundary, `AUTHORED` for content a human drafted directly. Both are human-attested by construction;
+provenance is genealogy, not a trust gradient. The graph remembers not just what it knows, but how it came to know it.
 
 ### Reachability Prerequisites
 

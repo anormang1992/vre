@@ -117,7 +117,7 @@ class Neo4jRepository(Repository):
             "id": record["id"],
             "name": record["name"],
             "depths_json": record["depths_json"],
-            "provenance": record["provenance"],
+            "provenance_json": record["provenance_json"],
             "metrics_json": record["metrics_json"],
         }
 
@@ -132,7 +132,7 @@ class Neo4jRepository(Repository):
                     "source_depth": r["source_depth"],
                     "target_depth": r["target_depth"],
                     "metadata_json": r.get("metadata_json") or "{}",
-                    "provenance": r.get("provenance"),
+                    "provenance_json": r.get("provenance_json"),
                 },
             }
             for r in record["rels"]
@@ -163,7 +163,7 @@ class Neo4jRepository(Repository):
                 metadata_json = rel_props.get("metadata_json", "{}")
                 metadata = json.loads(metadata_json) if metadata_json else {}
 
-                rel_prov_json = rel_props.get("provenance")
+                rel_prov_json = rel_props.get("provenance_json")
                 rel_prov = None
                 if rel_prov_json:
                     rel_prov = Provenance(**Neo4jRepository._parse_json_field(rel_prov_json))
@@ -181,7 +181,7 @@ class Neo4jRepository(Repository):
 
             sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
 
-            node_prov_json = node_data.get("provenance")
+            node_prov_json = node_data.get("provenance_json")
             node_prov = None
             if node_prov_json:
                 node_prov = Provenance(**Neo4jRepository._parse_json_field(node_prov_json))
@@ -273,7 +273,7 @@ class Neo4jRepository(Repository):
                         "source_depth": int(depth.level),
                         "target_depth": int(relatum.target_depth),
                         "metadata_json": json.dumps(relatum.metadata) if relatum.metadata else "{}",
-                        "provenance": self._dump_model_json(relatum.provenance),
+                        "provenance_json": self._dump_model_json(relatum.provenance),
                     }
                 )
 
@@ -293,12 +293,12 @@ class Neo4jRepository(Repository):
                     LiteralString,
                     "MERGE (p:Primitive {id: $id}) "
                     "SET p.name = $name, p.depths_json = $depths_json, "
-                    "p.provenance = $provenance, p.metrics_json = $metrics_json",
+                    "p.provenance_json = $provenance_json, p.metrics_json = $metrics_json",
                 ),
                 id=str(primitive.id),
                 name=primitive.name,
                 depths_json=depths_json,
-                provenance=node_provenance,
+                provenance_json=node_provenance,
                 metrics_json=node_metrics,
             )
 
@@ -325,7 +325,7 @@ class Neo4jRepository(Repository):
                         f"source_depth: $source_depth, "
                         f"target_depth: $target_depth, "
                         f"metadata_json: $metadata_json, "
-                        f"provenance: $provenance"
+                        f"provenance_json: $provenance_json"
                         f"}}]->(t)",
                     ),
                     source_id=str(primitive.id),
@@ -333,7 +333,7 @@ class Neo4jRepository(Repository):
                     source_depth=rp["source_depth"],
                     target_depth=rp["target_depth"],
                     metadata_json=rp["metadata_json"],
-                    provenance=rp["provenance"],
+                    provenance_json=rp["provenance_json"],
                 )
 
         try:
@@ -436,7 +436,7 @@ class Neo4jRepository(Repository):
               p.id AS id,
               p.name AS name,
               p.depths_json AS depths_json,
-              p.provenance AS provenance,
+              p.provenance_json AS provenance_json,
               p.metrics_json AS metrics_json,
               collect({
                 rel_type: type(r),
@@ -444,7 +444,7 @@ class Neo4jRepository(Repository):
                 source_depth: r.source_depth,
                 target_depth: r.target_depth,
                 metadata_json: coalesce(r.metadata_json, "{}"),
-                provenance: r.provenance
+                provenance_json: r.provenance_json
               }) AS rels
             """,
         )
@@ -479,7 +479,7 @@ class Neo4jRepository(Repository):
               p.id AS id,
               p.name AS name,
               p.depths_json AS depths_json,
-              p.provenance AS provenance,
+              p.provenance_json AS provenance_json,
               p.metrics_json AS metrics_json,
               collect({
                 rel_type: type(r),
@@ -487,7 +487,7 @@ class Neo4jRepository(Repository):
                 source_depth: r.source_depth,
                 target_depth: r.target_depth,
                 metadata_json: coalesce(r.metadata_json, "{}"),
-                provenance: r.provenance
+                provenance_json: r.provenance_json
               }) AS rels
             """,
         )
@@ -572,13 +572,13 @@ class Neo4jRepository(Repository):
             OPTIONAL MATCH (src)-[r]->(tgt:Primitive)
             WHERE tgt IN nodes
             RETURN
-              [r IN roots | {id: r.id, name: r.name, depths_json: r.depths_json, provenance: r.provenance, metrics_json: r.metrics_json}] AS roots,
-              [n IN nodes | {id: n.id, name: n.name, depths_json: n.depths_json, provenance: n.provenance, metrics_json: n.metrics_json}] AS nodes,
+              [r IN roots | {id: r.id, name: r.name, depths_json: r.depths_json, provenance_json: r.provenance_json, metrics_json: r.metrics_json}] AS roots,
+              [n IN nodes | {id: n.id, name: n.name, depths_json: n.depths_json, provenance_json: n.provenance_json, metrics_json: n.metrics_json}] AS nodes,
               [e IN collect({
                   source_id: src.id, target_id: tgt.id, rel_type: type(r),
                   source_depth: r.source_depth, target_depth: r.target_depth,
                   metadata_json: coalesce(r.metadata_json, "{}"),
-                  provenance: r.provenance
+                  provenance_json: r.provenance_json
               }) WHERE e.rel_type IS NOT NULL] AS edges
             """,
         )
@@ -608,7 +608,7 @@ class Neo4jRepository(Repository):
                                 "source_depth": e["source_depth"],
                                 "target_depth": e["target_depth"],
                                 "metadata_json": e.get("metadata_json", "{}"),
-                                "provenance": e.get("provenance"),
+                                "provenance_json": e.get("provenance_json"),
                             },
                         })
 

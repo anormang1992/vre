@@ -57,11 +57,21 @@ TRANSITIVE_RELATION_TYPES: frozenset[RelationType] = frozenset(
 class ProvenanceSource(str, Enum):
     """
     Origin category for knowledge in the epistemic graph.
+
+    Provenance is genealogy -- who drafted the content -- not a trust
+    gradient. As a knowledge linter, VRE only ever persists knowledge that
+    a human has attested at the persistence boundary, so the two categories
+    differ solely in who drafted the content:
+
+    - AUTHORED: a human drafted the content from scratch.
+    - LEARNED: an agent proposed the content and a human approved it at
+      the point of persistence.
+
+    Both are human-attested by construction.
     """
 
     AUTHORED = "authored"
     LEARNED = "learned"
-    CONVERSATIONAL = "conversational"
 
 
 class Provenance(BaseModel):

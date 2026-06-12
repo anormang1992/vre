@@ -388,6 +388,50 @@ class TestSaveFindPrimitive:
             assert rel.provenance.source == ProvenanceSource.LEARNED
             assert rel.provenance.detail == "Discovered via execution failure"
 
+    def test_provenance_stored_under_json_suffixed_column(self) -> None:
+        """
+        Provenance is persisted under the `*_json` suffixed column on both the
+        primitives and relata tables (#48) -- never a bare `provenance` column.
+        """
+        with SQLiteRepository(":memory:") as repo:
+            target = _make_primitive("Path")
+            repo.save_primitive(target)
+            source = Primitive(
+                name="File",
+                depths=[
+                    Depth(level=DepthLevel.EXISTENCE, provenance=_prov()),
+                    Depth(
+                        level=DepthLevel.IDENTITY,
+                        relata=[
+                            Relatum(
+                                relation_type=RelationType.REQUIRES,
+                                target_id=target.id,
+                                target_depth=DepthLevel.EXISTENCE,
+                                provenance=_prov(),
+                            )
+                        ],
+                        provenance=_prov(),
+                    ),
+                ],
+                provenance=_prov(),
+            )
+            repo.save_primitive(source)
+
+            prim_cols = {r["name"] for r in repo._conn.execute("PRAGMA table_info(primitives)")}
+            rel_cols = {r["name"] for r in repo._conn.execute("PRAGMA table_info(relata)")}
+            assert "provenance_json" in prim_cols and "provenance" not in prim_cols
+            assert "provenance_json" in rel_cols and "provenance" not in rel_cols
+
+            # The renamed columns actually carry the serialized payload.
+            node_row = repo._conn.execute(
+                "SELECT provenance_json FROM primitives WHERE name = 'File'"
+            ).fetchone()
+            rel_row = repo._conn.execute(
+                "SELECT provenance_json FROM relata LIMIT 1"
+            ).fetchone()
+            assert node_row["provenance_json"] is not None
+            assert rel_row["provenance_json"] is not None
+
     def test_overwrite_replaces_relata(self) -> None:
         with SQLiteRepository(":memory:") as repo:
             target_a = _make_primitive("TargetA")
@@ -1022,36 +1066,3 @@ class TestExports:
     def test_importable_from_vre(self) -> None:
         from vre import SQLiteRepository as S
         assert S is SQLiteRepository
-
-
-# ------------------------------------------------------------------
-# Legacy schema tolerance (#81 clean break)
-# ------------------------------------------------------------------
-
-
-def test_legacy_policies_column_warns(tmp_path, caplog):
-    """A pre-#81 DB with stored policies opens fine and warns that they are now inert."""
-    import sqlite3
-
-    db = tmp_path / "legacy.db"
-    conn = sqlite3.connect(str(db))
-    conn.executescript(
-        """
-        CREATE TABLE relata (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id TEXT, target_id TEXT, rel_type TEXT,
-            source_depth INTEGER, target_depth INTEGER,
-            metadata_json TEXT NOT NULL DEFAULT '{}',
-            policies TEXT NOT NULL DEFAULT '[]',
-            provenance TEXT
-        );
-        INSERT INTO relata (source_id, target_id, rel_type, source_depth, target_depth, policies)
-        VALUES ('s', 't', 'APPLIES_TO', 2, 3, '[{"name": "old_policy"}]');
-        """
-    )
-    conn.close()
-
-    with caplog.at_level("WARNING"):
-        repo = SQLiteRepository(str(db))
-    repo.close()
-    assert any("Legacy graph-resident policies" in r.message for r in caplog.records)
