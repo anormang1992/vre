@@ -15,7 +15,7 @@ Schema
         id              TEXT PRIMARY KEY,
         name            TEXT NOT NULL,
         depths_json     TEXT NOT NULL,
-        provenance      TEXT,
+        provenance_json TEXT,
         metrics_json    TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
@@ -29,7 +29,7 @@ Schema
         source_depth  INTEGER NOT NULL,
         target_depth  INTEGER NOT NULL,
         metadata_json TEXT NOT NULL DEFAULT '{}',
-        provenance    TEXT
+        provenance_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_rel_source ON relata(source_id);
     CREATE INDEX IF NOT EXISTS idx_rel_target ON relata(target_id);
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS primitives (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     depths_json     TEXT NOT NULL,
-    provenance      TEXT,
+    provenance_json TEXT,
     metrics_json    TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS relata (
     source_depth  INTEGER NOT NULL,
     target_depth  INTEGER NOT NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}',
-    provenance    TEXT
+    provenance_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_rel_source ON relata(source_id);
 CREATE INDEX IF NOT EXISTS idx_rel_target ON relata(target_id);
@@ -118,28 +118,6 @@ class SQLiteRepository(Repository):
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.executescript(_SCHEMA)
-        self._warn_if_legacy_policies()
-
-    def _warn_if_legacy_policies(self) -> None:
-        """
-        Warn if this database predates #81 and still holds graph-resident policies.
-
-        The `policies` column was dropped when policies became code-resident; an
-        existing column carrying anything but the empty list means those stored
-        policies are now inert and must be re-declared in code. Pre-1.0 migration aid.
-        """
-        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(relata)")}
-        if "policies" in columns:
-            stale = self._conn.execute(
-                "SELECT 1 FROM relata WHERE policies NOT IN ('[]', '') LIMIT 1"
-            ).fetchone()
-            if stale is not None:
-                logger.warning(
-                    "Legacy graph-resident policies found in %s; policies are code-resident "
-                    "as of #81 and these stored policies are inert. Re-declare them with "
-                    "@policy_callback / register_policy.",
-                    self._path,
-                )
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -191,7 +169,7 @@ class SQLiteRepository(Repository):
                 metadata_raw = rel.get("metadata_json", "{}")
                 metadata = json.loads(metadata_raw) if metadata_raw else {}
 
-                rel_prov_raw = rel.get("provenance")
+                rel_prov_raw = rel.get("provenance_json")
                 rel_prov = None
                 if rel_prov_raw:
                     rel_prov = Provenance(**json.loads(rel_prov_raw))
@@ -209,7 +187,7 @@ class SQLiteRepository(Repository):
 
             sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
 
-            node_prov_raw = node_data.get("provenance")
+            node_prov_raw = node_data.get("provenance_json")
             node_prov = None
             if node_prov_raw:
                 node_prov = Provenance(**json.loads(node_prov_raw))
@@ -329,7 +307,7 @@ class SQLiteRepository(Repository):
                         "source_depth": int(depth.level),
                         "target_depth": int(relatum.target_depth),
                         "metadata_json": json.dumps(relatum.metadata) if relatum.metadata else "{}",
-                        "provenance": self._dump_model_json(relatum.provenance),
+                        "provenance_json": self._dump_model_json(relatum.provenance),
                     }
                 )
 
@@ -351,12 +329,12 @@ class SQLiteRepository(Repository):
             # UPSERT primitive row
             cursor.execute(
                 """
-                INSERT INTO primitives (id, name, depths_json, provenance, metrics_json)
+                INSERT INTO primitives (id, name, depths_json, provenance_json, metrics_json)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     depths_json = excluded.depths_json,
-                    provenance = excluded.provenance,
+                    provenance_json = excluded.provenance_json,
                     metrics_json = excluded.metrics_json
                 """,
                 (
@@ -383,7 +361,7 @@ class SQLiteRepository(Repository):
                     """
                     INSERT INTO relata
                         (source_id, target_id, rel_type, source_depth,
-                         target_depth, metadata_json, provenance)
+                         target_depth, metadata_json, provenance_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -393,7 +371,7 @@ class SQLiteRepository(Repository):
                         rp["source_depth"],
                         rp["target_depth"],
                         rp["metadata_json"],
-                        rp["provenance"],
+                        rp["provenance_json"],
                     ),
                 )
 
@@ -411,7 +389,7 @@ class SQLiteRepository(Repository):
     def find_by_id(self, id: UUID) -> Primitive | None:
         """Look up a primitive by UUID. Returns None if not found."""
         row = self._conn.execute(
-            "SELECT id, name, depths_json, provenance, metrics_json "
+            "SELECT id, name, depths_json, provenance_json, metrics_json "
             "FROM primitives WHERE id = ?",
             (str(id),),
         ).fetchone()
@@ -427,7 +405,7 @@ class SQLiteRepository(Repository):
     def find_by_name(self, name: str) -> Primitive | None:
         """Look up a primitive by name (case-insensitive). Returns None if not found."""
         row = self._conn.execute(
-            "SELECT id, name, depths_json, provenance, metrics_json "
+            "SELECT id, name, depths_json, provenance_json, metrics_json "
             "FROM primitives WHERE name = ? COLLATE NOCASE",
             (name,),
         ).fetchone()
@@ -445,7 +423,7 @@ class SQLiteRepository(Repository):
         rows = self._conn.execute(
             """
             SELECT rel_type, target_id, source_depth, target_depth,
-                   metadata_json, provenance
+                   metadata_json, provenance_json
             FROM relata
             WHERE source_id = ?
             """,
@@ -596,7 +574,7 @@ class SQLiteRepository(Repository):
         node_placeholders = ",".join("?" for _ in reachable_ids)
         node_rows = self._conn.execute(
             f"""
-            SELECT id, name, depths_json, provenance, metrics_json
+            SELECT id, name, depths_json, provenance_json, metrics_json
             FROM primitives WHERE id IN ({node_placeholders})
             """,
             reachable_ids,
@@ -606,7 +584,7 @@ class SQLiteRepository(Repository):
         edge_rows = self._conn.execute(
             f"""
             SELECT source_id, target_id, rel_type, source_depth, target_depth,
-                   metadata_json, provenance
+                   metadata_json, provenance_json
             FROM relata
             WHERE source_id IN ({node_placeholders})
               AND target_id IN ({node_placeholders})

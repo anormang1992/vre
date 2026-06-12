@@ -37,11 +37,11 @@ def test_provenance_defaults():
 
 def test_provenance_enum_values():
     """
-    ProvenanceSource enum maps to the three canonical string values from CLAUDE.md §7.2.
+    ProvenanceSource enum maps to the two canonical string values from CLAUDE.md §7.2.
     """
     assert ProvenanceSource.AUTHORED.value == "authored"
     assert ProvenanceSource.LEARNED.value == "learned"
-    assert ProvenanceSource.CONVERSATIONAL.value == "conversational"
+    assert [s.value for s in ProvenanceSource] == ["authored", "learned"]
 
 
 def test_provenance_with_detail():
@@ -114,7 +114,7 @@ def test_relatum_with_provenance():
     """
     Relatum accepts and stores a Provenance instance.
     """
-    prov = Provenance(source=ProvenanceSource.CONVERSATIONAL)
+    prov = Provenance(source=ProvenanceSource.AUTHORED)
     r = Relatum(
         relation_type=RelationType.APPLIES_TO,
         target_id=uuid4(),
@@ -251,7 +251,7 @@ def test_hydrate_primitive_with_provenance():
                         relation_type=RelationType.APPLIES_TO,
                         target_id=target_id,
                         target_depth=DepthLevel.CAPABILITIES,
-                        provenance=Provenance(source=ProvenanceSource.CONVERSATIONAL),
+                        provenance=Provenance(source=ProvenanceSource.LEARNED),
                     ),
                 ],
             ),
@@ -261,14 +261,14 @@ def test_hydrate_primitive_with_provenance():
     # Serialize
     depths_json = SQLiteRepository._depths_to_json(primitive.depths)
     node_prov_json = json.dumps(prov.model_dump(mode="json"))
-    rel_prov = Provenance(source=ProvenanceSource.CONVERSATIONAL)
+    rel_prov = Provenance(source=ProvenanceSource.LEARNED)
     rel_prov_json = json.dumps(rel_prov.model_dump(mode="json"))
 
     node_data = {
         "id": str(primitive.id),
         "name": "file",
         "depths_json": depths_json,
-        "provenance": node_prov_json,
+        "provenance_json": node_prov_json,
         "metrics_json": None,
     }
     relationships = [
@@ -278,8 +278,7 @@ def test_hydrate_primitive_with_provenance():
             "source_depth": 2,
             "target_depth": 2,
             "metadata_json": "{}",
-            "policies": "[]",
-            "provenance": rel_prov_json,
+            "provenance_json": rel_prov_json,
         },
     ]
 
@@ -303,7 +302,7 @@ def test_hydrate_primitive_with_provenance():
     # Relatum provenance
     assert len(d2.relata) == 1
     assert d2.relata[0].provenance is not None
-    assert d2.relata[0].provenance.source == ProvenanceSource.CONVERSATIONAL
+    assert d2.relata[0].provenance.source == ProvenanceSource.LEARNED
 
 
 def test_hydrate_primitive_without_provenance():
@@ -314,7 +313,7 @@ def test_hydrate_primitive_without_provenance():
         "id": str(uuid4()),
         "name": "legacy",
         "depths_json": json.dumps([{"level": 0, "properties": {}}]),
-        "provenance": None,
+        "provenance_json": None,
         "metrics_json": None,
     }
     hydrated = SQLiteRepository._hydrate_primitive(node_data, [])

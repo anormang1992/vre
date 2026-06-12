@@ -200,9 +200,9 @@ class TestMakeProvenance:
         prov = _make_provenance(ProvenanceSource.LEARNED)
         assert prov.source == ProvenanceSource.LEARNED
 
-    def test_conversational_source(self):
-        prov = _make_provenance(ProvenanceSource.CONVERSATIONAL)
-        assert prov.source == ProvenanceSource.CONVERSATIONAL
+    def test_authored_source(self):
+        prov = _make_provenance(ProvenanceSource.AUTHORED)
+        assert prov.source == ProvenanceSource.AUTHORED
 
 
 # ---------------------------------------------------------------------------
@@ -238,20 +238,6 @@ class TestPersistExistence:
 
         with pytest.raises(CandidateValidationError, match="missing D1"):
             engine.learn_gap(gap, filled)
-
-    def test_conversational_provenance(self):
-        repo = StubRepository()
-        engine = LearningEngine(repo)
-        gap = ExistenceGap(primitive=_primitive("Copy"))
-
-        filled = ExistenceCandidate(
-            name="Copy",
-            d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Duplicates"}),
-        )
-
-        engine.learn_gap(gap, filled, source=ProvenanceSource.CONVERSATIONAL)
-        saved = repo.saved[0]
-        assert saved.provenance.source == ProvenanceSource.CONVERSATIONAL
 
 
 class TestPersistDepth:
@@ -542,7 +528,7 @@ class TestLearnGap:
         saved = repo.saved[0]
         assert saved.provenance.source == ProvenanceSource.LEARNED
 
-    def test_provenance_conversational(self):
+    def test_provenance_honors_explicit_source(self):
         repo = StubRepository()
         engine = LearningEngine(repo)
         gap = ExistenceGap(primitive=_primitive("Copy"))
@@ -552,9 +538,9 @@ class TestLearnGap:
             d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "Duplicates"}),
         )
 
-        engine.learn_gap(gap, filled, source=ProvenanceSource.CONVERSATIONAL)
+        engine.learn_gap(gap, filled, source=ProvenanceSource.AUTHORED)
         saved = repo.saved[0]
-        assert saved.provenance.source == ProvenanceSource.CONVERSATIONAL
+        assert saved.provenance.source == ProvenanceSource.AUTHORED
 
     def test_rejects_mismatched_gap_candidate_kind(self):
         # ExistenceGap fed a well-formed DepthCandidate: the kind guard must
