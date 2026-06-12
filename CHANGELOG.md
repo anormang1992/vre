@@ -156,7 +156,7 @@ Initial PyPI release, bundling the early epistemic engine and tooling.
 
 > Note: the auto-learning loop introduced here was removed in 0.6.0.
 
-## 0.2.0 - 2026-03-04
+## [0.2.0] - 2026-03-04
 
 ### Added
 
@@ -166,7 +166,7 @@ Initial PyPI release, bundling the early epistemic engine and tooling.
 
 - License changed from MIT to Apache-2.0.
 
-## 0.1.0 - 2026-03-02
+## [0.1.0] - 2026-03-02
 
 - Initial public scaffold: the core epistemic model and project README.
 
@@ -174,4 +174,6 @@ Initial PyPI release, bundling the early epistemic engine and tooling.
 [0.9.1]: https://github.com/anormang1992/vre/compare/v0.8.0...v0.9.1
 [0.8.0]: https://github.com/anormang1992/vre/compare/v0.6.0...v0.8.0
 [0.6.0]: https://github.com/anormang1992/vre/compare/v0.4.3...v0.6.0
-[0.4.3]: https://github.com/anormang1992/vre/commits/v0.4.3
+[0.4.3]: https://github.com/anormang1992/vre/compare/v0.2.0...v0.4.3
+[0.2.0]: https://github.com/anormang1992/vre/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/anormang1992/vre/releases/tag/v0.1.0
