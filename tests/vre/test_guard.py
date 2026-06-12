@@ -5,11 +5,13 @@ Unit tests for vre.guard — vre_guard decorator.
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+
 from vre.core.grounding import GroundingResult
 from vre.core.models import ExistenceGap, Primitive
 from vre.core.policy import PolicyAction, PolicyResult
 from vre.core.policy.models import PolicyViolation, Policy
-from vre.guard import vre_guard
+from vre.guard import GuardBlock, vre_guard
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -40,8 +42,8 @@ def _violation(message="Confirm?", requires_confirmation=True) -> PolicyViolatio
 
 # ── ungrounded path ───────────────────────────────────────────────────────────
 
-def test_vre_guard_returns_grounding_result_when_not_grounded():
-    """When grounding fails, vre_guard returns GroundingResult without calling fn."""
+def test_vre_guard_returns_guardblock_when_not_grounded():
+    """When grounding fails, vre_guard returns a GuardBlock without calling fn."""
     from vre.guard import vre_guard
 
     gap = ExistenceGap(primitive=Primitive(name="unknown", depths=[]))
@@ -53,13 +55,14 @@ def test_vre_guard_returns_grounding_result_when_not_grounded():
         return "executed"
 
     result = my_fn()
-    assert isinstance(result, GroundingResult)
-    assert result.grounded is False
+    assert isinstance(result, GuardBlock)
+    assert result.blocked_by == "grounding"
+    assert result.grounding.grounded is False
     assert "[VRE] Not grounded" in str(result)
 
 
 def test_vre_guard_blocks_on_existence_gap():
-    """Existence gap → grounded=False → returns GroundingResult without calling fn."""
+    """Existence gap → grounded=False → returns a GuardBlock without calling fn."""
     from vre.guard import vre_guard
     from vre.core.models import ExistenceGap, Primitive
 
@@ -71,9 +74,10 @@ def test_vre_guard_blocks_on_existence_gap():
         return "executed"
 
     result = my_fn()
-    assert isinstance(result, GroundingResult)
-    assert result.grounded is False
-    assert len(result.gaps) == 1
+    assert isinstance(result, GuardBlock)
+    assert result.blocked_by == "grounding"
+    assert result.grounding.grounded is False
+    assert len(result.grounding.gaps) == 1
     assert "[VRE] Not grounded" in str(result)
 
 
@@ -169,7 +173,7 @@ def test_vre_guard_grounding_called_once():
 # ── single-phase: policy gates ────────────────────────────────────────────────
 
 def test_vre_guard_blocks_when_no_handler():
-    """BLOCK policy with no on_policy handler → returns PolicyResult(BLOCK)."""
+    """BLOCK policy with no on_policy handler → returns a GuardBlock wrapping the PolicyResult."""
     from vre.guard import vre_guard
 
     mock_vre = _mock_vre(
@@ -186,8 +190,9 @@ def test_vre_guard_blocks_when_no_handler():
         return "executed"
 
     result = my_fn()
-    assert isinstance(result, PolicyResult)
-    assert result.action == PolicyAction.BLOCK
+    assert isinstance(result, GuardBlock)
+    assert result.blocked_by == "policy"
+    assert result.policy.action == PolicyAction.BLOCK
 
 
 def test_vre_guard_calls_fn_when_policy_passes():
@@ -208,7 +213,7 @@ def test_vre_guard_calls_fn_when_policy_passes():
 
 
 def test_vre_guard_blocks_on_block_policy():
-    """BLOCK policy → returns the PolicyResult."""
+    """BLOCK policy → returns a GuardBlock wrapping the PolicyResult."""
     from vre.guard import vre_guard
 
     mock_vre = _mock_vre(
@@ -221,9 +226,10 @@ def test_vre_guard_blocks_on_block_policy():
         return "executed"
 
     result = my_fn()
-    assert isinstance(result, PolicyResult)
-    assert result.action == PolicyAction.BLOCK
-    assert result.reason == "Forbidden"
+    assert isinstance(result, GuardBlock)
+    assert result.blocked_by == "policy"
+    assert result.policy.action == PolicyAction.BLOCK
+    assert result.policy.reason == "Forbidden"
 
 
 def test_vre_guard_passes_on_policy_through_to_check_policy():
@@ -412,7 +418,7 @@ def test_vre_guard_no_min_depth_passes_none():
 
 
 def test_vre_guard_on_policy_decline_returns_block():
-    """When on_policy returns False (inside check_policy), returns PolicyResult(BLOCK)."""
+    """When on_policy returns False (inside check_policy), returns a GuardBlock (policy)."""
     from vre.guard import vre_guard
 
     mock_vre = _mock_vre(
@@ -429,6 +435,45 @@ def test_vre_guard_on_policy_decline_returns_block():
         return "executed"
 
     result = my_fn()
-    assert isinstance(result, PolicyResult)
-    assert result.action == PolicyAction.BLOCK
-    assert result.reason == "User declined"
+    assert isinstance(result, GuardBlock)
+    assert result.blocked_by == "policy"
+    assert result.policy.action == PolicyAction.BLOCK
+    assert result.policy.reason == "User declined"
+
+
+# ── GuardBlock ────────────────────────────────────────────────────────────────
+
+def test_guard_block_blocked_by_reflects_wrapped_result():
+    """blocked_by is 'grounding' or 'policy' depending on which result is wrapped."""
+    assert GuardBlock(grounding=_grounding(grounded=False)).blocked_by == "grounding"
+    assert GuardBlock(policy=PolicyResult(action=PolicyAction.BLOCK)).blocked_by == "policy"
+
+
+def test_guard_block_requires_exactly_one_wrapped_result():
+    """A GuardBlock must wrap exactly one result — empty or double-wrapped raises."""
+    with pytest.raises(ValueError):
+        GuardBlock()
+    with pytest.raises(ValueError):
+        GuardBlock(grounding=_grounding(grounded=False),
+                   policy=PolicyResult(action=PolicyAction.BLOCK))
+
+
+def test_guard_block_str_delegates_to_wrapped_result():
+    """str(GuardBlock) renders the wrapped result's explanation (LLM-feedable)."""
+    grounding = _grounding(grounded=False)
+    policy = PolicyResult(action=PolicyAction.BLOCK, reason="nope")
+    assert str(GuardBlock(grounding=grounding)) == str(grounding)
+    assert str(GuardBlock(policy=policy)) == str(policy)
+
+
+def test_guard_passes_value_through_untouched_on_success():
+    """On success the guard returns the fn's own value, never a GuardBlock."""
+    mock_vre = _mock_vre(_grounding(grounded=True))  # policy defaults to PASS
+
+    @vre_guard(mock_vre, concepts=["file"])
+    def my_fn():
+        return {"data": 1}
+
+    result = my_fn()
+    assert not isinstance(result, GuardBlock)
+    assert result == {"data": 1}

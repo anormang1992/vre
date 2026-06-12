@@ -61,6 +61,7 @@ from vre.core.policy.registry import (
     policy_callback,
     register_policy,
 )
+from vre.guard import GuardBlock, vre_guard
 from vre.identity import AgentIdentity, AgentRegistry
 from vre.learning import LearningEngine, template_for_gap
 from vre.metrics import MetricsManager
@@ -72,6 +73,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "VRE",
+    "vre_guard",
+    "GuardBlock",
     "AgentIdentity",
     "AgentRegistry",
     "CandidateValidationError",
