@@ -67,6 +67,11 @@ summarize major changes, refactors, and breaking changes — not every commit.
 - **BREAKING:** The `source` parameter of `LearningEngine.learn_gap`. Knowledge
   persisted through the learning path is always stamped `LEARNED` (agent-proposed,
   human-approved); `AUTHORED` provenance can no longer be forged there. (#95)
+- The `examples/langchain_ollama` reference agent and the `examples` install
+  extra. The demo leaned on a framework that hid where the guard sits and a
+  `shell=True` pseudo-sandbox; it is superseded by a single agent-driven showcase.
+  The learning-loop pattern it demonstrated is now documented inline in the
+  README. (#114)
 
 ### Performance
 

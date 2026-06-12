@@ -48,7 +48,6 @@ knowledge boundary a first-class object — one that can be queried, audited, an
     - [Evaluation Flow](#evaluation-flow)
     - [Registration & Validation](#registration--validation)
 - [Integrations](#integrations)
-    - [LangChain + Ollama Reference Agent](#langchain--ollama-reference-agent)
 - [Future](#future)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
@@ -375,7 +374,7 @@ Dynamic is appropriate when the concepts depend on the actual arguments — for
 example, a shell tool that must inspect the command string:
 
 ```python
-concepts = ConceptExtractor()  # LLM-based — see examples/langchain_ollama/callbacks.py
+concepts = extract_concepts  # your callable: maps the command string to primitives
 
 @vre_guard(vre, concepts=concepts)
 def shell_tool(command: str) -> str:
@@ -577,11 +576,33 @@ vre.learning_engine.learn_gap(gap, filled)
 
 ### Reference Loop
 
-The repository includes a reference `learn_gaps` tool (`examples/langchain_ollama/tools.py`) and a `DemoLearner`
-(`examples/langchain_ollama/learner.py`) that exercise the full pattern: ChatOllama structured output for filling
-candidates, Rich panels for human review, accept/modify/skip/reject decisions, and prerequisite handling for
-reachability gaps. The langchain agent gets the `learn_gaps` tool alongside its primary tools — when a guarded
-command is blocked, the agent calls `learn_gaps` to resolve the gaps and retries.
+The integrator owns the loop — VRE provides the pieces (`check`, `template_for_gap`, `learn_gap`) and you decide how
+to drive them. A minimal loop grounds, fills each gap however you choose (LLM, human, or rules), persists, and
+re-grounds until grounded:
+
+```python
+from vre.core.errors import CandidateValidationError, GapResolvedError
+from vre.learning.templates import template_for_gap
+
+grounding = vre.check(concepts)
+while not grounding.grounded and grounding.gaps:
+    gap = grounding.gaps[0]
+    candidate = my_fill(template_for_gap(gap), gap, grounding)  # LLM / human / rules
+    if candidate is None:
+        break  # the operator deliberately chose to leave this gap open
+    try:
+        vre.learning_engine.learn_gap(gap, candidate)
+    except GapResolvedError:
+        pass  # the gap closed out from under us — just re-ground
+    except CandidateValidationError as err:
+        candidate = my_fill(template_for_gap(gap), gap, grounding, feedback=str(err))  # revise and retry
+    grounding = vre.check(concepts)  # re-observe; the gap set shrinks
+```
+
+`learn_gap` is the privileged, human-gated persist call: agents *propose* candidates, they never get graph write
+access. It validates each candidate against live graph state and raises `CandidateValidationError` (malformed or
+out-of-scope) or `GapResolvedError` (the gap was already resolved). Reachability gaps additionally use
+`reachability_prerequisites` (above) to fill missing depths before the edge is placed.
 
 ---
 
@@ -665,11 +686,9 @@ decorator returns the original function, so it composes):
 def protected_delete(context): ...
 ```
 
-The repository includes a reference `protected_file_delete` callback (`examples/langchain_ollama/policies.py`) that
-inspects `rm` commands across three detection modes: literal filename match, glob
-expansion against the filesystem, and recursive directory inspection. It demonstrates how a callback can make nuanced,
-context-aware decisions by inspecting both the command arguments and the actual
-filesystem state.
+A callback can make nuanced, context-aware decisions by inspecting both the command arguments (via the
+`ToolCallContext`) and external state — for example, an `rm` guard that resolves literal filenames, expands globs
+against the filesystem, and inspects directories recursively before deciding whether a protected path is in scope.
 
 ### Evaluation Flow
 
@@ -727,98 +746,11 @@ relatum behaved identically — but the init check verifies the edge is *reachab
 
 ## Integrations
 
-The repository includes reference integrations that demonstrate how to wire VRE into real agent frameworks. These are
-not part of the `vre` package — they live in the `examples/` directory and are
-meant to be read, adapted, and used as starting points for your own integration.
-
-### LangChain + Ollama Reference Agent
-
-`examples/langchain_ollama/` contains a complete LangChain + Ollama agent that exercises all of VRE's enforcement layers
-against a sandboxed filesystem.
-
-#### Prerequisites
-
-This example requires [Ollama](https://ollama.com/) running locally:
-
-```bash
-brew install ollama
-ollama pull qwen3:8b
-```
-
-Install the example dependencies:
-
-```bash
-poetry install --extras examples
-```
-
-#### Running
-
-```bash
-# SQLite (default — no setup needed)
-poetry run python -m examples.langchain_ollama.main \
-    --model qwen3:8b \
-    --concepts-model qwen2.5-coder:7b \
-    --sandbox examples/langchain_ollama/workspace
-
-# Neo4j
-poetry run python -m examples.langchain_ollama.main \
-    --backend neo4j \
-    --neo4j-uri neo4j://localhost:7687 \
-    --neo4j-user neo4j \
-    --neo4j-password password \
-    --model qwen3:8b \
-    --concepts-model qwen2.5-coder:7b \
-    --sandbox examples/langchain_ollama/workspace
-```
-
-The agent exposes a single `shell_tool` — a sandboxed subprocess executor — guarded by `vre_guard`. Every shell command
-the LLM decides to run is intercepted before execution:
-
-1. A `ConceptExtractor` sends the command to a local LLM to identify conceptual primitives (`touch foo.txt` ->
-   `["create", "file"]`)
-2. Those concepts are grounded against the graph
-3. The epistemic trace is rendered to the terminal via `on_trace`
-4. Applicable policies are evaluated
-5. If a policy fires, `on_policy` prompts for confirmation before the command runs
-
-**The agent cannot execute a command whose conceptual domain it does not understand**, and it cannot bypass policies
-that require human confirmation.
-
-#### Concept Extraction
-
-`ConceptExtractor` (`examples/langchain_ollama/callbacks.py`) sends each command segment to a local Ollama model and
-collects the conceptual primitives it identifies. The prompt includes few-shot
-flag-to-concept examples (e.g. `rm -rf dir/` -> delete + directory + file) and an explicit instruction to never return
-flag names as primitives.
-
-It splits compound commands (pipes, `&&`, `;`) into segments and extracts concepts from each independently. The model is
-configurable via `--concepts-model` (default `qwen2.5-coder:7b`).
-
-`get_cardinality` is a simple rule-based function that inspects flags and globs — no LLM needed. Integrators can mix LLM
-and rule-based strategies for different parameters.
-
-#### Wiring It Together
-
-```python
-from vre.guard import vre_guard
-
-concepts = ConceptExtractor()
-
-
-@vre_guard(
-    vre,
-    concepts=concepts,  # LLM extracts primitives from command string
-    cardinality=get_cardinality,  # inspects flags/globs -> "single" or "multiple"
-    on_trace=on_trace,  # renders epistemic tree to terminal
-    on_policy=on_policy,  # Rich Confirm.ask prompt
-)
-def shell_tool(command: str) -> str:
-    result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=sandbox)
-    return result.stdout + result.stderr
-```
-
-The agent is given two tools: `shell_tool` (guarded) and `learn_gaps` (the integrator-owned learning loop).
-When the guarded shell_tool blocks on knowledge gaps, the agent invokes `learn_gaps` to resolve them and retries.
+VRE is framework-agnostic: `vre_guard` wraps any callable, and the learning loop is plain Python (see
+[Learning](#learning)). A reference LangChain + Ollama agent previously lived under `examples/`; it has been retired —
+it leaned on a framework that obscured where the guard sits and a `shell=True` pseudo-sandbox — in favor of a single
+agent-driven showcase that teaches the concept-binding gradient end-to-end
+([#114](https://github.com/anormang1992/vre/issues/114)).
 
 ---
 
@@ -900,16 +832,6 @@ scripts/
 
 seeders/
 └── seed_filesystem.py           # Filesystem domain — 20 primitives, idempotent upsert
-
-examples/
-└── langchain_ollama/
-    ├── main.py                  # Entry point — imports policies, then argparse + agent setup
-    ├── agent.py                 # ToolAgent — LangChain + Ollama streaming loop
-    ├── tools.py                 # shell_tool (guarded) and learn_gaps (integrator loop)
-    ├── callbacks.py             # ConceptExtractor, on_trace, on_policy, get_cardinality
-    ├── policies.py              # Code-resident policies — stacked @policy_callback decorators
-    ├── learner.py               # DemoLearner — ChatOllama structured output + Rich UI
-    └── repl.py                  # Streaming REPL with Rich Live display
 ```
 
 ---
