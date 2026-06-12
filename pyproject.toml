@@ -1,6 +1,6 @@
 [project]
 name = "vre"
-version = "0.10.0"
+version = "0.11.0"
 description = "Volute Reasoning Engine — decorator-based epistemic enforcement"
 authors = [
     {name = "Andrew Greene",email = "anormang@gmail.com"}
