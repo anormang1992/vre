@@ -16,6 +16,12 @@ summarize major changes, refactors, and breaking changes — not every commit.
 - Policy callback context types: `ToolCallContext`, `GroundingContext`, and a
   per-edge `TriggeringEdge`. Callback failure reasons now surface in the policy
   violation message. (#58)
+- `GapResolvedError` (a sibling of `CandidateValidationError`, exported from `vre`
+  and `vre.core`): `learn_gap` raises it when the live primitive is already
+  grounded to the depth a depth/relational gap required — the gap closed underneath
+  a stale snapshot, so there is nothing to learn and persisting would overwrite
+  grounded knowledge. Distinct from a malformed candidate so integrators can treat
+  it as "already done" rather than a failure. (#95)
 
 ### Changed
 
@@ -38,6 +44,15 @@ summarize major changes, refactors, and breaking changes — not every commit.
   a human drafted the content directly; `LEARNED` = an agent proposed it and a
   human approved it at the persistence boundary. Both are human-attested by
   construction — provenance is genealogy, not a trust gradient. (#91)
+- Learning candidate validation is hardened and now enforced against **live**
+  graph state at the persistence gate rather than the gap snapshot (which can go
+  stale before `learn_gap` runs). Depth fills must stay within
+  `current < level <= required` — no overwriting already-grounded depths, no
+  escalating past the depth the gap asked for — and must extend the existing
+  contiguous chain with no holes. `ExistenceCandidate` must match the gapped
+  concept's name and supply a D1 (IDENTITY) depth. Reachability prerequisites and
+  edge placement gate on contiguous depth, not exact level membership, so an edge
+  can no longer be placed where grounding would never see it. (#95)
 
 ### Removed
 
@@ -49,6 +64,9 @@ summarize major changes, refactors, and breaking changes — not every commit.
   (agent-proposed, human-approved) or `AUTHORED` (human-drafted). (#91)
 - The SQLite `_warn_if_legacy_policies()` startup aid — a pre-1.0 crutch for the
   #81 policy removal — for consistency with the clean-break stance.
+- **BREAKING:** The `source` parameter of `LearningEngine.learn_gap`. Knowledge
+  persisted through the learning path is always stamped `LEARNED` (agent-proposed,
+  human-approved); `AUTHORED` provenance can no longer be forged there. (#95)
 
 ### Performance
 

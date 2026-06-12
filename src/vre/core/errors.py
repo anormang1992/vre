@@ -41,6 +41,36 @@ class CandidateValidationError(VREError):
     """A learning candidate is missing required fields or references invalid data."""
 
 
+class GapResolvedError(VREError):
+    """A knowledge gap was already resolved by the time learn_gap ran.
+
+    The live primitive is grounded to (or beyond) the depth the gap required, so
+    there is nothing left to learn — and persisting would overwrite grounded
+    knowledge. This is a benign state divergence, NOT a malformed candidate: the
+    candidate was fine, the graph moved underneath it (a concurrent learn round,
+    a seeder, a sibling gap that cascaded). Integrators should treat it as
+    "already done" — re-ground and proceed — not as a failure to retry.
+
+    Deliberately a sibling of CandidateValidationError, never a subclass, so a
+    well-behaved agent is not told it erred.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        primitive_id=None,
+        name=None,
+        current_depth=None,
+        required_depth=None,
+    ) -> None:
+        super().__init__(message)
+        self.primitive_id = primitive_id
+        self.name = name
+        self.current_depth = current_depth
+        self.required_depth = required_depth
+
+
 class RegistryError(VREError):
     """A file-based registry operation failed (read, write, or corruption)."""
 

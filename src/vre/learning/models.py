@@ -16,7 +16,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 from vre.core.errors import CandidateValidationError
-from vre.core.models import DepthLevel, KnowledgeGap, RelationType
+from vre.core.models import DepthLevel, KnowledgeGap, RelationType, format_depth_label
 
 
 class ProposedDepth(BaseModel):
@@ -51,9 +51,20 @@ class ExistenceCandidate(BaseModel):
     d1: ProposedDepth | None = None
 
     def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        if self.name != gap.primitive.name:
+            raise CandidateValidationError(
+                f"ExistenceCandidate name '{self.name}' must match the gapped "
+                f"concept '{gap.primitive.name}' — a divergent name would create "
+                f"an unrelated primitive and leave the gap unclosed"
+            )
         if self.d1 is None:
             raise CandidateValidationError(
                 f"ExistenceCandidate '{self.name}' is missing D1 (identity)"
+            )
+        if self.d1.level != DepthLevel.IDENTITY:
+            raise CandidateValidationError(
+                f"ExistenceCandidate '{self.name}' identity depth must be D1 "
+                f"(IDENTITY), got {format_depth_label(self.d1.level)}"
             )
 
 
@@ -69,6 +80,9 @@ class DepthCandidate(BaseModel):
     new_depths: list[ProposedDepth] = Field(default_factory=list)
 
     def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        # Only candidate-intrinsic well-formedness lives here. Scope and
+        # contiguity depend on what the primitive currently knows, which can
+        # only be read live at the persistence gate — see LearningEngine.
         if not self.new_depths:
             raise CandidateValidationError(
                 f"DepthCandidate for '{gap.primitive.name}' has no new depths"
@@ -87,6 +101,8 @@ class RelationalCandidate(BaseModel):
     new_depths: list[ProposedDepth] = Field(default_factory=list)
 
     def validate_for_gap(self, gap: KnowledgeGap) -> None:
+        # See DepthCandidate.validate_for_gap — current-dependent checks live at
+        # the engine's persistence gate, against the live target.
         if not self.new_depths:
             raise CandidateValidationError(
                 f"RelationalCandidate for '{gap.target.name}' has no new depths"

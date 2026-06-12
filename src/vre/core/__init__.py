@@ -5,6 +5,7 @@ from vre.core.backends import Repository
 from vre.core.errors import (
     CandidateValidationError,
     CyclicRelationshipError,
+    GapResolvedError,
     GraphError,
     GraphIntegrityError,
     HydrationError,
@@ -20,6 +21,7 @@ from vre.core.models import (
 __all__ = [
     "CandidateValidationError",
     "CyclicRelationshipError",
+    "GapResolvedError",
     "GraphError",
     "GraphIntegrityError",
     "HydrationError",

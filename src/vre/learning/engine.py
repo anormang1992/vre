@@ -13,7 +13,11 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from vre.core.errors import CandidateValidationError, CyclicRelationshipError
+from vre.core.errors import (
+    CandidateValidationError,
+    CyclicRelationshipError,
+    GapResolvedError,
+)
 from vre.core.backends import Repository
 from vre.core.models import (
     Depth,
@@ -27,6 +31,7 @@ from vre.core.models import (
     Relatum,
     RelationalGap,
     DepthGap,
+    format_depth_label,
 )
 from vre.learning.models import (
     DepthCandidate,
@@ -51,6 +56,85 @@ def _to_depth(proposed: ProposedDepth, provenance: Provenance) -> Depth:
     Convert a ProposedDepth (agent-facing) to a Depth (graph-facing) with provenance.
     """
     return Depth(level=proposed.level, properties=proposed.properties, provenance=provenance)
+
+
+def _raise_if_resolved(
+    name: str,
+    primitive_id: UUID,
+    live_current: DepthLevel | None,
+    required: DepthLevel,
+) -> None:
+    """
+    Raise GapResolvedError if the live primitive already satisfies the gap.
+
+    A gap is a snapshot the caller holds; by the time learn_gap runs, the live
+    primitive may already be grounded to (or past) the required depth — closed by
+    a concurrent learn round, a seeder, or a sibling gap that cascaded. That is a
+    benign divergence, not a bad candidate: persisting now would only overwrite
+    grounded knowledge, so we report it and let the integrator re-ground.
+    """
+    if live_current is not None and live_current >= required:
+        raise GapResolvedError(
+            f"Gap for '{name}' is already resolved: live depth "
+            f"{format_depth_label(live_current)} satisfies required "
+            f"{format_depth_label(required)} — nothing to learn",
+            primitive_id=primitive_id,
+            name=name,
+            current_depth=live_current,
+            required_depth=required,
+        )
+
+
+def _validate_depth_fill(
+    new_depths: list[ProposedDepth],
+    current: DepthLevel | None,
+    required: DepthLevel,
+    subject: str,
+) -> None:
+    """
+    Validate proposed depth levels against the gap's scope and the contiguity
+    that grounding requires.
+
+    Enforced at the persistence gate against the *live* primitive's contiguous
+    max depth (`current`), never a gap snapshot — see `_persist_depth` /
+    `_persist_relational`. Three guarantees, in order:
+
+    - Non-empty: there is something to learn.
+    - Scope (gap 1): every level satisfies `current < level <= required` —
+      learning may not overwrite already-grounded depths, nor escalate past the
+      depth the gap actually asked for.
+    - Contiguity (gap 4): the levels extend the existing contiguous chain with
+      no holes. `current` is the live contiguous max, so a valid fill is the
+      run `current+1 .. max(level)`. A hole would leave the highest level
+      invisible to contiguity-strict grounding, never closing the gap.
+    """
+    if not new_depths:
+        raise CandidateValidationError(f"{subject} has no new depths")
+
+    levels = {proposed.level for proposed in new_depths}
+    for level in sorted(levels):
+        if current is not None and level <= current:
+            raise CandidateValidationError(
+                f"{subject} proposes {format_depth_label(level)} at or below the "
+                f"primitive's current depth {format_depth_label(current)} — learning "
+                f"may not overwrite already-grounded depths"
+            )
+        if level > required:
+            raise CandidateValidationError(
+                f"{subject} proposes {format_depth_label(level)} above the depth "
+                f"the gap requires ({format_depth_label(required)}) — learning may "
+                f"not escalate scope"
+            )
+
+    start = DepthLevel.EXISTENCE if current is None else DepthLevel(int(current) + 1)
+    expected = {DepthLevel(value) for value in range(int(start), int(max(levels)) + 1)}
+    if levels != expected:
+        raise CandidateValidationError(
+            f"{subject} must form a contiguous chain extending "
+            f"{format_depth_label(current)}; got "
+            f"{sorted(format_depth_label(level) for level in levels)}, which "
+            f"leaves a hole"
+        )
 
 
 logger = logging.getLogger(__name__)
@@ -90,12 +174,15 @@ class LearningEngine:
             primitive = self._repo.find_by_name(name)
             if primitive is None:
                 raise CandidateValidationError(f"Cannot resolve '{name}' to a primitive ID")
-            existing_levels = {d.level for d in primitive.depths}
-            if required_level not in existing_levels:
+            # Grounding gates an edge on the source's *contiguous* max depth, so a
+            # level present but detached from D0 (e.g. {D0, D1, D3} requiring D3)
+            # is not enough — surface the hole as a DepthGap to fill first.
+            contiguous = primitive.contiguous_max_depth
+            if contiguous is None or contiguous < required_level:
                 prerequisites.append(DepthGap(
                     primitive=primitive,
                     required_depth=required_level,
-                    current_depth=primitive.contiguous_max_depth,
+                    current_depth=contiguous,
                 ))
 
         return prerequisites
@@ -179,6 +266,15 @@ class LearningEngine:
         if existing is None:
             raise CandidateValidationError(f"Primitive '{gap.primitive.name}' ({gap.primitive.id}) not found")
 
+        # Validate against the live primitive, not the gap snapshot: current is the
+        # live contiguous max, so scope and contiguity guard what is actually written.
+        live_current = existing.contiguous_max_depth
+        _raise_if_resolved(existing.name, existing.id, live_current, gap.required_depth)
+        _validate_depth_fill(
+            candidate.new_depths, live_current, gap.required_depth,
+            f"DepthCandidate for '{existing.name}'",
+        )
+
         self._merge_depths(existing, candidate.new_depths, provenance)
         logger.debug(
             "Merged depths into %r: levels=%s",
@@ -194,6 +290,14 @@ class LearningEngine:
         target = self._repo.find_by_id(gap.target.id)
         if target is None:
             raise CandidateValidationError(f"Target '{gap.target.name}' ({gap.target.id}) not found")
+
+        # Validate against the live target, not the gap snapshot (see _persist_depth).
+        live_current = target.contiguous_max_depth
+        _raise_if_resolved(target.name, target.id, live_current, gap.required_depth)
+        _validate_depth_fill(
+            candidate.new_depths, live_current, gap.required_depth,
+            f"RelationalCandidate for '{target.name}'",
+        )
 
         self._merge_depths(target, candidate.new_depths, provenance)
         logger.debug("Merged relational depths into target %r", target.name)
@@ -218,21 +322,24 @@ class LearningEngine:
         if target is None:
             raise CandidateValidationError(f"Target '{candidate.target_name}' ({target_id}) not found")
 
-        source_levels = {d.level for d in source.depths}
-        if candidate.source_depth_level not in source_levels:
+        # An edge resolves only when both endpoints are *contiguously* grounded to
+        # the required level; a detached level (e.g. {D0, D1, D3}) leaves the edge
+        # invisible to grounding, so reject it rather than place a dead edge.
+        source_contiguous = source.contiguous_max_depth
+        if source_contiguous is None or source_contiguous < candidate.source_depth_level:
             raise CandidateValidationError(
-                f"Source '{source.name}' requires D{candidate.source_depth_level.value} "
-                f"({candidate.source_depth_level.name}) but only has "
-                f"{sorted('D' + str(int(lv)) for lv in source_levels)}. "
+                f"Source '{source.name}' requires "
+                f"{format_depth_label(candidate.source_depth_level)} but is only "
+                f"contiguously grounded to {format_depth_label(source_contiguous)}. "
                 f"Fill the DepthGap first."
             )
 
-        target_levels = {d.level for d in target.depths}
-        if candidate.target_depth_level not in target_levels:
+        target_contiguous = target.contiguous_max_depth
+        if target_contiguous is None or target_contiguous < candidate.target_depth_level:
             raise CandidateValidationError(
-                f"Target '{target.name}' requires D{candidate.target_depth_level.value} "
-                f"({candidate.target_depth_level.name}) but only has "
-                f"{sorted('D' + str(int(lv)) for lv in target_levels)}. "
+                f"Target '{target.name}' requires "
+                f"{format_depth_label(candidate.target_depth_level)} but is only "
+                f"contiguously grounded to {format_depth_label(target_contiguous)}. "
                 f"Fill the DepthGap first."
             )
 
@@ -291,10 +398,14 @@ class LearningEngine:
         self,
         gap: KnowledgeGap,
         candidate: LearningCandidate,
-        source: ProvenanceSource = ProvenanceSource.LEARNED,
     ) -> None:
         """
         Validate and persist a filled candidate for the given gap.
+
+        Knowledge persisted through this path is always stamped LEARNED: by
+        construction it originates from an agent-proposed candidate that a human
+        approved at this boundary. There is no way to forge AUTHORED provenance
+        here — true from-scratch authoring goes through the repository directly.
 
         Raises CandidateValidationError if the candidate is invalid.
         """
@@ -304,5 +415,5 @@ class LearningEngine:
                 f"Candidate kind '{candidate.kind}' does not match gap kind '{gap.kind}'"
             )
         candidate.validate_for_gap(gap)
-        provenance = _make_provenance(source)
+        provenance = _make_provenance(ProvenanceSource.LEARNED)
         self._persist(gap, candidate, provenance)
