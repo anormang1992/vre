@@ -60,7 +60,6 @@ def _to_depth(proposed: ProposedDepth, provenance: Provenance) -> Depth:
 
 def _raise_if_resolved(
     name: str,
-    primitive_id: UUID,
     live_current: DepthLevel | None,
     required: DepthLevel,
 ) -> None:
@@ -77,11 +76,7 @@ def _raise_if_resolved(
         raise GapResolvedError(
             f"Gap for '{name}' is already resolved: live depth "
             f"{format_depth_label(live_current)} satisfies required "
-            f"{format_depth_label(required)} — nothing to learn",
-            primitive_id=primitive_id,
-            name=name,
-            current_depth=live_current,
-            required_depth=required,
+            f"{format_depth_label(required)} — nothing to learn"
         )
 
 
@@ -218,15 +213,10 @@ class LearningEngine:
         # replayed after the concept was created elsewhere. Creating a second node
         # would duplicate it (Neo4j) or hit the NOCASE unique index (SQLite); either
         # way the gap is already resolved, so report that instead.
-        existing = self._repo.find_by_name(candidate.name)
-        if existing is not None:
+        if self._repo.find_by_name(candidate.name) is not None:
             raise GapResolvedError(
                 f"Concept '{candidate.name}' already exists — the existence gap is "
-                f"already resolved; nothing to learn",
-                primitive_id=existing.id,
-                name=existing.name,
-                current_depth=existing.contiguous_max_depth,
-                required_depth=DepthLevel.IDENTITY,
+                f"already resolved; nothing to learn"
             )
 
         d0 = Depth(
@@ -296,7 +286,7 @@ class LearningEngine:
         # Validate against the live primitive, not the gap snapshot: current is the
         # live contiguous max, so scope and contiguity guard what is actually written.
         live_current = existing.contiguous_max_depth
-        _raise_if_resolved(existing.name, existing.id, live_current, gap.required_depth)
+        _raise_if_resolved(existing.name, live_current, gap.required_depth)
         _validate_depth_fill(
             candidate.new_depths, live_current, gap.required_depth,
             f"DepthCandidate for '{existing.name}'",
@@ -320,7 +310,7 @@ class LearningEngine:
 
         # Validate against the live target, not the gap snapshot (see _persist_depth).
         live_current = target.contiguous_max_depth
-        _raise_if_resolved(target.name, target.id, live_current, gap.required_depth)
+        _raise_if_resolved(target.name, live_current, gap.required_depth)
         _validate_depth_fill(
             candidate.new_depths, live_current, gap.required_depth,
             f"RelationalCandidate for '{target.name}'",

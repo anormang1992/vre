@@ -53,22 +53,12 @@ class GapResolvedError(VREError):
 
     Deliberately a sibling of CandidateValidationError, never a subclass, so a
     well-behaved agent is not told it erred.
-    """
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        primitive_id=None,
-        name=None,
-        current_depth=None,
-        required_depth=None,
-    ) -> None:
-        super().__init__(message)
-        self.primitive_id = primitive_id
-        self.name = name
-        self.current_depth = current_depth
-        self.required_depth = required_depth
+    Message-only, like the rest of the hierarchy: the message already names the
+    concept and depths. Structured fields (primitive id, depths) were dropped as
+    unused — re-add them the day a real consumer (telemetry, an integrator API)
+    needs to inspect the divergence programmatically.
+    """
 
 
 class RegistryError(VREError):
