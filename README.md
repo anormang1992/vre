@@ -3,6 +3,10 @@
 
 # VRE — Volute Reasoning Engine
 
+## Note
+This library is still in active development and is subject to breaking changes.
+However, a stable v1.0.0 release is expected soon.
+
 **Epistemic enforcement for autonomous agents.**
 
 VRE is a Python library that gives autonomous agents an explicit, inspectable model of what they know before they act.
