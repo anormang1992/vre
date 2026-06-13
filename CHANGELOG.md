@@ -17,11 +17,12 @@ summarize major changes, refactors, and breaking changes — not every commit.
   per-edge `TriggeringEdge`. Callback failure reasons now surface in the policy
   violation message. (#58)
 - `GapResolvedError` (a sibling of `CandidateValidationError`, exported from `vre`
-  and `vre.core`): `learn_gap` raises it when the live primitive is already
-  grounded to the depth a depth/relational gap required — the gap closed underneath
-  a stale snapshot, so there is nothing to learn and persisting would overwrite
-  grounded knowledge. Distinct from a malformed candidate so integrators can treat
-  it as "already done" rather than a failure. (#95)
+  and `vre.core`): `learn_gap` raises it when the live graph already satisfies the
+  gap — the concept an existence gap names already exists, or a depth/relational
+  gap's primitive is already grounded to the required depth. The gap closed
+  underneath a stale snapshot, so there is nothing to learn and persisting would
+  duplicate or overwrite grounded knowledge. Distinct from a malformed candidate so
+  integrators can treat it as "already done" rather than a failure. (#95)
 
 ### Changed
 
@@ -49,10 +50,12 @@ summarize major changes, refactors, and breaking changes — not every commit.
   stale before `learn_gap` runs). Depth fills must stay within
   `current < level <= required` — no overwriting already-grounded depths, no
   escalating past the depth the gap asked for — and must extend the existing
-  contiguous chain with no holes. `ExistenceCandidate` must match the gapped
-  concept's name and supply a D1 (IDENTITY) depth. Reachability prerequisites and
-  edge placement gate on contiguous depth, not exact level membership, so an edge
-  can no longer be placed where grounding would never see it. (#95)
+  contiguous chain with no holes, and may not name the same level twice.
+  `ExistenceCandidate` must match the gapped concept's name and supply a D1
+  (IDENTITY) depth, and the existence persist path now checks for the concept
+  first (closing the duplicate-node gap). Reachability prerequisites and edge
+  placement gate on contiguous depth, not exact level membership, so an edge can
+  no longer be placed where grounding would never see it. (#95)
 
 ### Removed
 

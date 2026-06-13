@@ -403,6 +403,66 @@ class TestPersistDepth:
             engine.learn_gap(gap, hole)
         assert repo.saved == []
 
+    def test_rejects_duplicate_levels(self):
+        # The same level proposed twice would silently last-write-win in the merge;
+        # reject it as ambiguous rather than guessing which one the agent meant.
+        prim = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+        ])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.IDENTITY)
+
+        filled = DepthCandidate(new_depths=[
+            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"a": "1"}),
+            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"b": "2"}),
+        ])
+
+        with pytest.raises(CandidateValidationError, match="duplicate"):
+            engine.learn_gap(gap, filled)
+        assert repo.saved == []
+
+    def test_filling_hole_reactivates_authored_deeper_level(self):
+        # Closure-strict contiguity, pinned (#95/L2): filling the hole at D2 over
+        # {D0, D1, D3} re-grounds the pre-existing authored D3 and its edges. The
+        # candidate writes ONLY D2 — contiguity legitimately surfaces the dormant
+        # D3; this is the model, not scope escalation by the candidate.
+        edge_target = uuid4()
+        prim = _primitive("Create", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            Depth(
+                level=DepthLevel.CONSTRAINTS,
+                properties={"authored": "true"},
+                relata=[Relatum(
+                    relation_type=RelationType.APPLIES_TO,
+                    target_id=edge_target,
+                    target_depth=DepthLevel.IDENTITY,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
+        ])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+        # contiguous max is D1 (hole at D2); the gap asks only for D2.
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.IDENTITY)
+        filled = DepthCandidate(new_depths=[
+            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"can": "x"}),
+        ])
+
+        engine.learn_gap(gap, filled)
+        saved = repo.saved[0]
+        # The chain is now contiguous through the authored D3 — it is grounded again.
+        assert saved.contiguous_max_depth == DepthLevel.CONSTRAINTS
+        # D3 was untouched: its edge survives, still authored, properties intact.
+        d3 = next(d for d in saved.depths if d.level == DepthLevel.CONSTRAINTS)
+        assert len(d3.relata) == 1
+        assert d3.relata[0].target_id == edge_target
+        assert d3.relata[0].provenance.source == ProvenanceSource.AUTHORED
+        assert d3.properties == {"authored": "true"}
+
     def test_accepts_contiguous_multi_level_fill(self):
         # D1 -> D3 fill of {D2, D3} extends the chain with no holes.
         prim = _primitive("File", depths=[
@@ -1321,6 +1381,27 @@ class TestGateValidatesAgainstLiveState:
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"x": "true"}),
             ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"y": "true"}),
         ])
+
+        with pytest.raises(GapResolvedError):
+            engine.learn_gap(gap, filled)
+        assert repo.saved == []
+
+    def test_existence_gap_resolved_when_concept_already_exists(self):
+        # A stale ExistenceGap replayed after a sibling round created the concept:
+        # the existence path must report resolution, not blindly create a second
+        # node (Neo4j dup) or raise PersistenceError (SQLite). The existence analog
+        # of the depth/relational resolved-check.
+        existing = _primitive("Copy", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+        ])
+        repo = StubRepository([existing])
+        engine = LearningEngine(repo)
+        gap = ExistenceGap(primitive=_primitive("Copy"))  # snapshot from before it existed
+        filled = ExistenceCandidate(
+            name="Copy",
+            d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "x"}),
+        )
 
         with pytest.raises(GapResolvedError):
             engine.learn_gap(gap, filled)

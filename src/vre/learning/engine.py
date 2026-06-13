@@ -99,10 +99,15 @@ def _validate_depth_fill(
     max depth (`current`), never a gap snapshot — see `_persist_depth` /
     `_persist_relational`. Three guarantees, in order:
 
-    - Non-empty: there is something to learn.
-    - Scope (gap 1): every level satisfies `current < level <= required` —
-      learning may not overwrite already-grounded depths, nor escalate past the
-      depth the gap actually asked for.
+    - Non-empty, no duplicates: there is something to learn, and each level is
+      proposed at most once (a repeated level would silently last-write-win in
+      the merge).
+    - Scope (gap 1): every level satisfies `current < level <= required`. This
+      bounds what the candidate may *write* — not the depth the primitive ends up
+      grounded to. Filling a contiguity hole legitimately reactivates pre-existing
+      authored deeper levels (e.g. filling D2 over `{D0, D1, D3}` re-grounds the
+      authored D3 and its edges); that is the contiguity model, not candidate
+      escalation. The candidate still wrote only within `(current, required]`.
     - Contiguity (gap 4): the levels extend the existing contiguous chain with
       no holes. `current` is the live contiguous max, so a valid fill is the
       run `current+1 .. max(level)`. A hole would leave the highest level
@@ -111,7 +116,14 @@ def _validate_depth_fill(
     if not new_depths:
         raise CandidateValidationError(f"{subject} has no new depths")
 
-    levels = {proposed.level for proposed in new_depths}
+    proposed_levels = [proposed.level for proposed in new_depths]
+    levels = set(proposed_levels)
+    if len(proposed_levels) != len(levels):
+        raise CandidateValidationError(
+            f"{subject} proposes duplicate depth levels "
+            f"({sorted(format_depth_label(level) for level in proposed_levels)}); "
+            f"each level may appear at most once"
+        )
     for level in sorted(levels):
         if current is not None and level <= current:
             raise CandidateValidationError(
@@ -202,6 +214,21 @@ class LearningEngine:
         """
         Persist a new primitive with D0 (auto-generated) and agent-provided D1.
         """
+        # Existence analog of _raise_if_resolved: a stale ExistenceGap may be
+        # replayed after the concept was created elsewhere. Creating a second node
+        # would duplicate it (Neo4j) or hit the NOCASE unique index (SQLite); either
+        # way the gap is already resolved, so report that instead.
+        existing = self._repo.find_by_name(candidate.name)
+        if existing is not None:
+            raise GapResolvedError(
+                f"Concept '{candidate.name}' already exists — the existence gap is "
+                f"already resolved; nothing to learn",
+                primitive_id=existing.id,
+                name=existing.name,
+                current_depth=existing.contiguous_max_depth,
+                required_depth=DepthLevel.IDENTITY,
+            )
+
         d0 = Depth(
             level=DepthLevel.EXISTENCE,
             properties={"exists": True},
