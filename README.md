@@ -498,10 +498,12 @@ integrators can build whatever flow fits their stack without fighting the framew
 VRE exposes three things:
 
 1. **`vre.check(concepts)`** returns a `GroundingResult` with structured `KnowledgeGap` objects when grounding fails
-2. **`template_for_gap(gap)`** returns the candidate model class to fill — the integrator constructs an instance
-   however they like (LLM structured output, user input, static rules)
-3. **`vre.learning_engine.learn_gap(gap, candidate, source=LEARNED)`** validates the candidate against its gap and
-   persists it to the graph
+2. **`template_for_gap(gap)`** returns a candidate to fill. For depth and relational gaps it is **pre-seeded with the
+   exact missing levels** (`gap.missing_levels` — the holes in `(current, required]` not already present), one empty
+   slot each, so the integrator fills only the `properties`. VRE resolves *which* levels are missing; the integrator
+   supplies *what they contain* (LLM structured output, user input, static rules)
+3. **`vre.learning_engine.learn_gap(gap, candidate)`** validates the candidate against the **live** graph and persists
+   it (always stamped `LEARNED`)
 
 A typical integrator-owned loop looks like this:
 
@@ -511,17 +513,18 @@ from vre.learning.templates import template_for_gap
 grounding = vre.check(["delete", "file"])
 while not grounding.grounded and grounding.gaps:
     gap = grounding.gaps[0]
-    candidate_cls = template_for_gap(gap)
-    filled = my_llm_fill(candidate_cls, gap, grounding)  # integrator's code
+    candidate = template_for_gap(gap)         # pre-seeded with gap.missing_levels
+    filled = my_llm_fill(candidate, gap, grounding)  # fill the properties of each slot
     if filled is None:
         break
     vre.learning_engine.learn_gap(gap, filled)
     grounding = vre.check(["delete", "file"])
 ```
 
-`learn_gap` raises `CandidateValidationError` if the candidate is malformed or if its prerequisites are not met
-(e.g. trying to place an edge at a depth the source does not have). The integrator catches the error, fills the
-prerequisite, and retries.
+`learn_gap` raises `CandidateValidationError` if the candidate is malformed or its prerequisites are not met (e.g.
+re-authoring an already-grounded level, or placing an edge at a depth the source does not have), and `GapResolvedError`
+if the gap already closed underneath the candidate. The integrator catches the error, revises or re-grounds, and
+retries.
 
 ### Candidate Types
 

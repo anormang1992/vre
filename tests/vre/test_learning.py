@@ -153,6 +153,51 @@ class StubRepository(Repository):
 # Template tests
 # ---------------------------------------------------------------------------
 
+class TestMissingLevels:
+    """gap.missing_levels = the holes to author: (current, required] not already present."""
+
+    def test_contiguous_all_missing(self):
+        prim = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE), _depth(DepthLevel.IDENTITY)])
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.IMPLICATIONS, current_depth=DepthLevel.IDENTITY)
+        assert gap.missing_levels == [
+            DepthLevel.CAPABILITIES, DepthLevel.CONSTRAINTS, DepthLevel.IMPLICATIONS,
+        ]
+
+    def test_dormant_top_level_excluded(self):
+        # {D0, D1, D4}: reaching D4 needs only the holes D2, D3 — D4 is already present.
+        prim = _primitive("Create", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.IMPLICATIONS),
+        ])
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.IMPLICATIONS, current_depth=DepthLevel.IDENTITY)
+        assert gap.missing_levels == [DepthLevel.CAPABILITIES, DepthLevel.CONSTRAINTS]
+
+    def test_interleaved_holes(self):
+        # {D0, D2, D4}: contiguous max D0; holes to reach D4 are D1 and D3.
+        prim = _primitive("Create", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.IMPLICATIONS),
+        ])
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.IMPLICATIONS, current_depth=DepthLevel.EXISTENCE)
+        assert gap.missing_levels == [DepthLevel.IDENTITY, DepthLevel.CONSTRAINTS]
+
+    def test_none_current_includes_d0(self):
+        prim = _primitive("Ghost", depths=[])
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.IDENTITY, current_depth=None)
+        assert gap.missing_levels == [DepthLevel.EXISTENCE, DepthLevel.IDENTITY]
+
+    def test_relational_uses_target(self):
+        source = _primitive("Create")
+        target = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
+        gap = RelationalGap(
+            source=source, target=target,
+            required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE,
+        )
+        assert gap.missing_levels == [DepthLevel.IDENTITY, DepthLevel.CAPABILITIES]
+
+
 class TestTemplateForGap:
     def test_existence_has_name(self):
         gap = ExistenceGap(primitive=_primitive("Copy"))
@@ -162,24 +207,27 @@ class TestTemplateForGap:
         assert template.d1 is None
         assert template.kind == "EXISTENCE"
 
-    def test_depth_is_empty(self):
+    def test_depth_seeds_missing_levels(self):
+        # VRE resolves WHICH levels are missing and pre-seeds them (empty
+        # properties); the integrator fills only content.
         prim = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
         gap = DepthGap(primitive=prim, required_depth=DepthLevel.CAPABILITIES, current_depth=DepthLevel.EXISTENCE)
         template = template_for_gap(gap)
         assert isinstance(template, DepthCandidate)
-        assert template.new_depths == []
+        assert [d.level for d in template.new_depths] == [DepthLevel.IDENTITY, DepthLevel.CAPABILITIES]
+        assert all(d.properties == {} for d in template.new_depths)
         assert template.kind == "DEPTH"
 
-    def test_relational_is_empty(self):
+    def test_relational_seeds_target_missing_levels(self):
         gap = RelationalGap(
             source=_primitive("Create"),
-            target=_primitive("File"),
+            target=_primitive("File", depths=[_depth(DepthLevel.EXISTENCE)]),
             required_depth=DepthLevel.CAPABILITIES,
-            current_depth=None,
+            current_depth=DepthLevel.EXISTENCE,
         )
         template = template_for_gap(gap)
         assert isinstance(template, RelationalCandidate)
-        assert template.new_depths == []
+        assert [d.level for d in template.new_depths] == [DepthLevel.IDENTITY, DepthLevel.CAPABILITIES]
         assert template.kind == "RELATIONAL"
 
     def test_reachability_is_empty(self):
@@ -462,6 +510,52 @@ class TestPersistDepth:
         assert d3.relata[0].target_id == edge_target
         assert d3.relata[0].provenance.source == ProvenanceSource.AUTHORED
         assert d3.properties == {"authored": "true"}
+
+    def test_rejects_overfilling_an_already_present_level(self):
+        # {D0, D1, D3}: the only hole is D2. Re-listing the already-present D3 is
+        # rejected — filling a hole may not re-author (and thus clobber) a present
+        # level. The correct fill is just D2.
+        prim = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS, {"authored": "keep"}),
+        ])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.CONSTRAINTS, current_depth=DepthLevel.IDENTITY)
+        filled = DepthCandidate(new_depths=[
+            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"x": "1"}),
+            ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"hijack": "1"}),
+        ])
+
+        with pytest.raises(CandidateValidationError, match="already grounded"):
+            engine.learn_gap(gap, filled)
+        assert repo.saved == []
+
+    def test_accepts_interleaved_holes_without_re_authoring_present_levels(self):
+        # {D0, D2, D4}: contiguous max D0. Filling the holes D1, D3 — NOT re-listing
+        # the present D2/D4 — makes it contiguous to D4. (The old check wrongly
+        # demanded the proposed run include D2, forcing an overwrite.)
+        prim = _primitive("Create", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.CAPABILITIES, {"keep": "2"}),
+            _depth(DepthLevel.IMPLICATIONS, {"keep": "4"}),
+        ])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+        gap = DepthGap(primitive=prim, required_depth=DepthLevel.IMPLICATIONS, current_depth=DepthLevel.EXISTENCE)
+        filled = DepthCandidate(new_depths=[
+            ProposedDepth(level=DepthLevel.IDENTITY, properties={"a": "1"}),
+            ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"b": "3"}),
+        ])
+
+        engine.learn_gap(gap, filled)
+        saved = repo.saved[0]
+        assert saved.contiguous_max_depth == DepthLevel.IMPLICATIONS
+        d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
+        d4 = next(d for d in saved.depths if d.level == DepthLevel.IMPLICATIONS)
+        assert d2.properties == {"keep": "2"}  # present levels untouched
+        assert d4.properties == {"keep": "4"}
 
     def test_accepts_contiguous_multi_level_fill(self):
         # D1 -> D3 fill of {D2, D3} extends the chain with no holes.
@@ -1135,87 +1229,6 @@ class TestPersistDepthEdgeCases:
         with pytest.raises(CandidateValidationError, match="not found"):
             engine.learn_gap(gap, filled)
 
-    def test_replaces_existing_depth_level(self):
-        """Filling the hole below a detached level replaces that level in place.
-
-        {D0, D1, D3} has contiguous max D1. Filling D2 makes D3 reachable; the
-        candidate re-states D3, so its properties are replaced (not duplicated).
-        """
-        prim = _primitive("File", depths=[
-            _depth(DepthLevel.EXISTENCE),
-            _depth(DepthLevel.IDENTITY),
-            _depth(DepthLevel.CONSTRAINTS, {"old": True}),
-        ])
-        repo = StubRepository([prim])
-        engine = LearningEngine(repo)
-        gap = DepthGap(primitive=prim, required_depth=DepthLevel.CONSTRAINTS, current_depth=DepthLevel.IDENTITY)
-
-        filled = DepthCandidate(new_depths=[
-            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"cap": "true"}),
-            ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"updated": "true"}),
-        ])
-
-        engine.learn_gap(gap, filled)
-        saved = repo.saved[0]
-        d3 = next(d for d in saved.depths if d.level == DepthLevel.CONSTRAINTS)
-        assert d3.properties == {"updated": "true"}
-
-    def test_preserves_relata_and_stamps_provenance_on_replaced_depth(self):
-        """Replacing a depth carries forward its relata and stamps None provenance.
-
-        {D0, D1, D3} has contiguous max D1. Filling D2 makes D3 reachable; the
-        candidate re-states D3 (a replacement), which must carry forward D3's
-        relata and stamp their missing provenance. The untouched D0 relatum
-        stays unstamped.
-        """
-        target_id = uuid4()
-        prim = _primitive("File", depths=[
-            Depth(
-                level=DepthLevel.EXISTENCE,
-                properties={},
-                relata=[Relatum(
-                    relation_type=RelationType.APPLIES_TO,
-                    target_id=target_id,
-                    target_depth=DepthLevel.CAPABILITIES,
-                    provenance=None,
-                )],
-            ),
-            _depth(DepthLevel.IDENTITY),
-            Depth(
-                level=DepthLevel.CONSTRAINTS,
-                properties={"old": "val"},
-                relata=[Relatum(
-                    relation_type=RelationType.REQUIRES,
-                    target_id=target_id,
-                    target_depth=DepthLevel.IDENTITY,
-                    provenance=None,
-                )],
-            ),
-        ])
-        repo = StubRepository([prim])
-        engine = LearningEngine(repo)
-        gap = DepthGap(primitive=prim, required_depth=DepthLevel.CONSTRAINTS, current_depth=DepthLevel.IDENTITY)
-
-        filled = DepthCandidate(new_depths=[
-            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"cap": "read"}),
-            ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"desc": "constrained"}),
-        ])
-
-        engine.learn_gap(gap, filled)
-        saved = repo.saved[0]
-        # D0 was NOT touched -- its relatum should remain unstamped
-        d0 = next(d for d in saved.depths if d.level == DepthLevel.EXISTENCE)
-        assert d0.relata[0].provenance is None
-        # D3 WAS replaced -- relata carried forward and provenance stamped
-        d3 = next(d for d in saved.depths if d.level == DepthLevel.CONSTRAINTS)
-        assert len(d3.relata) == 1
-        assert d3.relata[0].target_id == target_id
-        assert d3.relata[0].provenance is not None
-        assert d3.relata[0].provenance.source == ProvenanceSource.LEARNED
-        # D3 properties updated
-        assert d3.properties == {"desc": "constrained"}
-
-
 class TestPersistRelationalEdgeCases:
     def test_empty_new_depths_raises(self):
         source = _primitive("Create")
@@ -1252,13 +1265,25 @@ class TestPersistRelationalEdgeCases:
         with pytest.raises(CandidateValidationError, match="not found"):
             engine.learn_gap(gap, filled)
 
-    def test_replaces_existing_depth_on_target(self):
-        # {D0, D2} has contiguous max D0. Filling D1 makes D2 reachable; the
-        # candidate re-states D2, so its properties are replaced in place.
+    def test_filling_hole_leaves_dormant_target_depth_untouched(self):
+        # {D0, D2} on the target (contiguous max D0, hole at D1). Filling only D1
+        # makes D2 reachable; the dormant D2 — properties and its edge — is left
+        # exactly as authored (the relational analog of the depth reactivation pin).
         source = _primitive("Create")
+        rel_target_id = uuid4()
         target = _primitive("File", depths=[
             _depth(DepthLevel.EXISTENCE),
-            _depth(DepthLevel.CAPABILITIES, {"old": True}),
+            Depth(
+                level=DepthLevel.CAPABILITIES,
+                properties={"authored": "keep"},
+                relata=[Relatum(
+                    relation_type=RelationType.REQUIRES,
+                    target_id=rel_target_id,
+                    target_depth=DepthLevel.IDENTITY,
+                    provenance=_prov(),
+                )],
+                provenance=_prov(),
+            ),
         ])
         repo = StubRepository([source, target])
         engine = LearningEngine(repo)
@@ -1269,13 +1294,16 @@ class TestPersistRelationalEdgeCases:
 
         filled = RelationalCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "a file"}),
-            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"updated": "true"}),
         ])
 
         engine.learn_gap(gap, filled)
         saved = repo.saved[0]
+        assert saved.contiguous_max_depth == DepthLevel.CAPABILITIES
         d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
-        assert d2.properties == {"updated": "true"}
+        assert d2.properties == {"authored": "keep"}
+        assert len(d2.relata) == 1
+        assert d2.relata[0].target_id == rel_target_id
+        assert d2.relata[0].provenance.source == ProvenanceSource.AUTHORED
 
     def test_does_not_stamp_provenance_on_untouched_depths(self):
         """Relata on depths not being replaced should remain untouched."""
@@ -1310,26 +1338,14 @@ class TestPersistRelationalEdgeCases:
         d0 = next(d for d in saved.depths if d.level == DepthLevel.EXISTENCE)
         assert d0.relata[0].provenance is None
 
-    def test_preserves_relata_on_replaced_target_depth(self):
-        """Replacing a depth on the target carries forward its relata.
-
-        {D0, D2} has contiguous max D0. Filling D1 makes D2 reachable; the
-        candidate re-states D2, so D2's relata carry forward and get stamped.
-        """
+    def test_rejects_re_authoring_present_target_depth(self):
+        # The gate is wired on the relational path too (present_levels from the
+        # live target): re-listing the target's already-present D2 instead of just
+        # the hole D1 is rejected, not silently merged.
         source = _primitive("Create")
-        rel_target_id = uuid4()
         target = _primitive("File", depths=[
             _depth(DepthLevel.EXISTENCE),
-            Depth(
-                level=DepthLevel.CAPABILITIES,
-                properties={"old": "val"},
-                relata=[Relatum(
-                    relation_type=RelationType.REQUIRES,
-                    target_id=rel_target_id,
-                    target_depth=DepthLevel.IDENTITY,
-                    provenance=None,
-                )],
-            ),
+            _depth(DepthLevel.CAPABILITIES, {"authored": "keep"}),
         ])
         repo = StubRepository([source, target])
         engine = LearningEngine(repo)
@@ -1340,17 +1356,12 @@ class TestPersistRelationalEdgeCases:
 
         filled = RelationalCandidate(new_depths=[
             ProposedDepth(level=DepthLevel.IDENTITY, properties={"description": "a file"}),
-            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"updated": "true"}),
+            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"hijack": "true"}),
         ])
 
-        engine.learn_gap(gap, filled)
-        saved = repo.saved[0]
-        d2 = next(d for d in saved.depths if d.level == DepthLevel.CAPABILITIES)
-        assert d2.properties == {"updated": "true"}
-        assert len(d2.relata) == 1
-        assert d2.relata[0].target_id == rel_target_id
-        assert d2.relata[0].provenance is not None
-        assert d2.relata[0].provenance.source == ProvenanceSource.LEARNED
+        with pytest.raises(CandidateValidationError, match="already grounded"):
+            engine.learn_gap(gap, filled)
+        assert repo.saved == []
 
 
 class TestGateValidatesAgainstLiveState:

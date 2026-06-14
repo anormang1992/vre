@@ -32,6 +32,7 @@ from vre.core.models import (
     RelationalGap,
     DepthGap,
     format_depth_label,
+    _missing_depth_levels,
 )
 from vre.learning.models import (
     DepthCandidate,
@@ -84,29 +85,30 @@ def _validate_depth_fill(
     new_depths: list[ProposedDepth],
     current: DepthLevel | None,
     required: DepthLevel,
+    present_levels: set[DepthLevel],
     subject: str,
 ) -> None:
     """
     Validate proposed depth levels against the gap's scope and the contiguity
-    that grounding requires.
+    that grounding requires, using the live primitive's actual levels.
 
-    Enforced at the persistence gate against the *live* primitive's contiguous
-    max depth (`current`), never a gap snapshot — see `_persist_depth` /
-    `_persist_relational`. Three guarantees, in order:
+    Enforced at the persistence gate against the *live* primitive — `current` is
+    its contiguous max depth, `present_levels` its full level set — never a gap
+    snapshot (see `_persist_depth` / `_persist_relational`). Four guarantees:
 
-    - Non-empty, no duplicates: there is something to learn, and each level is
-      proposed at most once (a repeated level would silently last-write-win in
-      the merge).
+    - Non-empty, no duplicates: there is something to learn, each level once.
     - Scope (gap 1): every level satisfies `current < level <= required`. This
       bounds what the candidate may *write* — not the depth the primitive ends up
-      grounded to. Filling a contiguity hole legitimately reactivates pre-existing
-      authored deeper levels (e.g. filling D2 over `{D0, D1, D3}` re-grounds the
-      authored D3 and its edges); that is the contiguity model, not candidate
-      escalation. The candidate still wrote only within `(current, required]`.
-    - Contiguity (gap 4): the levels extend the existing contiguous chain with
-      no holes. `current` is the live contiguous max, so a valid fill is the
-      run `current+1 .. max(level)`. A hole would leave the highest level
-      invisible to contiguity-strict grounding, never closing the gap.
+      grounded to. Filling a contiguity hole legitimately *reactivates* pre-existing
+      authored deeper levels (filling D2 over `{D0, D1, D3}` re-grounds the authored
+      D3); that is the contiguity model, not candidate escalation.
+    - Holes only: a proposed level must not already exist. The loop fills the
+      *missing* levels; re-listing a present one (even a dormant detached level
+      like D4 over a D1 chain) would clobber authored knowledge in the merge.
+    - Contiguity (gap 4): `present_levels ∪ proposed` must be a gapless chain from
+      D0 through the highest proposed level. Present levels count toward
+      contiguity, so the fill need only supply the actual holes — never re-author
+      what is already there to satisfy the chain.
     """
     if not new_depths:
         raise CandidateValidationError(f"{subject} has no new depths")
@@ -119,6 +121,8 @@ def _validate_depth_fill(
             f"({sorted(format_depth_label(level) for level in proposed_levels)}); "
             f"each level may appear at most once"
         )
+
+    holes = [format_depth_label(h) for h in _missing_depth_levels(present_levels, current, required)]
     for level in sorted(levels):
         if current is not None and level <= current:
             raise CandidateValidationError(
@@ -132,15 +136,23 @@ def _validate_depth_fill(
                 f"the gap requires ({format_depth_label(required)}) — learning may "
                 f"not escalate scope"
             )
+        if level in present_levels:
+            raise CandidateValidationError(
+                f"{subject} proposes {format_depth_label(level)} which is already "
+                f"grounded; fill only the missing levels {holes}"
+            )
 
-    start = DepthLevel.EXISTENCE if current is None else DepthLevel(int(current) + 1)
-    expected = {DepthLevel(value) for value in range(int(start), int(max(levels)) + 1)}
-    if levels != expected:
+    combined = present_levels | levels
+    highest = max(levels)
+    hole = next(
+        (DepthLevel(value) for value in range(0, int(highest) + 1)
+         if DepthLevel(value) not in combined),
+        None,
+    )
+    if hole is not None:
         raise CandidateValidationError(
-            f"{subject} must form a contiguous chain extending "
-            f"{format_depth_label(current)}; got "
-            f"{sorted(format_depth_label(level) for level in levels)}, which "
-            f"leaves a hole"
+            f"{subject} must form a contiguous chain; {format_depth_label(hole)} is "
+            f"missing below {format_depth_label(highest)}. Fill the holes: {holes}"
         )
 
 
@@ -234,42 +246,24 @@ class LearningEngine:
         self._repo.save_primitive(primitive)
         logger.info("Persisted new primitive %r with D0+D1", candidate.name)
 
-    def _merge_depths(
+    def _append_depths(
         self, primitive: Primitive, new_depths: list[ProposedDepth], provenance: Provenance,
     ) -> None:
         """
-        Merge proposed depth levels into a primitive and persist.
+        Append proposed depth levels to a primitive and persist.
 
-        Converts ProposedDepth -> Depth, replaces existing depth levels when the
-        level already exists, appends otherwise. Sorts and saves.
+        The gate (`_validate_depth_fill`) guarantees every proposed level is a
+        genuine hole — not already present — so this only ever appends, never
+        replaces. Pre-existing levels (including dormant ones the new contiguity
+        reactivates) are left exactly as authored.
         """
         logger.debug(
-            "Merging %d proposed depth(s) into %r (existing levels: %s)",
+            "Appending %d depth(s) to %r (existing levels: %s)",
             len(new_depths), primitive.name,
             sorted(int(d.level) for d in primitive.depths),
         )
-        existing_levels = {d.level for d in primitive.depths}
-        touched_levels: set[DepthLevel] = set()
         for proposed in new_depths:
-            depth = _to_depth(proposed, provenance)
-            touched_levels.add(depth.level)
-            if depth.level in existing_levels:
-                old = next(d for d in primitive.depths if d.level == depth.level)
-                depth.relata = old.relata
-                primitive.depths = [
-                    d if d.level != depth.level else depth for d in primitive.depths
-                ]
-            else:
-                primitive.depths.append(depth)
-            existing_levels.add(depth.level)
-
-        for depth in primitive.depths:
-            if depth.level not in touched_levels:
-                continue
-            for relatum in depth.relata:
-                if relatum.provenance is None:
-                    relatum.provenance = provenance
-
+            primitive.depths.append(_to_depth(proposed, provenance))
         primitive.depths.sort(key=lambda d: int(d.level))
         self._repo.save_primitive(primitive)
 
@@ -289,12 +283,13 @@ class LearningEngine:
         _raise_if_resolved(existing.name, live_current, gap.required_depth)
         _validate_depth_fill(
             candidate.new_depths, live_current, gap.required_depth,
+            {d.level for d in existing.depths},
             f"DepthCandidate for '{existing.name}'",
         )
 
-        self._merge_depths(existing, candidate.new_depths, provenance)
+        self._append_depths(existing, candidate.new_depths, provenance)
         logger.debug(
-            "Merged depths into %r: levels=%s",
+            "Appended depths to %r: levels=%s",
             existing.name, [int(d.level) for d in candidate.new_depths],
         )
 
@@ -313,11 +308,12 @@ class LearningEngine:
         _raise_if_resolved(target.name, live_current, gap.required_depth)
         _validate_depth_fill(
             candidate.new_depths, live_current, gap.required_depth,
+            {d.level for d in target.depths},
             f"RelationalCandidate for '{target.name}'",
         )
 
-        self._merge_depths(target, candidate.new_depths, provenance)
-        logger.debug("Merged relational depths into target %r", target.name)
+        self._append_depths(target, candidate.new_depths, provenance)
+        logger.debug("Appended relational depths to target %r", target.name)
 
     def _persist_reachability(
         self,

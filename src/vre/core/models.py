@@ -198,6 +198,26 @@ class EpistemicQuery(BaseModel):
     concept_ids: list[UUID]
 
 
+def _missing_depth_levels(
+    present: set[DepthLevel], current: DepthLevel | None, required: DepthLevel
+) -> list[DepthLevel]:
+    """
+    The levels in (current, required] that are not already present — the exact
+    holes a fill must author to close the gap.
+
+    Excludes levels that already exist, including ones detached above the
+    contiguous max (e.g. a dormant authored D4 over a D1 chain): those are
+    reactivated by contiguity, never re-authored, so a fill is never invited to
+    overwrite them.
+    """
+    floor = -1 if current is None else int(current)
+    return [
+        level
+        for level in sorted(DepthLevel)
+        if floor < int(level) <= int(required) and level not in present
+    ]
+
+
 class DepthGap(BaseModel):
     """
     Surfaced when a primitive lacks the depth required for execution.
@@ -207,6 +227,12 @@ class DepthGap(BaseModel):
     primitive: Primitive
     required_depth: DepthLevel
     current_depth: DepthLevel | None
+
+    @property
+    def missing_levels(self) -> list[DepthLevel]:
+        """The specific levels a fill must author to close this gap (the holes)."""
+        present = {d.level for d in self.primitive.depths}
+        return _missing_depth_levels(present, self.current_depth, self.required_depth)
 
 
 class ExistenceGap(BaseModel):
@@ -229,6 +255,12 @@ class RelationalGap(BaseModel):
     target: Primitive
     required_depth: DepthLevel
     current_depth: DepthLevel | None
+
+    @property
+    def missing_levels(self) -> list[DepthLevel]:
+        """The levels a fill must author on the target to close this gap (the holes)."""
+        present = {d.level for d in self.target.depths}
+        return _missing_depth_levels(present, self.current_depth, self.required_depth)
 
 
 class ReachabilityGap(BaseModel):

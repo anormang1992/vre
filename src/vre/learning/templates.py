@@ -22,6 +22,7 @@ from vre.learning.models import (
     DepthCandidate,
     ExistenceCandidate,
     LearningCandidate,
+    ProposedDepth,
     ReachabilityCandidate,
     RelationalCandidate,
 )
@@ -30,15 +31,25 @@ from vre.learning.models import (
 def template_for_gap(gap: KnowledgeGap) -> LearningCandidate:
     """
     Build the candidate template that matches the given gap kind.
+
+    For depth and relational gaps the template is pre-seeded with one empty
+    `ProposedDepth` per `gap.missing_levels` — the exact holes to author. The
+    integrator fills in only the `properties`; VRE has already resolved *which*
+    levels are missing, so a fill is never invited to re-author (and clobber) a
+    level that is already grounded.
     """
     candidate: LearningCandidate
     match gap:
         case ExistenceGap():
             candidate = ExistenceCandidate(name=gap.primitive.name)
         case DepthGap():
-            candidate = DepthCandidate()
+            candidate = DepthCandidate(
+                new_depths=[ProposedDepth(level=level) for level in gap.missing_levels]
+            )
         case RelationalGap():
-            candidate = RelationalCandidate()
+            candidate = RelationalCandidate(
+                new_depths=[ProposedDepth(level=level) for level in gap.missing_levels]
+            )
         case ReachabilityGap():
             candidate = ReachabilityCandidate()
         case _:

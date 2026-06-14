@@ -23,6 +23,12 @@ summarize major changes, refactors, and breaking changes — not every commit.
   underneath a stale snapshot, so there is nothing to learn and persisting would
   duplicate or overwrite grounded knowledge. Distinct from a malformed candidate so
   integrators can treat it as "already done" rather than a failure. (#95)
+- `DepthGap.missing_levels` / `RelationalGap.missing_levels`: the exact levels a
+  fill must author (the holes in `(current, required]` not already present).
+  `template_for_gap` now pre-seeds depth and relational candidates with one empty
+  slot per missing level, so an integrator fills only the `properties` — VRE
+  resolves *which* levels are missing, and a dormant detached level (e.g. a D4 over
+  a D1 chain) is never offered for re-authoring. (#95)
 
 ### Changed
 
@@ -49,9 +55,12 @@ summarize major changes, refactors, and breaking changes — not every commit.
   graph state at the persistence gate rather than the gap snapshot (which can go
   stale before `learn_gap` runs). Depth fills must stay within
   `current < level <= required` — no overwriting already-grounded depths, no
-  escalating past the depth the gap asked for — and must extend the existing
-  contiguous chain with no holes, and may not name the same level twice.
-  `ExistenceCandidate` must match the gapped concept's name and supply a D1
+  escalating past the depth the gap asked for — and may not name the same level
+  twice. Validation now reads the live primitive's full level set: a fill may not
+  re-author a level that is already present (even one detached above the contiguous
+  max), and contiguity is checked over `existing ∪ proposed`, so the fill supplies
+  only the genuine holes and never overwrites grounded knowledge to satisfy the
+  chain. `ExistenceCandidate` must match the gapped concept's name and supply a D1
   (IDENTITY) depth, and the existence persist path now checks for the concept
   first (closing the duplicate-node gap). Reachability prerequisites and edge
   placement gate on contiguous depth, not exact level membership, so an edge can
