@@ -16,6 +16,20 @@ summarize major changes, refactors, and breaking changes — not every commit.
 - Policy callback context types: `ToolCallContext`, `GroundingContext`, and a
   per-edge `TriggeringEdge`. Callback failure reasons now surface in the policy
   violation message. (#58)
+- `GapResolvedError` (a sibling of `CandidateValidationError`, exported from `vre`
+  and `vre.core`): `learn_gap` raises it when the live graph already satisfies the
+  gap — the concept an existence gap names already exists, or a depth/relational
+  gap's primitive is already grounded to the required depth. The gap closed
+  underneath a stale snapshot, so there is nothing to learn and persisting would
+  duplicate or overwrite grounded knowledge. Distinct from a malformed candidate so
+  integrators can treat it as "already done" rather than a failure. (#95)
+- `DepthGap.missing_levels` / `RelationalGap.missing_levels`: the exact levels a
+  fill must author (the holes in `(current, required]` not already present).
+  `template_for_gap` now pre-seeds every candidate with the structural slots VRE
+  can resolve — the concept name and a D1 (IDENTITY) slot for existence, one empty
+  slot per missing level for depth/relational — so an integrator fills only the
+  `properties`. VRE resolves *which* levels are missing; a dormant detached level
+  (e.g. a D4 over a D1 chain) is never offered for re-authoring. (#95)
 
 ### Changed
 
@@ -38,6 +52,20 @@ summarize major changes, refactors, and breaking changes — not every commit.
   a human drafted the content directly; `LEARNED` = an agent proposed it and a
   human approved it at the persistence boundary. Both are human-attested by
   construction — provenance is genealogy, not a trust gradient. (#91)
+- Learning candidate validation is hardened and now enforced against **live**
+  graph state at the persistence gate rather than the gap snapshot (which can go
+  stale before `learn_gap` runs). Depth fills must stay within
+  `current < level <= required` — no overwriting already-grounded depths, no
+  escalating past the depth the gap asked for — and may not name the same level
+  twice. Validation now reads the live primitive's full level set: a fill may not
+  re-author a level that is already present (even one detached above the contiguous
+  max), and contiguity is checked over `existing ∪ proposed`, so the fill supplies
+  only the genuine holes and never overwrites grounded knowledge to satisfy the
+  chain. `ExistenceCandidate` must match the gapped concept's name and supply a D1
+  (IDENTITY) depth, and the existence persist path now checks for the concept
+  first (closing the duplicate-node gap). Reachability prerequisites and edge
+  placement gate on contiguous depth, not exact level membership, so an edge can
+  no longer be placed where grounding would never see it. (#95)
 
 ### Removed
 
@@ -49,6 +77,14 @@ summarize major changes, refactors, and breaking changes — not every commit.
   (agent-proposed, human-approved) or `AUTHORED` (human-drafted). (#91)
 - The SQLite `_warn_if_legacy_policies()` startup aid — a pre-1.0 crutch for the
   #81 policy removal — for consistency with the clean-break stance.
+- **BREAKING:** The `source` parameter of `LearningEngine.learn_gap`. Knowledge
+  persisted through the learning path is always stamped `LEARNED` (agent-proposed,
+  human-approved); `AUTHORED` provenance can no longer be forged there. (#95)
+- The `examples/langchain_ollama` reference agent and the `examples` install
+  extra. The demo leaned on a framework that hid where the guard sits and a
+  `shell=True` pseudo-sandbox; it is superseded by a single agent-driven showcase.
+  The learning-loop pattern it demonstrated is now documented inline in the
+  README. (#114)
 
 ### Performance
 

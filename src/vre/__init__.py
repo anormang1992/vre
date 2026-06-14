@@ -22,6 +22,7 @@ from uuid import UUID
 from vre.core.errors import (
     CandidateValidationError,
     CyclicRelationshipError,
+    GapResolvedError,
     GraphError,
     GraphIntegrityError,
     HydrationError,
@@ -79,6 +80,7 @@ __all__ = [
     "AgentRegistry",
     "CandidateValidationError",
     "CyclicRelationshipError",
+    "GapResolvedError",
     "GraphError",
     "GraphIntegrityError",
     "HydrationError",
