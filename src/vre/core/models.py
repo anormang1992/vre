@@ -33,6 +33,41 @@ def format_depth_label(level: "DepthLevel | None") -> str:
     return "none" if level is None else f"D{level.value} {level.name}"
 
 
+def contiguous_max(levels: set["DepthLevel"]) -> "DepthLevel | None":
+    """
+    Highest DepthLevel forming a contiguous chain from D0 in `levels`, or None.
+
+    The single definition of contiguity; `Primitive.contiguous_max_depth` and the
+    learning gate both go through it so there is one algorithm, not three.
+    """
+    result: "DepthLevel | None" = None
+    for level in sorted(DepthLevel):
+        if level not in levels:
+            break
+        result = level
+    return result
+
+
+def missing_depth_levels(
+    present: set["DepthLevel"], current: "DepthLevel | None", required: "DepthLevel"
+) -> list["DepthLevel"]:
+    """
+    The levels in (current, required] that are not already present — the exact
+    holes a fill must author to close a gap.
+
+    Excludes levels that already exist, including ones detached above the
+    contiguous max (e.g. a dormant authored D4 over a D1 chain): those are
+    reactivated by contiguity, never re-authored, so a fill is never invited to
+    overwrite them.
+    """
+    floor = -1 if current is None else int(current)
+    return [
+        level
+        for level in sorted(DepthLevel)
+        if floor < int(level) <= int(required) and level not in present
+    ]
+
+
 class RelationType(str, Enum):
     """
     Constrained relationship types between primitives.
@@ -170,13 +205,7 @@ class Primitive(BaseModel):
         """
         Highest DepthLevel forming a contiguous chain from D0, or None if no depths.
         """
-        levels = {d.level for d in self.depths}
-        result: DepthLevel | None = None
-        for level in sorted(DepthLevel):
-            if level not in levels:
-                break
-            result = level
-        return result
+        return contiguous_max({d.level for d in self.depths})
 
     def validate_provenance(self) -> None:
         """
@@ -198,26 +227,6 @@ class EpistemicQuery(BaseModel):
     concept_ids: list[UUID]
 
 
-def _missing_depth_levels(
-    present: set[DepthLevel], current: DepthLevel | None, required: DepthLevel
-) -> list[DepthLevel]:
-    """
-    The levels in (current, required] that are not already present — the exact
-    holes a fill must author to close the gap.
-
-    Excludes levels that already exist, including ones detached above the
-    contiguous max (e.g. a dormant authored D4 over a D1 chain): those are
-    reactivated by contiguity, never re-authored, so a fill is never invited to
-    overwrite them.
-    """
-    floor = -1 if current is None else int(current)
-    return [
-        level
-        for level in sorted(DepthLevel)
-        if floor < int(level) <= int(required) and level not in present
-    ]
-
-
 class DepthGap(BaseModel):
     """
     Surfaced when a primitive lacks the depth required for execution.
@@ -232,7 +241,7 @@ class DepthGap(BaseModel):
     def missing_levels(self) -> list[DepthLevel]:
         """The specific levels a fill must author to close this gap (the holes)."""
         present = {d.level for d in self.primitive.depths}
-        return _missing_depth_levels(present, self.current_depth, self.required_depth)
+        return missing_depth_levels(present, self.current_depth, self.required_depth)
 
 
 class ExistenceGap(BaseModel):
@@ -260,7 +269,7 @@ class RelationalGap(BaseModel):
     def missing_levels(self) -> list[DepthLevel]:
         """The levels a fill must author on the target to close this gap (the holes)."""
         present = {d.level for d in self.target.depths}
-        return _missing_depth_levels(present, self.current_depth, self.required_depth)
+        return missing_depth_levels(present, self.current_depth, self.required_depth)
 
 
 class ReachabilityGap(BaseModel):

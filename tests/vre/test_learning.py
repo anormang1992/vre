@@ -380,8 +380,9 @@ class TestPersistDepth:
             engine.learn_gap(gap, filled)
 
     def test_rejects_depth_at_or_below_current(self):
-        # Re-proposing an already-grounded level would overwrite authored
-        # knowledge wholesale — the gap asked to extend, not to replace.
+        # A level at or below the contiguous max is already present, so the
+        # holes-only check rejects re-proposing it — no separate lower-bound guard
+        # is needed (it would only overwrite authored knowledge wholesale).
         prim = _primitive("File", depths=[
             _depth(DepthLevel.EXISTENCE),
             _depth(DepthLevel.IDENTITY),
@@ -395,7 +396,7 @@ class TestPersistDepth:
             ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"x": "true"}),
         ])
 
-        with pytest.raises(CandidateValidationError, match="already-grounded"):
+        with pytest.raises(CandidateValidationError, match="already grounded"):
             engine.learn_gap(gap, filled)
         assert repo.saved == []
 
@@ -1467,7 +1468,7 @@ class TestGateValidatesAgainstLiveState:
             ProposedDepth(level=DepthLevel.CONSTRAINTS, properties={"y": "true"}),
         ])
 
-        with pytest.raises(CandidateValidationError, match="already-grounded"):
+        with pytest.raises(CandidateValidationError, match="already grounded"):
             engine.learn_gap(gap, filled)
         assert repo.saved == []
 
