@@ -199,12 +199,15 @@ class TestMissingLevels:
 
 
 class TestTemplateForGap:
-    def test_existence_has_name(self):
+    def test_existence_seeds_name_and_d1_slot(self):
+        # VRE pre-fills the name and a D1 (IDENTITY) slot — the only level an
+        # existence fill ever authors; the integrator supplies only the properties.
         gap = ExistenceGap(primitive=_primitive("Copy"))
         template = template_for_gap(gap)
         assert isinstance(template, ExistenceCandidate)
         assert template.name == "Copy"
-        assert template.d1 is None
+        assert template.d1.level == DepthLevel.IDENTITY
+        assert template.d1.properties == {}
         assert template.kind == "EXISTENCE"
 
     def test_depth_seeds_missing_levels(self):

@@ -25,10 +25,11 @@ summarize major changes, refactors, and breaking changes — not every commit.
   integrators can treat it as "already done" rather than a failure. (#95)
 - `DepthGap.missing_levels` / `RelationalGap.missing_levels`: the exact levels a
   fill must author (the holes in `(current, required]` not already present).
-  `template_for_gap` now pre-seeds depth and relational candidates with one empty
-  slot per missing level, so an integrator fills only the `properties` — VRE
-  resolves *which* levels are missing, and a dormant detached level (e.g. a D4 over
-  a D1 chain) is never offered for re-authoring. (#95)
+  `template_for_gap` now pre-seeds every candidate with the structural slots VRE
+  can resolve — the concept name and a D1 (IDENTITY) slot for existence, one empty
+  slot per missing level for depth/relational — so an integrator fills only the
+  `properties`. VRE resolves *which* levels are missing; a dormant detached level
+  (e.g. a D4 over a D1 chain) is never offered for re-authoring. (#95)
 
 ### Changed
 
