@@ -50,6 +50,24 @@ summarize major changes, refactors, and breaking changes — not every commit.
   that counts toward grounding). These express the vacuity floor in one place,
   read by `contiguous_max_depth`, the gap `missing_levels`, and the learning
   gate. (#80)
+- `Primitive.fold_name` (staticmethod) and `Primitive.name_lower` (derived,
+  read-only property): the single definition of case-insensitive name equality,
+  NFC normalization then `str.casefold()`, shared by every backend and call
+  site. The NFC pass collapses canonically-equivalent spellings (e.g.
+  precomposed `é` U+00E9 vs `e`+combining-acute) that `casefold()` alone would
+  keep apart. `name_lower` is not a model field and is not serialized — backends
+  persist it into their own `name_lower` column/property so it can never drift
+  from `name`. (#78, #99)
+- DB-level case-insensitive name uniqueness on Neo4j: a
+  `primitive_name_lower_unique` constraint on the materialized `name_lower`
+  property, mirroring SQLite's unique index. A new-id write whose name only
+  differs in case now raises `PersistenceError` on **both** backends. (#78)
+- Backend-conformance test suite (`tests/vre/test_repository_conformance.py`)
+  parameterized over every `Repository` via a new `repository` fixture, seeded
+  with the case-insensitive name-identity invariants. Neo4j runs against a live
+  instance from `VRE_TEST_NEO4J_URI` and skips cleanly when unavailable (the
+  `requires_neo4j` marker). Lays the foundation for migrating the SQLite-only
+  suite into shared cross-backend coverage. (#83)
 
 ### Changed
 
@@ -110,6 +128,15 @@ summarize major changes, refactors, and breaking changes — not every commit.
   knowledge, so a bare D0 still grounds. Structural floor only; provenance is not a
   factor. May change grounding results for graphs that contained empty non-D0
   depths. (#80)
+- **BREAKING (storage):** Both backends now persist a folded `name_lower` key
+  and match/resolve names against it — SQLite gains a `name_lower` column with a
+  plain unique index (replacing the `name COLLATE NOCASE` index); Neo4j gains a
+  `name_lower` property with a uniqueness constraint. Case-insensitivity is now
+  defined once by `Primitive.fold_name` (NFC + `casefold()`, Unicode-aware) instead of
+  per-engine — SQLite `NOCASE` (ASCII-only), Neo4j `toLower`, and ad-hoc Python
+  `.lower()` — so "the same name" resolves identically on every backend. Visible
+  consequence: `"Café"` and `"CAFÉ"` are now one concept everywhere (previously
+  two on SQLite, one on Neo4j). Pre-1.0: re-seed the graph. (#78, #99)
 
 ### Removed
 
@@ -130,10 +157,19 @@ summarize major changes, refactors, and breaking changes — not every commit.
   The learning-loop pattern it demonstrated is now documented inline in the
   README. (#114)
 
+### Fixed
+
+- Neo4j `find_by_name` no longer resolves a duplicate-name graph silently and
+  nondeterministically. It materializes matches and raises `GraphError` when more
+  than one primitive shares a folded name, instead of `.single()` returning an
+  arbitrary first row with only a warning (the installed driver's default
+  `strict=False`). `find_by_id` is unchanged — its `id` is unique by constraint.
+  Corrects the "fails loud" rationale #78's deferral rested on. (#96)
+
 ### Performance
 
-- `resolve_subgraph` hits the `NOCASE` name index, and the transitive cycle check
-  is batched into a single query per save (SQLite).
+- `resolve_subgraph` hits the `name_lower` unique index, and the transitive cycle
+  check is batched into a single query per save (SQLite).
 
 ### Migration
 

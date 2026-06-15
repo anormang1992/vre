@@ -14,12 +14,13 @@ Schema
     CREATE TABLE IF NOT EXISTS primitives (
         id              TEXT PRIMARY KEY,
         name            TEXT NOT NULL,
+        name_lower      TEXT NOT NULL,
         depths_json     TEXT NOT NULL,
         provenance_json TEXT,
         metrics_json    TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
-        ON primitives(name COLLATE NOCASE);
+        ON primitives(name_lower);
 
     CREATE TABLE IF NOT EXISTS relata (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,12 +74,13 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS primitives (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
+    name_lower      TEXT NOT NULL,
     depths_json     TEXT NOT NULL,
     provenance_json TEXT,
     metrics_json    TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_primitives_name_lower
-    ON primitives(name COLLATE NOCASE);
+    ON primitives(name_lower);
 
 CREATE TABLE IF NOT EXISTS relata (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,10 +342,11 @@ class SQLiteRepository(Repository):
             # UPSERT primitive row
             cursor.execute(
                 """
-                INSERT INTO primitives (id, name, depths_json, provenance_json, metrics_json)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO primitives (id, name, name_lower, depths_json, provenance_json, metrics_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
+                    name_lower = excluded.name_lower,
                     depths_json = excluded.depths_json,
                     provenance_json = excluded.provenance_json,
                     metrics_json = excluded.metrics_json
@@ -351,6 +354,7 @@ class SQLiteRepository(Repository):
                 (
                     str(primitive.id),
                     primitive.name,
+                    primitive.name_lower,
                     depths_json,
                     node_provenance,
                     node_metrics,
@@ -417,8 +421,8 @@ class SQLiteRepository(Repository):
         """Look up a primitive by name (case-insensitive). Returns None if not found."""
         row = self._conn.execute(
             "SELECT id, name, depths_json, provenance_json, metrics_json "
-            "FROM primitives WHERE name = ? COLLATE NOCASE",
-            (name,),
+            "FROM primitives WHERE name_lower = ?",
+            (Primitive.fold_name(name),),
         ).fetchone()
 
         if row is None:
@@ -557,14 +561,13 @@ class SQLiteRepository(Repository):
         transitive_placeholders = ",".join("?" for _ in _TRANSITIVE_RELS)
 
         # Phase 1: Find all transitively reachable node IDs from roots.
-        # The anchor uses `name COLLATE NOCASE` (mirroring find_by_name) so the
-        # case-insensitive idx_primitives_name_lower index can satisfy it; a
-        # LOWER(name) wrapper would force a full table scan. Raw names are passed
-        # as params -- the NOCASE collation handles case-folding in the engine.
+        # The anchor matches the stored fold key (Primitive.name_lower) so the
+        # unique idx_primitives_name_lower index can satisfy it, and so that
+        # "case-insensitive" means exactly Primitive.fold_name everywhere.
         reachable_ids_rows = self._conn.execute(
             f"""
             WITH RECURSIVE reachable(id) AS (
-                SELECT id FROM primitives WHERE name COLLATE NOCASE IN ({name_placeholders})
+                SELECT id FROM primitives WHERE name_lower IN ({name_placeholders})
                 UNION
                 SELECT r.target_id
                 FROM relata r
@@ -573,7 +576,7 @@ class SQLiteRepository(Repository):
             )
             SELECT id FROM reachable
             """,
-            list(names) + _TRANSITIVE_RELS,
+            [Primitive.fold_name(n) for n in names] + _TRANSITIVE_RELS,
         ).fetchall()
 
         reachable_ids = [row["id"] for row in reachable_ids_rows]
@@ -611,7 +614,7 @@ class SQLiteRepository(Repository):
             edges_by_source.setdefault(sid, []).append(ed)
 
         # Identify root names (case-insensitive) for root filtering
-        lowered_set = {n.lower() for n in names}
+        lowered_set = {Primitive.fold_name(n) for n in names}
 
         # Hydrate all nodes
         nodes: list[Primitive] = []
@@ -620,7 +623,7 @@ class SQLiteRepository(Repository):
             nd = dict(nr)
             prim = self._hydrate_primitive(nd, edges_by_source.get(nd["id"], []))
             nodes.append(prim)
-            if prim.name.lower() in lowered_set:
+            if prim.name_lower in lowered_set:
                 roots.append(prim)
 
         # Build EpistemicStep edges

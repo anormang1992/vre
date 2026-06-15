@@ -16,7 +16,13 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 from vre.core.errors import CandidateValidationError
-from vre.core.models import DepthLevel, KnowledgeGap, RelationType, format_depth_label
+from vre.core.models import (
+    DepthLevel,
+    KnowledgeGap,
+    Primitive,
+    RelationType,
+    format_depth_label,
+)
 
 
 class ProposedDepth(BaseModel):
@@ -163,10 +169,10 @@ class ReachabilityCandidate(BaseModel):
                 f"ReachabilityCandidate for '{gap.primitive.name}' is missing "
                 f"source_depth_level or target_depth_level"
             )
-        gap_name = gap.primitive.name.lower()
+        gap_name = gap.primitive.name_lower
         if (
-            self.source_name.lower() != gap_name
-            and self.target_name.lower() != gap_name
+            Primitive.fold_name(self.source_name) != gap_name
+            and Primitive.fold_name(self.target_name) != gap_name
         ):
             raise CandidateValidationError(
                 f"ReachabilityCandidate must reference the gapped primitive "

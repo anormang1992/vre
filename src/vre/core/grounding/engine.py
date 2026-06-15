@@ -79,11 +79,11 @@ class GroundingEngine:
         """
         Identify root primitives for the query based on the input names.
         """
-        by_name: dict[str, Primitive] = {r.name.lower(): r for r in resolved_roots}
+        by_name: dict[str, Primitive] = {Primitive.fold_name(r.name): r for r in resolved_roots}
         all_roots: list[Primitive] = []
         transients: list[Primitive] = []
         for name in names:
-            matched = by_name.get(name.lower())
+            matched = by_name.get(Primitive.fold_name(name))
             if matched:
                 all_roots.append(matched)
             else:
@@ -373,9 +373,9 @@ class GroundingEngine:
             # nodes echo the raw input — either way the per-input mapping below
             # is correct. Unknown concepts remain ExistenceGaps in the result.
             canonical_by_lower = {
-                p.name.lower(): p.name for p in response.result.primitives
+                p.name_lower: p.name for p in response.result.primitives
             }
-            resolved = [canonical_by_lower.get(c.lower(), c) for c in concepts]
+            resolved = [canonical_by_lower.get(Primitive.fold_name(c), c) for c in concepts]
 
             grounded = len(response.result.gaps) == 0
             logger.info(

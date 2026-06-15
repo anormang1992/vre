@@ -14,6 +14,7 @@ from uuid import UUID
 from vre.core.backends import Repository
 from vre.core.grounding.models import GroundingResult
 from vre.core.models import (
+    Primitive,
     PrimitiveMetrics,
     gap_primitive_ids,
 )
@@ -37,10 +38,10 @@ class MetricsManager:
         Batch-reads current metrics for all resolved root concepts, computes
         increments in-process, and batch-writes the results.
         """
-        resolved_lower = {r.lower() for r in result.resolved}
+        resolved_lower = {Primitive.fold_name(r) for r in result.resolved}
         target_prims = [
             prim for prim in result.get_primitives()
-            if prim.name.lower() in resolved_lower
+            if prim.name_lower in resolved_lower
         ]
 
         current_metrics: dict[UUID, PrimitiveMetrics | None] | None = None

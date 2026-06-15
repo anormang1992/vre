@@ -87,14 +87,14 @@ class StubRepository(Repository):
         self._by_name: dict[str, Primitive] = {}
         for p in primitives or []:
             self._by_id[p.id] = p
-            self._by_name[p.name.lower()] = p
+            self._by_name[Primitive.fold_name(p.name)] = p
         self.saved: list[Primitive] = []
 
     def find_by_id(self, id: UUID) -> Primitive | None:
         return self._by_id.get(id)
 
     def find_by_name(self, name: str) -> Primitive | None:
-        return self._by_name.get(name.lower())
+        return self._by_name.get(Primitive.fold_name(name))
 
     def save_primitive(self, primitive: Primitive) -> None:
         # Mirror the real backends' save contract: provenance is required on
@@ -132,7 +132,7 @@ class StubRepository(Repository):
                                 visited.add(r.target_id)
                                 queue.append(r.target_id)
         self._by_id[primitive.id] = primitive
-        self._by_name[primitive.name.lower()] = primitive
+        self._by_name[Primitive.fold_name(primitive.name)] = primitive
         self.saved.append(primitive)
 
     def list_names(self) -> list[str]:

@@ -31,3 +31,6 @@ line-length = 120
 
 [tool.pytest.ini_options]
 addopts = "--cov=src/vre --cov-fail-under=70"
+markers = [
+    "requires_neo4j: integration test that needs a live Neo4j (skipped if unavailable)",
+]
