@@ -165,6 +165,12 @@ summarize major changes, refactors, and breaking changes — not every commit.
   arbitrary first row with only a warning (the installed driver's default
   `strict=False`). `find_by_id` is unchanged — its `id` is unique by constraint.
   Corrects the "fails loud" rationale #78's deferral rested on. (#96)
+- `PolicyRegistry` edge keys now fold primitive names through `Primitive.fold_name`
+  (NFC + casefold) instead of a bare `.lower()`, so a policy resolves "the same
+  name" identically to the primitive it guards. Previously the policy layer was
+  the one site that defined case-insensitivity differently, missing edges on
+  exactly the cases `fold_name` unifies (e.g. `straße`/`STRASSE`, decomposed vs
+  precomposed accents). (#78)
 
 ### Performance
 

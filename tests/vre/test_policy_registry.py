@@ -73,6 +73,17 @@ def test_placements_lookup_is_case_insensitive():
     assert not reg.placements_for("delete", "file", DepthLevel.CAPABILITIES)
 
 
+def test_placements_lookup_folds_like_primitive_identity():
+    """Edge keys fold through Primitive.fold_name (NFC + casefold), not .lower(),
+    so a policy resolves 'the same name' identically to the primitive it guards.
+    'straße' and 'STRASSE' are one primitive (both fold to 'strasse'); a bare
+    .lower() would keep them apart ('straße' vs 'strasse') and miss the edge."""
+    reg = PolicyRegistry()
+    reg.register(_cb, key="k", source_primitive="straße", target_primitive="File",
+                 source_depth=DepthLevel.CONSTRAINTS, name="Guard")
+    assert reg.placements_for("STRASSE", "file", DepthLevel.CONSTRAINTS)
+
+
 def test_freeze_blocks_further_registration():
     """Once frozen, register raises and names the import-order rule."""
     reg = PolicyRegistry()
