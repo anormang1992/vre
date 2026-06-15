@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable
 from pydantic import BaseModel
 
 from vre.core.errors import VREError
-from vre.core.models import DepthLevel
+from vre.core.models import DepthLevel, Primitive
 from vre.core.policy.callback import PolicyCallback
 from vre.core.policy.models import (
     Cardinality,
@@ -102,8 +102,18 @@ class PolicyRegistry:
     def _edge_key(source: str, target: str, source_depth: DepthLevel) -> tuple[str, str, DepthLevel]:
         """
         Normalize an edge identity to its case-insensitive lookup key.
+
+        Folds names through `Primitive.fold_name` (NFC + casefold) — the same
+        single definition the persistence/grounding layers use — so a policy
+        edge resolves "the same name" identically to the primitive it guards.
+        A bare `.lower()` here would diverge on exactly the cases fold_name
+        unifies (e.g. "straße"/"strasse", decomposed vs precomposed accents).
         """
-        return (source.lower(), target.lower(), source_depth)
+        return (
+            Primitive.fold_name(source),
+            Primitive.fold_name(target),
+            source_depth,
+        )
 
     def register(
         self,
