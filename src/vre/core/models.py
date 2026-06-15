@@ -174,6 +174,24 @@ class Depth(BaseModel):
     relata: list[Relatum] = Field(default_factory=list)
     provenance: Provenance | None = None
 
+    @property
+    def is_empty(self) -> bool:
+        """
+        No properties and no relata — structurally vacuous content.
+        """
+        return not self.properties and not self.relata
+
+    @property
+    def grounds(self) -> bool:
+        """
+        Whether this depth counts toward grounding.
+
+        D0 (Existence) always grounds — its mere presence is the knowledge
+        ("this concept exists"). Any deeper level must carry properties or
+        relata; an empty one is treated as absent. See issue #80.
+        """
+        return self.level == DepthLevel.EXISTENCE or not self.is_empty
+
     def validate_provenance(self, context: str = "") -> None:
         """
         Raise ValueError if provenance is missing on this depth or any of its relata.
@@ -201,11 +219,20 @@ class Primitive(BaseModel):
     metrics: PrimitiveMetrics | None = None
 
     @property
+    def grounding_levels(self) -> set[DepthLevel]:
+        """
+        The depth levels that count toward grounding — empty non-D0 depths
+        excluded. The single expression of the vacuity floor (#80) shared by
+        contiguous_max_depth and the gap/learning hole-detection sites.
+        """
+        return {d.level for d in self.depths if d.grounds}
+
+    @property
     def contiguous_max_depth(self) -> DepthLevel | None:
         """
         Highest DepthLevel forming a contiguous chain from D0, or None if no depths.
         """
-        return contiguous_max({d.level for d in self.depths})
+        return contiguous_max(self.grounding_levels)
 
     def validate_provenance(self) -> None:
         """
@@ -240,8 +267,9 @@ class DepthGap(BaseModel):
     @property
     def missing_levels(self) -> list[DepthLevel]:
         """The specific levels a fill must author to close this gap (the holes)."""
-        present = {d.level for d in self.primitive.depths}
-        return missing_depth_levels(present, self.current_depth, self.required_depth)
+        return missing_depth_levels(
+            self.primitive.grounding_levels, self.current_depth, self.required_depth
+        )
 
 
 class ExistenceGap(BaseModel):
@@ -268,8 +296,9 @@ class RelationalGap(BaseModel):
     @property
     def missing_levels(self) -> list[DepthLevel]:
         """The levels a fill must author on the target to close this gap (the holes)."""
-        present = {d.level for d in self.target.depths}
-        return missing_depth_levels(present, self.current_depth, self.required_depth)
+        return missing_depth_levels(
+            self.target.grounding_levels, self.current_depth, self.required_depth
+        )
 
 
 class ReachabilityGap(BaseModel):

@@ -130,7 +130,9 @@ def _make_primitive(
 
 
 def _depth(level: DepthLevel, relata: list[Relatum] | None = None) -> Depth:
-    return Depth(level=level, relata=relata or [])
+    # Non-D0 depths carry content so they survive the vacuity floor (#80);
+    # D0 grounds bare regardless.
+    return Depth(level=level, properties={"_": level.name}, relata=relata or [])
 
 
 def _relatum(

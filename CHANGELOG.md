@@ -30,6 +30,11 @@ summarize major changes, refactors, and breaking changes — not every commit.
   slot per missing level for depth/relational — so an integrator fills only the
   `properties`. VRE resolves *which* levels are missing; a dormant detached level
   (e.g. a D4 over a D1 chain) is never offered for re-authoring. (#95)
+- `Depth.is_empty` (no properties and no relata) and `Depth.grounds` (whether the
+  depth counts toward grounding), plus `Primitive.grounding_levels` (the level set
+  that counts toward grounding). These express the vacuity floor in one place,
+  read by `contiguous_max_depth`, the gap `missing_levels`, and the learning
+  gate. (#80)
 
 ### Changed
 
@@ -66,6 +71,15 @@ summarize major changes, refactors, and breaking changes — not every commit.
   first (closing the duplicate-node gap). Reachability prerequisites and edge
   placement gate on contiguous depth, not exact level membership, so an edge can
   no longer be placed where grounding would never see it. (#95)
+- Vacuity floor: an empty depth — **no properties and no relata** — no longer
+  counts toward grounding. `contiguous_max_depth` and the gap `missing_levels`
+  skip empty levels (an empty non-D0 level now surfaces as a hole to fill rather
+  than as already satisfied), and the learning gate rejects an empty proposed fill
+  ("a fill must carry content") and replaces a pre-existing empty placeholder
+  instead of duplicating it. **D0/Existence is exempt** — its mere presence is the
+  knowledge, so a bare D0 still grounds. Structural floor only; provenance is not a
+  factor. May change grounding results for graphs that contained empty non-D0
+  depths. (#80)
 
 ### Removed
 

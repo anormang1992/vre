@@ -113,9 +113,9 @@ class StubRepository(Repository):
 def _make_fully_grounded(name: str) -> Primitive:
     return Primitive(name=name, depths=[
         Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY),
-        Depth(level=DepthLevel.CAPABILITIES),
-        Depth(level=DepthLevel.CONSTRAINTS),
+        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
+        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}),
+        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
     ])
 
 

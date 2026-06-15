@@ -1,7 +1,10 @@
 """
-Unit tests for GroundingResult.__str__ and PolicyResult.__str__.
+Unit tests for GroundingResult.__str__ and PolicyResult.__str__, plus
+model-level depth predicate/grounding tests (e.g. `contiguous_max_depth`).
 """
 
+
+from uuid import uuid4
 
 from vre.core.models import (
     Depth,
@@ -201,6 +204,35 @@ def test_grounding_str_reachability_gap():
     assert "REACHABILITY: 'network' is not connected to other concepts" in s
 
 
+class TestDepthVacuity:
+    """is_empty is pure structure; grounds layers the D0 exemption on top."""
+
+    def test_empty_depth_is_empty_and_does_not_ground(self) -> None:
+        d = Depth(level=DepthLevel.IDENTITY)
+        assert d.is_empty is True
+        assert d.grounds is False
+
+    def test_properties_make_a_depth_ground(self) -> None:
+        d = Depth(level=DepthLevel.IDENTITY, properties={"is": "a thing"})
+        assert d.is_empty is False
+        assert d.grounds is True
+
+    def test_relata_alone_make_a_depth_ground(self) -> None:
+        rel = Relatum(
+            relation_type=RelationType.APPLIES_TO,
+            target_id=uuid4(),
+            target_depth=DepthLevel.IDENTITY,
+        )
+        d = Depth(level=DepthLevel.IDENTITY, relata=[rel])
+        assert d.is_empty is False
+        assert d.grounds is True
+
+    def test_bare_d0_is_empty_but_still_grounds(self) -> None:
+        d = Depth(level=DepthLevel.EXISTENCE)
+        assert d.is_empty is True
+        assert d.grounds is True
+
+
 def test_grounding_str_no_trace_renders_gracefully():
     result = GroundingResult(grounded=True, resolved=["file"], gaps=[], trace=None)
     s = str(result)
@@ -257,3 +289,63 @@ def test_policy_str_block_with_violations():
     s = str(result)
     assert "BLOCKED" in s
     assert "User declined" in s
+
+
+class TestContiguousMaxDepthVacuityFloor:
+    """contiguous_max_depth skips empty depths; D0 is exempt."""
+
+    def test_empty_depth_does_not_extend_grounding(self) -> None:
+        p = Primitive(name="X", depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY),  # empty
+        ])
+        assert p.contiguous_max_depth == DepthLevel.EXISTENCE
+
+    def test_populated_depth_extends_grounding(self) -> None:
+        p = Primitive(name="X", depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY, properties={"is": "a thing"}),
+        ])
+        assert p.contiguous_max_depth == DepthLevel.IDENTITY
+
+    def test_bare_d0_grounds_at_existence(self) -> None:
+        p = Primitive(name="X", depths=[Depth(level=DepthLevel.EXISTENCE)])
+        assert p.contiguous_max_depth == DepthLevel.EXISTENCE
+
+    def test_empty_middle_depth_breaks_chain(self) -> None:
+        p = Primitive(name="X", depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY, properties={"x": 1}),
+            Depth(level=DepthLevel.CAPABILITIES),  # empty — chain stops here
+            Depth(level=DepthLevel.CONSTRAINTS, properties={"x": 1}),
+        ])
+        assert p.contiguous_max_depth == DepthLevel.IDENTITY
+
+
+class TestGapMissingLevelsVacuity:
+    """An empty depth is a hole the fill must author."""
+
+    def test_depth_gap_lists_empty_level_as_hole(self) -> None:
+        p = Primitive(name="X", depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY),  # empty
+        ])
+        gap = DepthGap(
+            primitive=p,
+            required_depth=DepthLevel.CAPABILITIES,
+            current_depth=p.contiguous_max_depth,  # EXISTENCE
+        )
+        assert gap.missing_levels == [DepthLevel.IDENTITY, DepthLevel.CAPABILITIES]
+
+    def test_relational_gap_lists_empty_level_as_hole(self) -> None:
+        target = Primitive(name="T", depths=[
+            Depth(level=DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY),  # empty
+        ])
+        gap = RelationalGap(
+            source=Primitive(name="S", depths=[Depth(level=DepthLevel.EXISTENCE)]),
+            target=target,
+            required_depth=DepthLevel.CAPABILITIES,
+            current_depth=target.contiguous_max_depth,  # EXISTENCE
+        )
+        assert gap.missing_levels == [DepthLevel.IDENTITY, DepthLevel.CAPABILITIES]
