@@ -15,7 +15,7 @@ from typing import Any, LiteralString, cast
 from uuid import UUID
 
 from neo4j import GraphDatabase
-from neo4j.exceptions import Neo4jError
+from neo4j.exceptions import ConstraintError, Neo4jError
 
 from vre.core.backends.repository import Repository
 from vre.core.errors import (
@@ -68,7 +68,7 @@ class Neo4jRepository(Repository):
         self._driver.close()
 
     def _ensure_constraints(self) -> None:
-        logger.debug("Ensuring uniqueness constraint on Primitive.id")
+        logger.debug("Ensuring uniqueness constraints on Primitive")
         try:
             with self._driver.session(database=self._database) as session:
                 session.run(
@@ -76,6 +76,17 @@ class Neo4jRepository(Repository):
                         LiteralString,
                         "CREATE CONSTRAINT primitive_id_unique IF NOT EXISTS "
                         "FOR (p:Primitive) REQUIRE p.id IS UNIQUE",
+                    )
+                )
+                # Case-insensitive name uniqueness. Neo4j has no collation and
+                # no functional/expression constraints, so the only way to a
+                # DB-level guarantee is to constrain the materialized fold key
+                # (Primitive.name_lower), written by save_primitive (#78).
+                session.run(
+                    cast(
+                        LiteralString,
+                        "CREATE CONSTRAINT primitive_name_lower_unique IF NOT EXISTS "
+                        "FOR (p:Primitive) REQUIRE p.name_lower IS UNIQUE",
                     )
                 )
         except Neo4jError as exc:
@@ -303,11 +314,13 @@ class Neo4jRepository(Repository):
                 cast(
                     LiteralString,
                     "MERGE (p:Primitive {id: $id}) "
-                    "SET p.name = $name, p.depths_json = $depths_json, "
+                    "SET p.name = $name, p.name_lower = $name_lower, "
+                    "p.depths_json = $depths_json, "
                     "p.provenance_json = $provenance_json, p.metrics_json = $metrics_json",
                 ),
                 id=str(primitive.id),
                 name=primitive.name,
+                name_lower=primitive.name_lower,
                 depths_json=depths_json,
                 provenance_json=node_provenance,
                 metrics_json=node_metrics,
@@ -352,6 +365,14 @@ class Neo4jRepository(Repository):
                 session.execute_write(_tx)
         except CyclicRelationshipError:
             raise
+        except ConstraintError as exc:
+            # A different id already holds this case-insensitive name — mirrors
+            # SQLite's IntegrityError on the NOCASE unique index (#78).
+            logger.error("Neo4j name-uniqueness violation saving %r: %s", primitive.name, exc)
+            raise PersistenceError(
+                f"Failed to save primitive '{primitive.name}': a primitive with "
+                f"that name already exists (case-insensitive)"
+            ) from exc
         except Neo4jError as exc:
             logger.error("Neo4j error saving primitive %r: %s", primitive.name, exc)
             raise PersistenceError(f"Failed to save primitive '{primitive.name}': {exc}") from exc
@@ -484,7 +505,7 @@ class Neo4jRepository(Repository):
             LiteralString,
             """
             MATCH (p:Primitive)
-            WHERE toLower(p.name) = toLower($name)
+            WHERE p.name_lower = $name_lower
             OPTIONAL MATCH (p)-[r]->(t:Primitive)
             RETURN
               p.id AS id,
@@ -505,7 +526,17 @@ class Neo4jRepository(Repository):
 
         try:
             with self._driver.session(database=self._database) as session:
-                record = session.run(cypher, name=name).single()
+                # Materialize rather than .single(): a no-match returns 0 rows
+                # (-> None), but a duplicate must fail LOUD rather than return an
+                # arbitrary first row (#96). Note .single(strict=True) is wrong
+                # here — it would also raise on the 0-row not-found case.
+                records = list(session.run(cypher, name_lower=Primitive.fold_name(name)))
+                if len(records) > 1:
+                    raise GraphError(
+                        f"Multiple primitives ({len(records)}) share the "
+                        f"case-insensitive name '{name}' — graph integrity violation"
+                    )
+                record = records[0] if records else None
                 if record is None or record["id"] is None:
                     logger.debug("Primitive not found by name=%r", name)
                     primitive = None
@@ -556,14 +587,14 @@ class Neo4jRepository(Repository):
     ) -> ResolvedSubgraph:
         """Single-query Cypher traversal that resolves a subgraph for the given names."""
         logger.debug("Resolving subgraph for names=%s", names)
-        lowered = [n.lower() for n in names]
+        lowered = [Primitive.fold_name(n) for n in names]
 
         cypher = cast(
             LiteralString,
             """
-            // Phase 1: Resolve roots by name
+            // Phase 1: Resolve roots by name (matched on the stored fold key)
             MATCH (root:Primitive)
-            WHERE toLower(root.name) IN $names
+            WHERE root.name_lower IN $names
             WITH collect(root) AS roots
 
             // Phase 2: Recursive traversal from all roots (no depth ceiling)

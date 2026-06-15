@@ -5,6 +5,7 @@
 Core epistemic models for the Volute Reasoning Engine.
 """
 
+import unicodedata
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from enum import Enum, IntEnum
@@ -229,6 +230,39 @@ class Primitive(BaseModel):
     depths: list[Depth] = Field(default_factory=list)
     provenance: Provenance
     metrics: PrimitiveMetrics | None = None
+
+    @staticmethod
+    def fold_name(name: str) -> str:
+        """
+        The single definition of case-insensitive name equality, shared by
+        every backend and call site. `name` is stored verbatim for display;
+        the fold is the comparison key used for matching and uniqueness.
+
+        `casefold()` (not `lower()`) is Python's caseless-matching primitive
+        and is applied identically on both backends — so "case-insensitive"
+        means the same thing everywhere (closes the per-engine divergence: a
+        backend that folds at comparison time would otherwise use its own,
+        differing rule — and Neo4j cannot fold at comparison time at all).
+
+        NFC normalization precedes the fold so that canonically-equivalent
+        spellings collapse to one key: e.g. precomposed "é" (U+00E9) and
+        "e" + combining acute (U+0065 U+0301) render identically but are
+        distinct code points that `casefold()` alone would keep apart. We
+        normalize the key only — `name` is still stored verbatim for display.
+        (Full Unicode canonical-caseless matching also folds the rare chars
+        that `casefold` itself denormalizes; NFC+casefold covers realistic
+        name input — copy-paste, cross-OS — without that extra pass.)
+        """
+        return unicodedata.normalize("NFC", name).casefold()
+
+    @property
+    def name_lower(self) -> str:
+        """
+        Derived comparison key (`fold_name(name)`). Not a stored field and not
+        serialized — backends persist this value into their own `name_lower`
+        column/property so it can never drift from `name`.
+        """
+        return self.fold_name(self.name)
 
     @property
     def grounding_levels(self) -> set[DepthLevel]:
