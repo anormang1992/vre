@@ -70,7 +70,9 @@ def _depth(
 ) -> Depth:
     return Depth(
         level=level,
-        properties=properties or {},
+        # Default to content so fixtures ground under the vacuity floor (#80);
+        # tests that need an empty depth pass properties={} explicitly.
+        properties=properties if properties is not None else {"_": level.name},
         provenance=_prov(),
     )
 
@@ -1856,3 +1858,82 @@ class TestStubRepositoryCycleDetection:
         ], id=b.id)
         with pytest.raises(CyclicRelationshipError):
             repo.save_primitive(b_with_edge)
+
+
+class TestVacuityFloorLearning:
+    """The learning path treats a non-D0 empty depth as a fillable hole."""
+
+    def test_gate_rejects_empty_proposed_depth(self) -> None:
+        prim = _primitive("File", depths=[_depth(DepthLevel.EXISTENCE)])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+        gap = DepthGap(
+            primitive=prim,
+            required_depth=DepthLevel.IDENTITY,
+            current_depth=DepthLevel.EXISTENCE,
+        )
+        candidate = DepthCandidate(
+            new_depths=[ProposedDepth(level=DepthLevel.IDENTITY, properties={})],
+        )
+        with pytest.raises(CandidateValidationError, match="must carry content"):
+            engine.learn_gap(gap, candidate)
+
+    def test_fill_replaces_pre_existing_empty_depth(self) -> None:
+        prim = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY, properties={}, provenance=_prov()),
+        ])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+
+        # Grounding sees only D0; a gap surfaces for the empty D1.
+        assert prim.contiguous_max_depth == DepthLevel.EXISTENCE
+        gap = DepthGap(
+            primitive=prim,
+            required_depth=DepthLevel.IDENTITY,
+            current_depth=DepthLevel.EXISTENCE,
+        )
+        assert gap.missing_levels == [DepthLevel.IDENTITY]
+
+        candidate = DepthCandidate(
+            new_depths=[ProposedDepth(
+                level=DepthLevel.IDENTITY, properties={"is": "a file"},
+            )],
+        )
+        engine.learn_gap(gap, candidate)
+
+        saved = repo.find_by_id(prim.id)
+        d1s = [d for d in saved.depths if d.level == DepthLevel.IDENTITY]
+        assert len(d1s) == 1                       # replaced, not duplicated
+        assert d1s[0].properties == {"is": "a file"}
+        assert saved.contiguous_max_depth == DepthLevel.IDENTITY
+
+    def test_mixed_fill_replaces_empty_and_appends_fresh(self) -> None:
+        # D1 exists but is empty; D2 is absent. One fill closes both: the empty
+        # D1 is replaced, the fresh D2 appended — exactly one record per level.
+        prim = _primitive("File", depths=[
+            _depth(DepthLevel.EXISTENCE),
+            Depth(level=DepthLevel.IDENTITY, properties={}, provenance=_prov()),
+        ])
+        repo = StubRepository([prim])
+        engine = LearningEngine(repo)
+
+        gap = DepthGap(
+            primitive=prim,
+            required_depth=DepthLevel.CAPABILITIES,
+            current_depth=prim.contiguous_max_depth,  # EXISTENCE (empty D1 doesn't ground)
+        )
+        assert gap.missing_levels == [DepthLevel.IDENTITY, DepthLevel.CAPABILITIES]
+
+        candidate = DepthCandidate(new_depths=[
+            ProposedDepth(level=DepthLevel.IDENTITY, properties={"is": "a file"}),
+            ProposedDepth(level=DepthLevel.CAPABILITIES, properties={"can": "read"}),
+        ])
+        engine.learn_gap(gap, candidate)
+
+        saved = repo.find_by_id(prim.id)
+        levels = sorted(int(d.level) for d in saved.depths)
+        assert levels == [0, 1, 2]  # exactly one record per level, no duplicate D1
+        d1 = next(d for d in saved.depths if d.level == DepthLevel.IDENTITY)
+        assert d1.properties == {"is": "a file"}
+        assert saved.contiguous_max_depth == DepthLevel.CAPABILITIES

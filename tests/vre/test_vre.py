@@ -117,9 +117,9 @@ class StubRepository(Repository):
 def _make_fully_grounded(name: str) -> Primitive:
     return Primitive(name=name, depths=[
         Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY),
-        Depth(level=DepthLevel.CAPABILITIES),
-        Depth(level=DepthLevel.CONSTRAINTS),
+        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
+        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}),
+        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
     ])
 
 
@@ -142,7 +142,14 @@ def _make_primitive_with_edge(
         target_depth=target_depth,
     )
     levels = [DepthLevel.EXISTENCE, DepthLevel.IDENTITY, DepthLevel.CAPABILITIES, DepthLevel.CONSTRAINTS]
-    depths = [Depth(level=lvl, relata=[relatum] if lvl == source_depth else []) for lvl in levels]
+    depths = [
+        Depth(
+            level=lvl,
+            properties={} if lvl == DepthLevel.EXISTENCE else {"_": lvl.name.lower()},
+            relata=[relatum] if lvl == source_depth else [],
+        )
+        for lvl in levels
+    ]
     return Primitive(name=name, depths=depths)
 
 

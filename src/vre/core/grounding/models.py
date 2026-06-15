@@ -93,7 +93,7 @@ def _fmt_primitive(primitive: Primitive, id_to_name: dict[UUID, str]) -> list[st
 
     if primitive.depths:
         # Compact single-line format when all depths have no properties or relata
-        all_empty = all(not d.properties and not d.relata for d in primitive.depths)
+        all_empty = all(d.is_empty for d in primitive.depths)
         if all_empty:
             labels = [
                 format_depth_label(d.level)

@@ -37,7 +37,11 @@ def _make_primitive(
     max_depth: DepthLevel = DepthLevel.EXISTENCE,
 ) -> Primitive:
     depths = [
-        Depth(level=DepthLevel(i), provenance=_prov())
+        Depth(
+            level=DepthLevel(i),
+            properties={} if i == DepthLevel.EXISTENCE else {"_": DepthLevel(i).name.lower()},
+            provenance=_prov(),
+        )
         for i in range(max_depth + 1)
     ]
     return Primitive(name=name, depths=depths, provenance=_prov())

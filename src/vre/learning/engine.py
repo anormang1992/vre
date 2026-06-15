@@ -125,6 +125,16 @@ def _validate_depth_fill(
             f"each level may appear at most once"
         )
 
+    for proposed in new_depths:
+        # A ProposedDepth carries no relata, so empty properties = vacuous.
+        # Refuse to fill a gap with nothing — D0 is auto-generated during
+        # existence persist and never proposed here (#80).
+        if not proposed.properties:
+            raise CandidateValidationError(
+                f"{subject} proposes an empty "
+                f"{format_depth_label(proposed.level)} — a fill must carry content"
+            )
+
     def _holes() -> list[str]:
         """
         Helper function to lazily evaluate the missing depth levels at the raise sites instead of
@@ -251,20 +261,28 @@ class LearningEngine:
         self, primitive: Primitive, new_depths: list[ProposedDepth], provenance: Provenance,
     ) -> None:
         """
-        Append proposed depth levels to a primitive and persist.
+        Append proposed depth levels (replacing any empty placeholder) and persist.
 
         The gate (`_validate_depth_fill`) guarantees every proposed level is a
-        genuine hole — not already present — so this only ever appends, never
-        replaces. Pre-existing levels (including dormant ones the new contiguity
-        reactivates) are left exactly as authored.
+        genuine hole — either absent or a non-grounding empty record. A grounding
+        level is never re-proposed, so the only record that can already sit at a
+        proposed level is an empty one, which we replace (it has no properties or
+        relata to clobber); otherwise we append. Pre-existing grounding levels
+        (including dormant ones the new contiguity reactivates) are left exactly
+        as authored.
         """
         logger.debug(
             "Appending %d depth(s) to %r (existing levels: %s)",
             len(new_depths), primitive.name,
             sorted(int(d.level) for d in primitive.depths),
         )
-        for proposed in new_depths:
-            primitive.depths.append(_to_depth(proposed, provenance))
+        # Drop any record already sitting at a proposed level. The gate's
+        # holes-only check guarantees it's a non-grounding empty placeholder —
+        # nothing to clobber (no properties, no relata) — so this replaces
+        # rather than duplicates (#80).
+        proposed_levels = {proposed.level for proposed in new_depths}
+        primitive.depths = [d for d in primitive.depths if d.level not in proposed_levels]
+        primitive.depths.extend(_to_depth(proposed, provenance) for proposed in new_depths)
         primitive.depths.sort(key=lambda d: int(d.level))
         self._repo.save_primitive(primitive)
 
@@ -292,7 +310,7 @@ class LearningEngine:
         _raise_if_resolved(existing.name, live_current, required_depth)
         _validate_depth_fill(
             new_depths, live_current, required_depth,
-            {d.level for d in existing.depths},
+            existing.grounding_levels,
             f"{label} for '{existing.name}'",
         )
 

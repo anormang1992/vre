@@ -112,9 +112,9 @@ class StubRepository(Repository):
 def _make_fully_grounded(name: str) -> Primitive:
     return Primitive(name=name, depths=[
         Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY),
-        Depth(level=DepthLevel.CAPABILITIES),
-        Depth(level=DepthLevel.CONSTRAINTS),
+        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
+        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}),
+        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
     ])
 
 
@@ -213,7 +213,7 @@ class TestGroundingMetrics:
         file_p = _make_fully_grounded("file")
         create_p = Primitive(name="create", depths=[
             Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY),
+            Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
             Depth(level=DepthLevel.CAPABILITIES, relata=[
                 Relatum(
                     relation_type=RelationType.APPLIES_TO,
@@ -221,7 +221,7 @@ class TestGroundingMetrics:
                     target_depth=DepthLevel.CAPABILITIES,
                 ),
             ]),
-            Depth(level=DepthLevel.CONSTRAINTS),
+            Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
         ])
         vre, repo = _make_vre([file_p, create_p])
         vre.check(["file", "create"])
