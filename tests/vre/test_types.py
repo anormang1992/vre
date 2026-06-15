@@ -15,6 +15,8 @@ from vre.core.models import (
     EpistemicStep,
     ExistenceGap,
     DepthGap,
+    Provenance,
+    ProvenanceSource,
     RelationalGap,
     ReachabilityGap,
     Primitive,
@@ -25,10 +27,13 @@ from vre.core.grounding import GroundingResult
 from vre.core.policy import PolicyAction, PolicyResult
 
 
+_PROV = Provenance(source=ProvenanceSource.AUTHORED)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_primitive(name: str, depths: list | None = None) -> Primitive:
-    return Primitive(name=name, depths=depths or [])
+    return Primitive(name=name, depths=depths or [], provenance=_PROV)
 
 
 def _make_depth(
@@ -36,7 +41,7 @@ def _make_depth(
     properties: dict | None = None,
     relata: list | None = None,
 ) -> Depth:
-    return Depth(level=level, properties=properties or {}, relata=relata or [])
+    return Depth(level=level, properties=properties or {}, relata=relata or [], provenance=_PROV)
 
 
 def _make_trace(
@@ -92,6 +97,7 @@ def test_grounding_str_shows_relatum_with_metadata():
         target_id=permission.id,
         target_depth=DepthLevel.CONSTRAINTS,
         metadata={"enforcement": "kernel-level"},
+        provenance=_PROV,
     )
     file_p = _make_primitive("file", [
         _make_depth(DepthLevel.EXISTENCE),
@@ -208,12 +214,12 @@ class TestDepthVacuity:
     """is_empty is pure structure; grounds layers the D0 exemption on top."""
 
     def test_empty_depth_is_empty_and_does_not_ground(self) -> None:
-        d = Depth(level=DepthLevel.IDENTITY)
+        d = Depth(level=DepthLevel.IDENTITY, provenance=_PROV)
         assert d.is_empty is True
         assert d.grounds is False
 
     def test_properties_make_a_depth_ground(self) -> None:
-        d = Depth(level=DepthLevel.IDENTITY, properties={"is": "a thing"})
+        d = Depth(level=DepthLevel.IDENTITY, properties={"is": "a thing"}, provenance=_PROV)
         assert d.is_empty is False
         assert d.grounds is True
 
@@ -222,13 +228,14 @@ class TestDepthVacuity:
             relation_type=RelationType.APPLIES_TO,
             target_id=uuid4(),
             target_depth=DepthLevel.IDENTITY,
+            provenance=_PROV,
         )
-        d = Depth(level=DepthLevel.IDENTITY, relata=[rel])
+        d = Depth(level=DepthLevel.IDENTITY, relata=[rel], provenance=_PROV)
         assert d.is_empty is False
         assert d.grounds is True
 
     def test_bare_d0_is_empty_but_still_grounds(self) -> None:
-        d = Depth(level=DepthLevel.EXISTENCE)
+        d = Depth(level=DepthLevel.EXISTENCE, provenance=_PROV)
         assert d.is_empty is True
         assert d.grounds is True
 
@@ -296,29 +303,29 @@ class TestContiguousMaxDepthVacuityFloor:
 
     def test_empty_depth_does_not_extend_grounding(self) -> None:
         p = Primitive(name="X", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY),  # empty
-        ])
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+            Depth(level=DepthLevel.IDENTITY, provenance=_PROV),  # empty
+        ], provenance=_PROV)
         assert p.contiguous_max_depth == DepthLevel.EXISTENCE
 
     def test_populated_depth_extends_grounding(self) -> None:
         p = Primitive(name="X", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY, properties={"is": "a thing"}),
-        ])
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+            Depth(level=DepthLevel.IDENTITY, properties={"is": "a thing"}, provenance=_PROV),
+        ], provenance=_PROV)
         assert p.contiguous_max_depth == DepthLevel.IDENTITY
 
     def test_bare_d0_grounds_at_existence(self) -> None:
-        p = Primitive(name="X", depths=[Depth(level=DepthLevel.EXISTENCE)])
+        p = Primitive(name="X", depths=[Depth(level=DepthLevel.EXISTENCE, provenance=_PROV)], provenance=_PROV)
         assert p.contiguous_max_depth == DepthLevel.EXISTENCE
 
     def test_empty_middle_depth_breaks_chain(self) -> None:
         p = Primitive(name="X", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY, properties={"x": 1}),
-            Depth(level=DepthLevel.CAPABILITIES),  # empty — chain stops here
-            Depth(level=DepthLevel.CONSTRAINTS, properties={"x": 1}),
-        ])
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+            Depth(level=DepthLevel.IDENTITY, properties={"x": 1}, provenance=_PROV),
+            Depth(level=DepthLevel.CAPABILITIES, provenance=_PROV),  # empty — chain stops here
+            Depth(level=DepthLevel.CONSTRAINTS, properties={"x": 1}, provenance=_PROV),
+        ], provenance=_PROV)
         assert p.contiguous_max_depth == DepthLevel.IDENTITY
 
 
@@ -327,9 +334,9 @@ class TestGapMissingLevelsVacuity:
 
     def test_depth_gap_lists_empty_level_as_hole(self) -> None:
         p = Primitive(name="X", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY),  # empty
-        ])
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+            Depth(level=DepthLevel.IDENTITY, provenance=_PROV),  # empty
+        ], provenance=_PROV)
         gap = DepthGap(
             primitive=p,
             required_depth=DepthLevel.CAPABILITIES,
@@ -339,11 +346,11 @@ class TestGapMissingLevelsVacuity:
 
     def test_relational_gap_lists_empty_level_as_hole(self) -> None:
         target = Primitive(name="T", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY),  # empty
-        ])
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+            Depth(level=DepthLevel.IDENTITY, provenance=_PROV),  # empty
+        ], provenance=_PROV)
         gap = RelationalGap(
-            source=Primitive(name="S", depths=[Depth(level=DepthLevel.EXISTENCE)]),
+            source=Primitive(name="S", depths=[Depth(level=DepthLevel.EXISTENCE, provenance=_PROV)], provenance=_PROV),
             target=target,
             required_depth=DepthLevel.CAPABILITIES,
             current_depth=target.contiguous_max_depth,  # EXISTENCE

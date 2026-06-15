@@ -9,6 +9,8 @@ from vre.core.models import (
     EpistemicResponse,
     EpistemicResult,
     Primitive,
+    Provenance,
+    ProvenanceSource,
     Relatum,
     RelationType,
 )
@@ -16,6 +18,8 @@ from vre.core.policy import Cardinality, Policy, PolicyCallbackResult, PolicyVio
 from vre.core.policy.callback import GroundingContext, ToolCallContext, TriggeringEdge
 from vre.core.policy.gate import PolicyGate
 from vre.core.policy.registry import PolicyRegistry
+
+_PROV = Provenance(source=ProvenanceSource.AUTHORED)
 
 # Edge geometry shared by the helpers: the APPLIES_TO edge lives on the source at D2,
 # and requires the target grounded to D3.
@@ -81,24 +85,25 @@ def _cb_record_tool_call(context) -> PolicyCallbackResult:
 
 def _trace(source_name, target_name="file", relation=RelationType.APPLIES_TO):
     """A source primitive with one `relation` edge to a target, both in the trace."""
-    target = Primitive(name=target_name)
-    relatum = Relatum(relation_type=relation, target_id=target.id, target_depth=TGT_DEPTH)
-    source = Primitive(name=source_name, depths=[Depth(level=SRC_DEPTH, relata=[relatum])])
+    target = Primitive(name=target_name, provenance=_PROV)
+    relatum = Relatum(relation_type=relation, target_id=target.id, target_depth=TGT_DEPTH, provenance=_PROV)
+    source = Primitive(name=source_name, depths=[Depth(level=SRC_DEPTH, relata=[relatum], provenance=_PROV)], provenance=_PROV)
     query = EpistemicQuery(concept_ids=[source.id])
     return EpistemicResponse(query=query, result=EpistemicResult(primitives=[source, target]))
 
 
 def _trace_two_edges(source_name, target_a="file", target_b="dir"):
     """A source primitive with two APPLIES_TO edges (to target_a, target_b), all in the trace."""
-    a, b = Primitive(name=target_a), Primitive(name=target_b)
+    a, b = Primitive(name=target_a, provenance=_PROV), Primitive(name=target_b, provenance=_PROV)
     depth = Depth(
         level=SRC_DEPTH,
         relata=[
-            Relatum(relation_type=RelationType.APPLIES_TO, target_id=a.id, target_depth=TGT_DEPTH),
-            Relatum(relation_type=RelationType.APPLIES_TO, target_id=b.id, target_depth=TGT_DEPTH),
+            Relatum(relation_type=RelationType.APPLIES_TO, target_id=a.id, target_depth=TGT_DEPTH, provenance=_PROV),
+            Relatum(relation_type=RelationType.APPLIES_TO, target_id=b.id, target_depth=TGT_DEPTH, provenance=_PROV),
         ],
+        provenance=_PROV,
     )
-    source = Primitive(name=source_name, depths=[depth])
+    source = Primitive(name=source_name, depths=[depth], provenance=_PROV)
     query = EpistemicQuery(concept_ids=[source.id])
     return EpistemicResponse(query=query, result=EpistemicResult(primitives=[source, a, b]))
 

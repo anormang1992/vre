@@ -13,6 +13,21 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ### Added
 
+- `ProvenanceError` (a `VREError`, exported from `vre` and `vre.core`):
+  `Primitive`/`Depth`/`Relatum.validate_provenance()` — which both backends call
+  before any save — raises this typed error instead of a bare `ValueError` when
+  provenance is missing, so integrators catching `VREError` no longer leak an
+  unstructured exception. With provenance now required at the model level (see
+  Changed), this validation is the deliberate fails-closed backstop against
+  provenance being nulled or spoofed *after* construction (Pydantic does not
+  re-validate on assignment). (#98)
+- `ProvenanceSource.SYNTHETIC`: a third provenance genealogy for engine-generated,
+  non-knowledge placeholders — specifically the transient primitive the grounding
+  engine manufactures for a queried concept absent from the graph (the
+  `ExistenceGap` root). Authored and Learned are human-attested by construction;
+  Synthetic is machine-attested. It is genealogy, not a trust tier — knowledge of
+  an *absence*, honestly sourced rather than left null or falsely stamped
+  `AUTHORED`. (#98)
 - Policy callback context types: `ToolCallContext`, `GroundingContext`, and a
   per-edge `TriggeringEdge`. Callback failure reasons now surface in the policy
   violation message. (#58)
@@ -53,6 +68,21 @@ summarize major changes, refactors, and breaking changes — not every commit.
   `tool_call` is supplied. (#58)
 - Policy `confirmation_message` is used verbatim; the `{action}` interpolation
   was dropped.
+- **BREAKING:** Provenance is now **required at the model level**. The
+  `provenance` field on `Primitive`, `Depth`, and `Relatum` is non-optional
+  (`provenance: Provenance`, no default), so constructing any of them without
+  provenance raises a Pydantic `ValidationError`. This replaces the previous
+  "optional for backward compatibility" framing (CLAUDE.md §7.2) — the contract
+  is now explicit and unavoidable at construction. Consequences: (1) integrator
+  code that builds these models directly must supply provenance; (2)
+  **legacy/unstamped graphs are no longer readable** — hydrating a stored
+  primitive, depth, or relatum that lacks provenance raises `HydrationError`
+  rather than degrading to `None` (pre-1.0, there are no such graphs to
+  preserve, so this is a deliberate fail-closed). The save-boundary
+  `validate_provenance()` check is retained as a second layer against
+  post-construction tampering (see Added: `ProvenanceError`). The learning-path
+  test `StubRepository` now calls `validate_provenance()` like the real backends,
+  closing a stub-vs-backend conformance gap. (#98, #83)
 - Provenance semantics documented for the knowledge-linter model: `AUTHORED` =
   a human drafted the content directly; `LEARNED` = an agent proposed it and a
   human approved it at the persistence boundary. Both are human-attested by

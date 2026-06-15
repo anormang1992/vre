@@ -37,6 +37,15 @@ class HydrationError(VREError):
     """Failed to reconstruct a domain object from stored data."""
 
 
+class ProvenanceError(VREError):
+    """Knowledge being persisted is missing required provenance.
+
+    Provenance is required on every primitive, depth, and relatum at the
+    persistence boundary (CLAUDE.md §7.2). Raised by validate_provenance,
+    which the backends invoke before any save.
+    """
+
+
 class CandidateValidationError(VREError):
     """A learning candidate is missing required fields or references invalid data."""
 

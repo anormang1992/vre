@@ -135,9 +135,8 @@ class SQLiteRepository(Repository):
             entry: dict[str, Any] = {
                 "level": int(depth.level),
                 "properties": depth.properties,
+                "provenance": depth.provenance.model_dump(mode="json"),
             }
-            if depth.provenance:
-                entry["provenance"] = depth.provenance.model_dump(mode="json")
             stripped.append(entry)
         return json.dumps(stripped)
 
@@ -155,11 +154,17 @@ class SQLiteRepository(Repository):
         try:
             raw_depths = json.loads(node_data["depths_json"])
             depths_by_level: dict[int, Depth] = {}
+            name = node_data["name"]
             for rd in raw_depths:
+                if not rd.get("provenance"):
+                    raise HydrationError(
+                        f"Depth D{rd['level']} of '{name}' is missing provenance — "
+                        f"provenance is required (no legacy/unstamped graphs)"
+                    )
                 depth = Depth(
                     level=DepthLevel(rd["level"]),
                     properties=rd.get("properties", {}),
-                    provenance=Provenance(**rd["provenance"]) if rd.get("provenance") else None,
+                    provenance=Provenance(**rd["provenance"]),
                 )
                 depths_by_level[int(depth.level)] = depth
 
@@ -170,9 +175,12 @@ class SQLiteRepository(Repository):
                 metadata = json.loads(metadata_raw) if metadata_raw else {}
 
                 rel_prov_raw = rel.get("provenance_json")
-                rel_prov = None
-                if rel_prov_raw:
-                    rel_prov = Provenance(**json.loads(rel_prov_raw))
+                if not rel_prov_raw:
+                    raise HydrationError(
+                        f"Relatum {rel['rel_type']} on '{name}' is missing provenance — "
+                        f"provenance is required (no legacy/unstamped graphs)"
+                    )
+                rel_prov = Provenance(**json.loads(rel_prov_raw))
 
                 relatum = Relatum(
                     relation_type=RelationType(rel["rel_type"]),
@@ -188,9 +196,12 @@ class SQLiteRepository(Repository):
             sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
 
             node_prov_raw = node_data.get("provenance_json")
-            node_prov = None
-            if node_prov_raw:
-                node_prov = Provenance(**json.loads(node_prov_raw))
+            if not node_prov_raw:
+                raise HydrationError(
+                    f"Primitive '{name}' is missing provenance — "
+                    f"provenance is required (no legacy/unstamped graphs)"
+                )
+            node_prov = Provenance(**json.loads(node_prov_raw))
 
             node_metrics_raw = node_data.get("metrics_json")
             node_metrics = None

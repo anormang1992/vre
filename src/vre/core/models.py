@@ -13,6 +13,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from vre.core.errors import ProvenanceError
+
 
 class DepthLevel(IntEnum):
     """
@@ -93,20 +95,30 @@ class ProvenanceSource(str, Enum):
     """
     Origin category for knowledge in the epistemic graph.
 
-    Provenance is genealogy -- who drafted the content -- not a trust
-    gradient. As a knowledge linter, VRE only ever persists knowledge that
-    a human has attested at the persistence boundary, so the two categories
-    differ solely in who drafted the content:
+    Provenance is genealogy -- who (or what) drafted the content -- not a
+    trust gradient. The categories differ solely in origin:
 
     - AUTHORED: a human drafted the content from scratch.
     - LEARNED: an agent proposed the content and a human approved it at
       the point of persistence.
+    - SYNTHETIC: the engine itself generated the object. This is the
+      genealogy of a placeholder the system manufactures to represent the
+      *absence* of knowledge -- e.g. the transient primitive that stands in
+      for a queried concept not present in the graph (see the grounding
+      engine). It is knowledge of an absence, not knowledge of a concept.
 
-    Both are human-attested by construction.
+    AUTHORED and LEARNED are human-attested by construction; SYNTHETIC is
+    machine-attested and is set only by the engine -- integrators never assign
+    it. Provenance is genealogy, not an ordered trust score (there is no
+    authored > learned > synthetic ranking). But the human-attested vs
+    machine-attested boundary is real and deliberately audit-relevant: "is
+    anything in this graph not human-attested?" is a legitimate, answerable
+    query. That is a feature, not a backdoor trust gradient.
     """
 
     AUTHORED = "authored"
     LEARNED = "learned"
+    SYNTHETIC = "synthetic"
 
 
 class Provenance(BaseModel):
@@ -151,14 +163,14 @@ class Relatum(BaseModel):
     target_id: UUID
     target_depth: DepthLevel
     metadata: dict[str, Any] = Field(default_factory=dict)
-    provenance: Provenance | None = None
+    provenance: Provenance
 
     def validate_provenance(self, context: str = "") -> None:
         """
-        Raise ValueError if provenance is missing.
+        Raise ProvenanceError if provenance is missing.
         """
         if self.provenance is None:
-            raise ValueError(
+            raise ProvenanceError(
                 f"{context}relatum {self.relation_type.value} → "
                 f"{self.target_id} is missing provenance"
             )
@@ -172,7 +184,7 @@ class Depth(BaseModel):
     level: DepthLevel
     properties: dict[str, Any] = Field(default_factory=dict)
     relata: list[Relatum] = Field(default_factory=list)
-    provenance: Provenance | None = None
+    provenance: Provenance
 
     @property
     def is_empty(self) -> bool:
@@ -194,10 +206,10 @@ class Depth(BaseModel):
 
     def validate_provenance(self, context: str = "") -> None:
         """
-        Raise ValueError if provenance is missing on this depth or any of its relata.
+        Raise ProvenanceError if provenance is missing on this depth or any of its relata.
         """
         if self.provenance is None:
-            raise ValueError(
+            raise ProvenanceError(
                 f"{context}depth D{self.level.value} ({self.level.name}) "
                 f"is missing provenance"
             )
@@ -215,7 +227,7 @@ class Primitive(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str
     depths: list[Depth] = Field(default_factory=list)
-    provenance: Provenance | None = None
+    provenance: Provenance
     metrics: PrimitiveMetrics | None = None
 
     @property
@@ -236,10 +248,10 @@ class Primitive(BaseModel):
 
     def validate_provenance(self) -> None:
         """
-        Raise ValueError if provenance is missing on this primitive, any depth, or any relatum.
+        Raise ProvenanceError if provenance is missing on this primitive, any depth, or any relatum.
         """
         if self.provenance is None:
-            raise ValueError(
+            raise ProvenanceError(
                 f"Primitive '{self.name}' is missing provenance"
             )
         for depth in self.depths:

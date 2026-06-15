@@ -56,9 +56,8 @@ def _fmt_relatum(r: Relatum, id_to_name: dict[UUID, str]) -> list[str]:
     if r.metadata:
         meta_str = ", ".join(f"{k}={v}" for k, v in r.metadata.items())
         lines.append(f"        metadata: {meta_str}")
-    if r.provenance:
-        date_str = r.provenance.created_at.strftime("%Y-%m-%d")
-        lines.append(f"        provenance: {r.provenance.source.value} ({date_str})")
+    date_str = r.provenance.created_at.strftime("%Y-%m-%d")
+    lines.append(f"        provenance: {r.provenance.source.value} ({date_str})")
     return lines
 
 
@@ -66,8 +65,7 @@ def _fmt_depth(depth: Depth, id_to_name: dict[UUID, str]) -> list[str]:
     """
     Format a single Depth level as display lines, including its relata.
     """
-    prov_tag = f"  [{depth.provenance.source.value}]" if depth.provenance else ""
-    lines = [f"  {format_depth_label(depth.level)}{prov_tag}"]
+    lines = [f"  {format_depth_label(depth.level)}  [{depth.provenance.source.value}]"]
     if depth.properties:
         lines.append("    properties:")
         for k, v in depth.properties.items():
@@ -87,9 +85,8 @@ def _fmt_primitive(primitive: Primitive, id_to_name: dict[UUID, str]) -> list[st
     header = f"═══ {name} {'═' * max(0, 50 - len(name))}"
     lines = [header]
 
-    if primitive.provenance:
-        date_str = primitive.provenance.created_at.strftime("%Y-%m-%d")
-        lines.append(f"  provenance: {primitive.provenance.source.value} ({date_str})")
+    date_str = primitive.provenance.created_at.strftime("%Y-%m-%d")
+    lines.append(f"  provenance: {primitive.provenance.source.value} ({date_str})")
 
     if primitive.depths:
         # Compact single-line format when all depths have no properties or relata
