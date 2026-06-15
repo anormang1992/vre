@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from vre.core.models import (
     Depth,
@@ -19,6 +20,7 @@ from vre.core.models import (
     RelationType,
 )
 from vre.core.backends.sqlite import SQLiteRepository
+from vre.core.errors import HydrationError, ProvenanceError
 from vre.core.grounding.models import _fmt_depth, _fmt_primitive, _fmt_relatum
 
 
@@ -37,11 +39,14 @@ def test_provenance_defaults():
 
 def test_provenance_enum_values():
     """
-    ProvenanceSource enum maps to the two canonical string values from CLAUDE.md §7.2.
+    ProvenanceSource enum maps to the canonical string values from CLAUDE.md §7.2:
+    two human-attested genealogies (authored, learned) plus one system genealogy
+    (synthetic) for engine-generated, non-knowledge placeholders.
     """
     assert ProvenanceSource.AUTHORED.value == "authored"
     assert ProvenanceSource.LEARNED.value == "learned"
-    assert [s.value for s in ProvenanceSource] == ["authored", "learned"]
+    assert ProvenanceSource.SYNTHETIC.value == "synthetic"
+    assert [s.value for s in ProvenanceSource] == ["authored", "learned", "synthetic"]
 
 
 def test_provenance_with_detail():
@@ -63,32 +68,33 @@ def test_provenance_timestamps_auto_set():
     assert before <= p.updated_at <= after
 
 
-def test_primitive_provenance_optional():
+def test_primitive_requires_provenance():
     """
-    Primitive without provenance defaults to None for backward compatibility.
+    Primitive constructed without provenance is rejected at the model level —
+    the contract is explicit and unavoidable, not optional (#98).
     """
-    p = Primitive(name="test")
-    assert p.provenance is None
+    with pytest.raises(ValidationError):
+        Primitive(name="test")
 
 
-def test_depth_provenance_optional():
+def test_depth_requires_provenance():
     """
-    Depth without provenance defaults to None for backward compatibility.
+    Depth constructed without provenance is rejected at the model level (#98).
     """
-    d = Depth(level=DepthLevel.EXISTENCE)
-    assert d.provenance is None
+    with pytest.raises(ValidationError):
+        Depth(level=DepthLevel.EXISTENCE)
 
 
-def test_relatum_provenance_optional():
+def test_relatum_requires_provenance():
     """
-    Relatum without provenance defaults to None for backward compatibility.
+    Relatum constructed without provenance is rejected at the model level (#98).
     """
-    r = Relatum(
-        relation_type=RelationType.APPLIES_TO,
-        target_id=uuid4(),
-        target_depth=DepthLevel.CAPABILITIES,
-    )
-    assert r.provenance is None
+    with pytest.raises(ValidationError):
+        Relatum(
+            relation_type=RelationType.APPLIES_TO,
+            target_id=uuid4(),
+            target_depth=DepthLevel.CAPABILITIES,
+        )
 
 
 def test_primitive_with_provenance():
@@ -125,33 +131,43 @@ def test_relatum_with_provenance():
 
 
 # ── Persistence boundary validation ──────────────────────────────────────────
+# The model now requires provenance at construction (above), so these guard the
+# save-boundary defense against an integrator nulling/spoofing provenance *after*
+# construction — Pydantic does not re-validate on assignment, so validate_provenance
+# is the fails-closed check the backends run before any write (#98).
 
 def test_validate_provenance_rejects_primitive_without_provenance():
     """
-    validate_provenance raises ValueError when the primitive itself has no provenance.
+    validate_provenance raises ProvenanceError when the primitive's provenance
+    is nulled after construction.
     """
-    p = Primitive(name="test")
-    with pytest.raises(ValueError, match=re.escape("Primitive 'test' is missing provenance")):
+    prov = Provenance(source=ProvenanceSource.AUTHORED)
+    p = Primitive(name="test", provenance=prov)
+    p.provenance = None
+    with pytest.raises(ProvenanceError, match=re.escape("Primitive 'test' is missing provenance")):
         p.validate_provenance()
 
 
 def test_validate_provenance_rejects_depth_without_provenance():
     """
-    validate_provenance raises ValueError when a depth is missing provenance.
+    validate_provenance raises ProvenanceError when a depth's provenance is
+    nulled after construction.
     """
     prov = Provenance(source=ProvenanceSource.AUTHORED)
     p = Primitive(
         name="file",
         provenance=prov,
-        depths=[Depth(level=DepthLevel.EXISTENCE)],
+        depths=[Depth(level=DepthLevel.EXISTENCE, provenance=prov)],
     )
-    with pytest.raises(ValueError, match="depth D0 .EXISTENCE. is missing provenance"):
+    p.depths[0].provenance = None
+    with pytest.raises(ProvenanceError, match="depth D0 .EXISTENCE. is missing provenance"):
         p.validate_provenance()
 
 
 def test_validate_provenance_rejects_relatum_without_provenance():
     """
-    validate_provenance raises ValueError when a relatum is missing provenance.
+    validate_provenance raises ProvenanceError when a relatum's provenance is
+    nulled after construction.
     """
     prov = Provenance(source=ProvenanceSource.AUTHORED)
     target_id = uuid4()
@@ -167,12 +183,14 @@ def test_validate_provenance_rejects_relatum_without_provenance():
                         relation_type=RelationType.APPLIES_TO,
                         target_id=target_id,
                         target_depth=DepthLevel.CAPABILITIES,
+                        provenance=prov,
                     ),
                 ],
             ),
         ],
     )
-    with pytest.raises(ValueError, match="relatum APPLIES_TO"):
+    p.depths[0].relata[0].provenance = None
+    with pytest.raises(ProvenanceError, match="relatum APPLIES_TO"):
         p.validate_provenance()
 
 
@@ -218,15 +236,6 @@ def test_depths_to_json_includes_provenance():
     assert len(result) == 1
     assert "provenance" in result[0]
     assert result[0]["provenance"]["source"] == "authored"
-
-
-def test_depths_to_json_omits_provenance_when_none():
-    """
-    _depths_to_json omits the provenance key entirely when provenance is None.
-    """
-    depths = [Depth(level=DepthLevel.EXISTENCE)]
-    result = json.loads(SQLiteRepository._depths_to_json(depths))
-    assert "provenance" not in result[0]
 
 
 def test_hydrate_primitive_with_provenance():
@@ -305,9 +314,10 @@ def test_hydrate_primitive_with_provenance():
     assert d2.relata[0].provenance.source == ProvenanceSource.LEARNED
 
 
-def test_hydrate_primitive_without_provenance():
+def test_hydrate_primitive_without_provenance_fails_closed():
     """
-    Hydrating node data with no provenance fields yields None — backward compatible.
+    Hydrating a legacy/unstamped node (no provenance) raises HydrationError —
+    provenance is required, so such graphs are read-only-fail, not silently None (#98).
     """
     node_data = {
         "id": str(uuid4()),
@@ -316,9 +326,8 @@ def test_hydrate_primitive_without_provenance():
         "provenance_json": None,
         "metrics_json": None,
     }
-    hydrated = SQLiteRepository._hydrate_primitive(node_data, [])
-    assert hydrated.provenance is None
-    assert hydrated.depths[0].provenance is None
+    with pytest.raises(HydrationError, match="missing provenance"):
+        SQLiteRepository._hydrate_primitive(node_data, [])
 
 
 # ── Display formatting ───────────────────────────────────────────────────────
@@ -341,21 +350,6 @@ def test_fmt_relatum_with_provenance():
     assert f"provenance: authored ({date_str})" in joined
 
 
-def test_fmt_relatum_without_provenance():
-    """
-    _fmt_relatum omits provenance line when provenance is None.
-    """
-    target_id = uuid4()
-    r = Relatum(
-        relation_type=RelationType.APPLIES_TO,
-        target_id=target_id,
-        target_depth=DepthLevel.CAPABILITIES,
-    )
-    lines = _fmt_relatum(r, {target_id: "file"})
-    joined = "\n".join(lines)
-    assert "provenance" not in joined
-
-
 def test_fmt_depth_with_provenance():
     """
     _fmt_depth appends an inline [source] tag when provenance is set.
@@ -364,15 +358,6 @@ def test_fmt_depth_with_provenance():
     d = Depth(level=DepthLevel.CAPABILITIES, provenance=prov)
     lines = _fmt_depth(d, {})
     assert lines[0] == "  D2 CAPABILITIES  [authored]"
-
-
-def test_fmt_depth_without_provenance():
-    """
-    _fmt_depth renders without a provenance tag when provenance is None.
-    """
-    d = Depth(level=DepthLevel.CAPABILITIES)
-    lines = _fmt_depth(d, {})
-    assert lines[0] == "  D2 CAPABILITIES"
 
 
 def test_fmt_primitive_with_provenance():
@@ -387,11 +372,3 @@ def test_fmt_primitive_with_provenance():
     assert f"provenance: authored ({date_str})" in joined
 
 
-def test_fmt_primitive_without_provenance():
-    """
-    _fmt_primitive omits provenance line when provenance is None.
-    """
-    p = Primitive(name="file")
-    lines = _fmt_primitive(p, {})
-    joined = "\n".join(lines)
-    assert "provenance" not in joined

@@ -94,9 +94,8 @@ class Neo4jRepository(Repository):
             entry: dict[str, Any] = {
                 "level": int(depth.level),
                 "properties": depth.properties,
+                "provenance": depth.provenance.model_dump(mode="json"),
             }
-            if depth.provenance:
-                entry["provenance"] = depth.provenance.model_dump(mode="json")
             stripped.append(entry)
         return json.dumps(stripped)
 
@@ -147,12 +146,18 @@ class Neo4jRepository(Repository):
         """Reconstruct a Primitive from raw Neo4j node data and its relationship records."""
         try:
             raw_depths = json.loads(node_data["depths_json"])
+            name = node_data["name"]
             depths_by_level: dict[int, Depth] = {}
             for rd in raw_depths:
+                if not rd.get("provenance"):
+                    raise HydrationError(
+                        f"Depth D{rd['level']} of '{name}' is missing provenance — "
+                        f"provenance is required (no legacy/unstamped graphs)"
+                    )
                 depth = Depth(
                     level=DepthLevel(rd["level"]),
                     properties=rd.get("properties", {}),
-                    provenance=Provenance(**rd["provenance"]) if rd.get("provenance") else None,
+                    provenance=Provenance(**rd["provenance"]),
                 )
                 depths_by_level[int(depth.level)] = depth
 
@@ -164,9 +169,12 @@ class Neo4jRepository(Repository):
                 metadata = json.loads(metadata_json) if metadata_json else {}
 
                 rel_prov_json = rel_props.get("provenance_json")
-                rel_prov = None
-                if rel_prov_json:
-                    rel_prov = Provenance(**Neo4jRepository._parse_json_field(rel_prov_json))
+                if not rel_prov_json:
+                    raise HydrationError(
+                        f"Relatum {rel['rel_type']} on '{name}' is missing provenance — "
+                        f"provenance is required (no legacy/unstamped graphs)"
+                    )
+                rel_prov = Provenance(**Neo4jRepository._parse_json_field(rel_prov_json))
 
                 relatum = Relatum(
                     relation_type=RelationType(rel["rel_type"]),
@@ -182,9 +190,12 @@ class Neo4jRepository(Repository):
             sorted_depths = sorted(depths_by_level.values(), key=lambda d: int(d.level))
 
             node_prov_json = node_data.get("provenance_json")
-            node_prov = None
-            if node_prov_json:
-                node_prov = Provenance(**Neo4jRepository._parse_json_field(node_prov_json))
+            if not node_prov_json:
+                raise HydrationError(
+                    f"Primitive '{name}' is missing provenance — "
+                    f"provenance is required (no legacy/unstamped graphs)"
+                )
+            node_prov = Provenance(**Neo4jRepository._parse_json_field(node_prov_json))
 
             node_metrics_json = node_data.get("metrics_json")
             node_metrics = None

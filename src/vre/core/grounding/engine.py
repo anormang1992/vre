@@ -30,6 +30,8 @@ from vre.core.models import (
     EpistemicStep,
     ExistenceGap,
     Primitive,
+    Provenance,
+    ProvenanceSource,
     ReachabilityGap,
     RelationalGap,
 )
@@ -85,7 +87,19 @@ class GroundingEngine:
             if matched:
                 all_roots.append(matched)
             else:
-                t = Primitive(name=name, depths=[])
+                # The concept is not in the graph. We manufacture a transient
+                # placeholder to anchor the traversal and the ExistenceGap. It
+                # carries no knowledge (depths=[]) and is never persisted, but it
+                # came from somewhere — the engine, surfacing the *absence* of the
+                # concept — so its provenance is SYNTHETIC, not a forged human one.
+                t = Primitive(
+                    name=name,
+                    depths=[],
+                    provenance=Provenance(
+                        source=ProvenanceSource.SYNTHETIC,
+                        detail=f"transient placeholder for concept '{name}' absent from the graph",
+                    ),
+                )
                 all_roots.append(t)
                 transients.append(t)
         return all_roots, transients

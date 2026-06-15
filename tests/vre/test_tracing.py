@@ -20,11 +20,15 @@ from vre.core.models import (
     EpistemicStep,
     Primitive,
     PrimitiveMetrics,
+    Provenance,
+    ProvenanceSource,
     RelationType,
     ResolvedSubgraph,
 )
 import vre.tracing as tracing_module
 from vre.tracing import TraceWriter, build_trace_entry
+
+_PROV = Provenance(source=ProvenanceSource.AUTHORED)
 
 
 # ---------------------------------------------------------------------------
@@ -111,11 +115,11 @@ class StubRepository(Repository):
 # ---------------------------------------------------------------------------
 
 def _make_fully_grounded(name: str) -> Primitive:
-    return Primitive(name=name, depths=[
-        Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
-        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}),
-        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
+    return Primitive(name=name, provenance=_PROV, depths=[
+        Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}, provenance=_PROV),
+        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}, provenance=_PROV),
+        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}, provenance=_PROV),
     ])
 
 
@@ -145,8 +149,8 @@ def _grounding_result(
             query=EpistemicQuery(concept_ids=[file_id, write_id]),
             result=EpistemicResult(
                 primitives=[
-                    Primitive(id=file_id, name="file"),
-                    Primitive(id=write_id, name="write"),
+                    Primitive(id=file_id, name="file", provenance=_PROV),
+                    Primitive(id=write_id, name="write", provenance=_PROV),
                 ],
                 gaps=gaps,
                 pathway=[step],
@@ -199,7 +203,7 @@ class TestBuildTraceEntry:
     def test_gaps_preserve_kind_discriminator(self):
         from vre.core.models import ExistenceGap
 
-        gap_prim = Primitive(name="unknown")
+        gap_prim = Primitive(name="unknown", provenance=_PROV)
         gap = ExistenceGap(primitive=gap_prim)
         result = _grounding_result(grounded=False, gaps=[gap])
         entry = build_trace_entry("check", ["unknown"], result)

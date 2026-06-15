@@ -15,10 +15,14 @@ from vre.core.models import (
     EpistemicStep,
     Primitive,
     PrimitiveMetrics,
+    Provenance,
+    ProvenanceSource,
     Relatum,
     RelationType,
     ResolvedSubgraph,
 )
+
+_PROV = Provenance(source=ProvenanceSource.AUTHORED)
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +77,7 @@ class StubRepository(Repository):
             if p:
                 nodes.append(p)
             else:
-                nodes.append(Primitive(id=uid, name="<unknown>", depths=[]))
+                nodes.append(Primitive(id=uid, name="<unknown>", depths=[], provenance=_PROV))
 
         node_ids = {n.id for n in nodes}
         edges: list[EpistemicStep] = []
@@ -126,13 +130,13 @@ def _make_primitive(
     depths: list[Depth] | None = None,
     id: UUID | None = None,
 ) -> Primitive:
-    return Primitive(id=id or uuid4(), name=name, depths=depths or [])
+    return Primitive(id=id or uuid4(), name=name, depths=depths or [], provenance=_PROV)
 
 
 def _depth(level: DepthLevel, relata: list[Relatum] | None = None) -> Depth:
     # Non-D0 depths carry content so they survive the vacuity floor (#80);
     # D0 grounds bare regardless.
-    return Depth(level=level, properties={"_": level.name}, relata=relata or [])
+    return Depth(level=level, properties={"_": level.name}, relata=relata or [], provenance=_PROV)
 
 
 def _relatum(
@@ -144,6 +148,7 @@ def _relatum(
         relation_type=rel_type,
         target_id=target_id,
         target_depth=target_depth,
+        provenance=_PROV,
     )
 
 
@@ -269,6 +274,18 @@ class TestFlatQuery:
         assert any(g.primitive.name == "widget" for g in existence_gaps)
         reachability_gaps = [g for g in resp.result.gaps if g.kind == "REACHABILITY"]
         assert len(reachability_gaps) == 0
+
+    def test_unknown_concept_transient_carries_synthetic_provenance(self) -> None:
+        """The transient placeholder for an absent concept is stamped SYNTHETIC —
+        engine-generated knowledge of an absence, not a forged human genealogy."""
+        engine = GroundingEngine(StubRepository([]))
+
+        resp = engine.query(["frobnicate"])
+
+        gap = next(g for g in resp.result.gaps if g.kind == "EXISTENCE")
+        assert gap.primitive.name == "frobnicate"
+        assert gap.primitive.provenance.source == ProvenanceSource.SYNTHETIC
+        assert "frobnicate" in gap.primitive.provenance.detail
 
     def test_connected_concepts_grounded(self) -> None:
         """Two concepts connected by an edge → no ReachabilityGap."""

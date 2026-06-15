@@ -8,10 +8,15 @@ from uuid import uuid4
 import pytest
 
 from vre.core.grounding import GroundingResult
-from vre.core.models import ExistenceGap, Primitive
+from vre.core.models import ExistenceGap, Primitive, Provenance, ProvenanceSource
 from vre.core.policy import PolicyAction, PolicyResult
 from vre.core.policy.models import PolicyViolation, Policy
 from vre.guard import GuardBlock, vre_guard
+
+
+# A transient placeholder for an absent concept, mirroring what the grounding
+# engine manufactures for an ExistenceGap (engine-generated, SYNTHETIC genealogy).
+_SYNTHETIC = Provenance(source=ProvenanceSource.SYNTHETIC)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -46,7 +51,7 @@ def test_vre_guard_returns_guardblock_when_not_grounded():
     """When grounding fails, vre_guard returns a GuardBlock without calling fn."""
     from vre.guard import vre_guard
 
-    gap = ExistenceGap(primitive=Primitive(name="unknown", depths=[]))
+    gap = ExistenceGap(primitive=Primitive(name="unknown", depths=[], provenance=_SYNTHETIC))
     mock_vre = _mock_vre(_grounding(grounded=False, gaps=[gap]))
 
     @vre_guard(mock_vre, concepts=["file"])
@@ -66,7 +71,7 @@ def test_vre_guard_blocks_on_existence_gap():
     from vre.guard import vre_guard
     from vre.core.models import ExistenceGap, Primitive
 
-    gap = ExistenceGap(primitive=Primitive(name="api", depths=[]))
+    gap = ExistenceGap(primitive=Primitive(name="api", depths=[], provenance=_SYNTHETIC))
     mock_vre = _mock_vre(_grounding(grounded=False, gaps=[gap]))
 
     @vre_guard(mock_vre, concepts=["file", "api"])

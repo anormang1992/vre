@@ -16,11 +16,16 @@ from vre.core.models import (
     EpistemicStep,
     Primitive,
     PrimitiveMetrics,
+    Provenance,
+    ProvenanceSource,
     Relatum,
     RelationType,
     ResolvedSubgraph,
 )
 from vre.core.grounding import GroundingResult
+
+
+_PROV = Provenance(source=ProvenanceSource.AUTHORED)
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +115,11 @@ class StubRepository(Repository):
 
 
 def _make_fully_grounded(name: str) -> Primitive:
-    return Primitive(name=name, depths=[
-        Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
-        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}),
-        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
+    return Primitive(name=name, provenance=_PROV, depths=[
+        Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}, provenance=_PROV),
+        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}, provenance=_PROV),
+        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}, provenance=_PROV),
     ])
 
 
@@ -158,7 +163,7 @@ class TestPrimitiveMetricsModel:
         assert m.last_exercised == late
 
     def test_metrics_none_backward_compatible(self):
-        p = Primitive(name="legacy")
+        p = Primitive(name="legacy", provenance=_PROV)
         assert p.metrics is None
 
 
@@ -181,8 +186,8 @@ class TestGroundingMetrics:
 
     def test_check_ungrounded_increments_failure_count(self):
         """min_depth forces a DepthGap when the primitive lacks that depth."""
-        file_p = Primitive(name="file", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
+        file_p = Primitive(name="file", provenance=_PROV, depths=[
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
         ])
         vre, repo = _make_vre([file_p])
         vre.check(["file"], min_depth=DepthLevel.CONSTRAINTS)
@@ -211,17 +216,18 @@ class TestGroundingMetrics:
 
     def test_multiple_concepts_per_concept_metrics(self):
         file_p = _make_fully_grounded("file")
-        create_p = Primitive(name="create", depths=[
-            Depth(level=DepthLevel.EXISTENCE),
-            Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
-            Depth(level=DepthLevel.CAPABILITIES, relata=[
+        create_p = Primitive(name="create", provenance=_PROV, depths=[
+            Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+            Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}, provenance=_PROV),
+            Depth(level=DepthLevel.CAPABILITIES, provenance=_PROV, relata=[
                 Relatum(
                     relation_type=RelationType.APPLIES_TO,
                     target_id=file_p.id,
                     target_depth=DepthLevel.CAPABILITIES,
+                    provenance=_PROV,
                 ),
             ]),
-            Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
+            Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}, provenance=_PROV),
         ])
         vre, repo = _make_vre([file_p, create_p])
         vre.check(["file", "create"])
@@ -265,14 +271,14 @@ class TestMetricsSerialization:
         assert restored.last_failed == m.last_failed
 
     def test_roundtrip_none_metrics_on_primitive(self):
-        p = Primitive(name="test")
+        p = Primitive(name="test", provenance=_PROV)
         data = p.model_dump(mode="json")
         restored = Primitive(**data)
         assert restored.metrics is None
 
     def test_roundtrip_with_metrics_on_primitive(self):
         m = PrimitiveMetrics(grounding_count=10)
-        p = Primitive(name="test", metrics=m)
+        p = Primitive(name="test", provenance=_PROV, metrics=m)
         data = p.model_dump(mode="json")
         restored = Primitive(**data)
         assert restored.metrics is not None

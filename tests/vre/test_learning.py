@@ -97,6 +97,12 @@ class StubRepository(Repository):
         return self._by_name.get(name.lower())
 
     def save_primitive(self, primitive: Primitive) -> None:
+        # Mirror the real backends' save contract: provenance is required on
+        # every primitive, depth, and relatum at the persistence boundary
+        # (neo4j.py / sqlite.py both call this before any write). Skipping it
+        # would let the learning-path tests pass against a contract the real
+        # graph enforces -- the #98 / #83 stub-vs-backend divergence.
+        primitive.validate_provenance()
         for depth in primitive.depths:
             for relatum in depth.relata:
                 if relatum.relation_type not in TRANSITIVE_RELATION_TYPES:
@@ -1314,6 +1320,7 @@ class TestPersistRelationalEdgeCases:
     def test_does_not_stamp_provenance_on_untouched_depths(self):
         """Relata on depths not being replaced should remain untouched."""
         source = _primitive("Create")
+        authored = _prov(ProvenanceSource.AUTHORED)
         target = _primitive("File", depths=[
             Depth(
                 level=DepthLevel.EXISTENCE,
@@ -1322,8 +1329,9 @@ class TestPersistRelationalEdgeCases:
                     relation_type=RelationType.APPLIES_TO,
                     target_id=uuid4(),
                     target_depth=DepthLevel.IDENTITY,
-                    provenance=None,
+                    provenance=authored,
                 )],
+                provenance=authored,
             ),
         ])
         repo = StubRepository([source, target])
@@ -1340,9 +1348,11 @@ class TestPersistRelationalEdgeCases:
 
         engine.learn_gap(gap, filled)
         saved = repo.saved[0]
-        # D0 was not touched -- its relatum provenance should remain None
+        # D0 was not touched -- its relatum keeps its original AUTHORED provenance;
+        # learning must not re-stamp knowledge it did not create as LEARNED.
         d0 = next(d for d in saved.depths if d.level == DepthLevel.EXISTENCE)
-        assert d0.relata[0].provenance is None
+        assert d0.relata[0].provenance is authored
+        assert d0.relata[0].provenance.source == ProvenanceSource.AUTHORED
 
     def test_rejects_re_authoring_present_target_depth(self):
         # The gate is wired on the relational path too (present_levels from the

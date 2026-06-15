@@ -15,6 +15,8 @@ from vre.core.models import (
     EpistemicStep,
     Primitive,
     PrimitiveMetrics,
+    Provenance,
+    ProvenanceSource,
     Relatum,
     RelationType,
     ResolvedSubgraph,
@@ -27,6 +29,9 @@ from vre.core.policy.callback import ToolCallContext
 from vre.core.policy.registry import OrphanedPlacement, PolicyRegistry
 from vre.core.grounding import GroundingResult
 from vre.learning import LearningEngine
+
+
+_PROV = Provenance(source=ProvenanceSource.AUTHORED)
 
 
 def _cb_always_fail(context) -> PolicyCallbackResult:
@@ -115,11 +120,11 @@ class StubRepository(Repository):
 
 
 def _make_fully_grounded(name: str) -> Primitive:
-    return Primitive(name=name, depths=[
-        Depth(level=DepthLevel.EXISTENCE),
-        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}),
-        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}),
-        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}),
+    return Primitive(name=name, provenance=_PROV, depths=[
+        Depth(level=DepthLevel.EXISTENCE, provenance=_PROV),
+        Depth(level=DepthLevel.IDENTITY, properties={"_": "identity"}, provenance=_PROV),
+        Depth(level=DepthLevel.CAPABILITIES, properties={"_": "capabilities"}, provenance=_PROV),
+        Depth(level=DepthLevel.CONSTRAINTS, properties={"_": "constraints"}, provenance=_PROV),
     ])
 
 
@@ -140,6 +145,7 @@ def _make_primitive_with_edge(
         relation_type=RelationType.APPLIES_TO,
         target_id=target.id,
         target_depth=target_depth,
+        provenance=_PROV,
     )
     levels = [DepthLevel.EXISTENCE, DepthLevel.IDENTITY, DepthLevel.CAPABILITIES, DepthLevel.CONSTRAINTS]
     depths = [
@@ -147,10 +153,11 @@ def _make_primitive_with_edge(
             level=lvl,
             properties={} if lvl == DepthLevel.EXISTENCE else {"_": lvl.name.lower()},
             relata=[relatum] if lvl == source_depth else [],
+            provenance=_PROV,
         )
         for lvl in levels
     ]
-    return Primitive(name=name, depths=depths)
+    return Primitive(name=name, provenance=_PROV, depths=depths)
 
 
 def _registry_with(
@@ -559,7 +566,7 @@ class TestCheckPolicyFailClosed:
         from vre.core.models import ExistenceGap
         ungrounded = GroundingResult(
             grounded=False, resolved=["nope"],
-            gaps=[ExistenceGap(primitive=Primitive(name="nope", depths=[]))],
+            gaps=[ExistenceGap(primitive=Primitive(name="nope", depths=[], provenance=_PROV))],
         )
         result = _make_vre_with_stub([]).check_policy(ungrounded)
         assert result.action == PolicyAction.BLOCK

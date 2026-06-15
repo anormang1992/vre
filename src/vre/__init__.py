@@ -28,6 +28,7 @@ from vre.core.errors import (
     HydrationError,
     PersistenceError,
     PolicyPlacementError,
+    ProvenanceError,
     RegistryError,
     VREError,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "HydrationError",
     "PersistenceError",
     "PolicyPlacementError",
+    "ProvenanceError",
     "RegistryError",
     "VREError",
     "Neo4jRepository",
