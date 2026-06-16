@@ -3,15 +3,36 @@
 
 # VRE — Volute Reasoning Engine
 
-## Note
+### Note
 This library is still in active development and is subject to breaking changes.
 However, a stable v1.0.0 release is expected soon.
 
 **Epistemic enforcement for autonomous agents.**
 
-VRE is a Python library that gives autonomous agents an explicit, inspectable model of what they know before they act.
-It is not a permissions system, a rules engine, or a safety classifier. It is a mechanism for making an agent's
-knowledge boundary a first-class object — one that can be queried, audited, and enforced at runtime.
+VRE is a Python library that gives an autonomous agent an explicit, inspectable
+model of what it knows, and refuses to let it act past that boundary. Before a
+guarded tool executes, VRE checks that the concepts the action touches are
+grounded, to the depth the graph requires, in an authored knowledge graph. If
+they are, the action proceeds. If they are not, it is blocked and the specific
+gap is surfaced as a structured object rather than a generic error.
+
+It is deliberately narrow about what that means. VRE enforces consistency with a
+*modeled* domain. It does not manufacture understanding, verify that the model is
+correct, or check the truth of what the agent does. It is **not** a permissions
+system, not a sandbox, not a correctness guarantee, and not a hallucination
+filter. What it provides is one thing, done deterministically: an action executes
+only if it is epistemically justified against the graph and permitted by the
+policies on the edges it touches.
+
+That last point is the distinctive one. The constraints VRE enforces are not a
+ruleset bolted alongside the knowledge. They are carried by the graph's own
+structure: depth requirements derive from where an edge sits, and policy gates
+live on the edges themselves. What an agent may do and what it understands are the
+same graph read two ways. The policy is the model.
+
+VRE is precise about what it does and does not guarantee. Before relying on it,
+read the **[Trust Model](docs/trust-model.md)**, which states the guarantee, the
+assumptions it rests on, and the failure modes in full.
 
   ---
 
@@ -22,8 +43,6 @@ knowledge boundary a first-class object — one that can be queried, audited, an
     - [The Epistemic Graph](#the-epistemic-graph)
     - [Relata](#relata)
     - [Knowledge Gaps](#knowledge-gaps)
-    - [Layered Safety](#layered-safety)
-- [Scope](#scope)
 - [Getting Started](#getting-started)
     - [Installation](#installation)
     - [Infrastructure](#infrastructure)
@@ -37,6 +56,7 @@ knowledge boundary a first-class object — one that can be queried, audited, an
 - [The `vre_guard` Decorator](#the-vre_guard-decorator)
     - [Parameters](#parameters)
     - [Execution Flow](#execution-flow)
+    - [Concept Extraction and the Strength of the Guarantee](#concept-extraction-and-the-strength-of-the-guarantee)
 - [Callbacks](#callbacks)
     - [`on_trace`](#on_trace)
     - [`on_policy`](#on_policy)
@@ -64,12 +84,11 @@ knowledge boundary a first-class object — one that can be queried, audited, an
 Modern LLM-based agents fail in a specific and consistent way: they act as if they know more than they can justify.
 
 This is not a capability problem. The models are capable. It is an *epistemic* problem — the agent has no internal
-representation of the boundary between what it genuinely understands and what it is
+representation of the boundary between what it can justify and what it is
 confabulating. Hallucination, unsafe execution, and overconfident planning are all symptoms of the same root cause: **epistemic opacity**.
 
 When an agent is asked to delete files, migrate a database, or execute a shell command, the question is not only "can I
-do this?" but "do I actually understand what I am doing well enough to do it
-safely?" Current systems have no mechanism to answer that second question. They proceed anyway.
+do this?" but "do I have the knowledge to do it safely?" Current systems have no mechanism to answer that second question. They proceed anyway.
 
 This is not hypothetical. In December 2025, Amazon's Kiro agent — given operator-level access to fix a small issue in
 AWS Cost Explorer — decided the correct approach was to delete and recreate the
@@ -86,7 +105,7 @@ VRE addresses this directly. It imposes a contract: before an action executes, t
 relevant concepts are grounded in the knowledge graph at the depth required for
 execution. If they are not, the action is blocked and the gap is surfaced explicitly. The agent does not guess. It does
 not proceed on partial knowledge. It is structurally incapable of executing an
-action it does not understand with respect to its epistemic model — and perhaps more importantly, it surfaces what it
+action that is not grounded in its epistemic model — and perhaps more importantly, it surfaces what it
 does not know. Absence of knowledge is treated as a first-class object.
 
 <img width="3168" height="710" alt="image" src="https://github.com/user-attachments/assets/4fedf455-a5d2-4443-acb5-ba85ac99f15c" />
@@ -114,6 +133,22 @@ Depth is **monotonic**: D3 grounding implies D0–D2 are also grounded. Depth re
 structure itself — edges carry a source depth that determines when they become
 visible and a target depth that determines when they resolve. An integrator can also enforce a minimum depth floor (e.g.
 D3 for execution) as a secondary safety lever.
+
+**Why five levels, and why this order?** The ladder is a deliberate theory of what it takes to understand a concept
+well enough to act on it, not an arbitrary partition. Each rung answers a strictly harder question than the one below
+it: that a thing *exists* (D0), *what it is* (D1), *what can be done with it* (D2), *what bounds those operations* (D3),
+and *what follows from them* (D4+). The order is what lets edge placement encode policy. Because depth is monotonic,
+placing a relatum at a deeper source level means everything shallower must be grounded before that relationship is even
+visible; authoring an action's targeting edge at CONSTRAINTS (D3) rather than CAPABILITIES (D2) is how a seeder says
+"you may not even resolve what this action applies to until you have grounded what bounds it." Whether an action is
+permitted is then the product of resolving its grounded subgraph against that topology, never a fixed depth threshold.
+A `min_depth` floor is an optional secondary lever an integrator can add on top, not the mechanism.
+
+The ordering is opinionated, and it bends in some domains. In law or medicine the implications of an act often *are*
+its constraints, since a consequence can be exactly what forbids the act, so the clean D3-before-D4 split blurs. VRE
+does not claim the ladder is universal. It claims only that depth is contiguous and that the integrator places each
+edge at the level where, in their domain, the fact actually becomes true. The five levels are the default vocabulary,
+not an assertion that every domain carves understanding at exactly these joints.
 
 ### Relata
 
@@ -144,36 +179,15 @@ Gaps are not failures to be hidden. They are information. An existence gap on `n
 epistemic model of networking — not that the request was malformed. The agent can
 surface this gap to the user, initiate a learning flow, or escalate to a human.
 
-VRE does not require a complete or richly-detailed graph to be useful. The enforcement mechanism is structural — depth
-requirements are derived from edge placement. A minimal graph with a handful of
-primitives enforces the contract correctly. A richer graph adds better context, not stronger enforcement.
-
-### Layered Safety
-
-VRE is one layer of a deliberately layered safety model:
-
-1. **Epistemic safety (VRE)** — prevents unjustified action. The agent cannot act on what it does not understand.
-2. **Mechanical safety (tool constraints)** — constrains *how* the agent can act. Sandboxing, path restrictions,
-   resource guards.
-3. **Human safety (policy gates)** — requires explicit consent for elevated or destructive actions.
-
-VRE governs only the first layer, by design. It does not replace sandboxing. It does not replace human oversight. It
-makes those layers more meaningful by ensuring the agent understood what it was
-doing when it asked for permission to act.
-
----
-
-## Scope
-
-**VRE is not a sandbox.** It does not isolate processes, restrict filesystem access, or enforce OS-level permissions. It
-operates at the epistemic layer — determining whether an action is justified,
-not whether it is physically permitted.
-
-**VRE is not a safety classifier.** It does not scan outputs for harmful content or filter model responses. It gates
-execution, not generation.
-
-**VRE is not a replacement for human oversight.** Its policy gates are a mechanism for human oversight — surfacing
-decisions that require consent and blocking until consent is given.
+**When does a gap actually block?** Grounding is closure-strict: `check()` follows the transitive prerequisites of the
+submitted concepts, and a gap *anywhere* in that closure, not only on the concepts you named, makes `grounded` False.
+That sounds strict, but it only ever blocks on *modeled* ignorance. A gated edge whose target is not grounded deeply
+enough is a recorded known-unknown, the graph saying "there is more about this concept beyond your current depth, and
+it matters," and acting past it is exactly the dishonesty VRE prevents. A constraint that no edge records is an
+unknown-unknown: grounding cannot see it, so it does not block and the action proceeds. This is why a partial graph is
+still actionable, and why a mechanical failure on an unmodeled constraint is a learning signal (see
+[Learning](#learning)) rather than an epistemic error. A richer graph adds more context and more known-unknowns to
+honor; it does not change the enforcement mechanism.
 
 ---
 
@@ -247,6 +261,14 @@ repo = SQLiteRepository()  # defaults to ~/.vre/graph.db
 vre = VRE(repo)
 ```
 
+For a self-contained, ephemeral graph (tests, quickstarts, throwaway scripts),
+pass `:memory:` and disable trace files so nothing touches disk:
+
+```python
+repo = SQLiteRepository(":memory:")     # ephemeral, no graph file written
+vre = VRE(repo, persist_traces=False)   # also skip JSONL trace files (see Checking Grounding)
+```
+
 Or with Neo4j:
 
 ```python
@@ -296,11 +318,18 @@ lets integrators enforce a stricter floor (e.g. D3 for execution). If any concep
 has an unmet relational dependency, or is disconnected from the other submitted
 concepts, `grounded` is `False` and the corresponding gaps are surfaced.
 
+`vre.check()` is not side-effect-free. On each call it updates per-primitive grounding metrics in the graph
+(best-effort: failures are logged, never raised) and, unless you constructed `VRE` with `persist_traces=False`,
+appends a line to a daily JSONL trace under `~/.vre/traces/`. Two consequences are worth planning for. The metrics
+write-back means `check()` needs **write** access to the backend, so a strict read-replica or least-privilege
+deployment will see those updates warn-and-skip rather than persist. And the trace directory grows unbounded, so
+rotate it or turn it off with `persist_traces=False` where that matters.
+
 ### Using the Trace as Agent Context
 
 `vre.check()` can be called before an agent runs to pre-load the epistemic trace into the model's context window. Rather
 than letting the LLM reason from general knowledge alone, you give it the
-graph's structured understanding of the relevant concepts before it decides what to do.
+graph's structured knowledge of the relevant concepts before it decides what to do.
 
 ```python
 result = vre.check(["delete", "file"])
@@ -317,8 +346,8 @@ else:
         print(f"Knowledge gap: {gap}")
 ```
 
-This is particularly useful for planning-mode interactions: the agent receives structured knowledge of what it
-understands (and at what depth) before it proposes an action.
+This is particularly useful for planning-mode interactions: the agent receives structured knowledge of the
+relevant epistemic space before it proposes an action.
 
 ### Checking Policy
 
@@ -330,6 +359,11 @@ if policy.action == "BLOCK":
     for v in policy.violations:
         print(f"  - {v.message}")
 ```
+
+`check_policy` evaluates over a *grounded* result, and grounding comes first. Passing concept names (as here) grounds
+them internally via `check()` first, which records metrics and a trace exactly as a direct `check()` call does; an
+**ungrounded** result fails closed with `BLOCK` before any policy runs, because policy enforcement is only meaningful
+over a grounded closure. To reuse a grounding you already computed, pass a `GroundingResult` instead of names.
 
 Called without a `tool_call` (as here), a callback-bearing policy can't be evaluated, so the gate **fails closed** and
 the policy fires — pass `tool_call=ToolCallContext(...)` (as `vre_guard` does) when you want the callback consulted.
@@ -415,6 +449,28 @@ Each call runs the following sequence:
 7. **If confirmation required** — call `on_policy` with pending violations; block if declined or no handler
 8. **If BLOCK** — return the `PolicyResult`; the function does not execute
 9. **Execute** — call the original function and return its result
+
+### Concept Extraction and the Strength of the Guarantee
+
+VRE's guarantee is structural *between concept extraction and execution*: once a call's concepts are fixed, grounding
+and policy are deterministic and cannot be talked around. But something has to turn a tool call into that list of
+concepts, and how it does so decides how strong the guarantee really is.
+
+When `concepts` is a static list on the decorator, the conceptual footprint is fixed at code-authoring time. There is
+no linguistic step between the call and the check, and the structural guarantee holds end to end. When `concepts` is a
+callable, the footprint is computed at call time from the arguments, and that extraction step is a front door made of
+language, whether you implement it with an LLM or with a rule-based parser. A broad tool whose meaning lives in its
+arguments (a single `shell_tool`, say) forces dynamic extraction, because its static worst-case footprint is
+"everything"; and a rule-based extractor for such a tool has to win its own arms race against `$(...)`, aliases, and
+`base64 | sh`.
+
+The honest formulation: **the strength of VRE's guarantee is a function of tool granularity.** The strong-guarantee
+path is to decompose broad tools into narrow ones with static concepts, so that what an action touches is declared, not
+inferred. Treat dynamic extraction as a deliberate, documented downgrade for the cases that genuinely need it, not the
+default. This is also the direction agent tooling is already moving, toward narrow, single-purpose tools rather than
+one general shell hammer, so the safe path and the idiomatic one converge. The [Trust Model](docs/trust-model.md)
+states the same boundary from the other side: the determinism is of the enforcement path, given a faithful concept
+declaration.
 
 ---
 

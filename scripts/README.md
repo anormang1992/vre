@@ -1,8 +1,12 @@
 # Scripts
 
-Utility scripts for managing the VRE Neo4j graph. All scripts accept
-`--neo4j-uri`, `--neo4j-user`, and `--neo4j-password` arguments
-(defaults: `neo4j://localhost:7687`, `neo4j`, `password`).
+Utility scripts for managing the VRE graph. All scripts default to the
+bundled SQLite backend and accept `--backend {sqlite,neo4j}`. Under the
+default `--backend sqlite`, `--sqlite-path` overrides the database location
+(default: `~/.vre/graph.db`; use `:memory:` for in-memory). Under
+`--backend neo4j`, `--neo4j-uri`, `--neo4j-user`, and `--neo4j-password`
+configure the connection (defaults: `neo4j://localhost:7687`, `neo4j`,
+`password`).
 
 Domain seed scripts live in [`../seeders/`](../seeders/). The scripts here
 are graph maintenance and demo utilities.

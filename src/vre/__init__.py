@@ -282,9 +282,19 @@ class VRE:
         """
         Ground concepts with graph-derived depth gating.
 
-        Returns a GroundingResult with grounded=True only when all resolved
-        concepts are fully grounded with no gaps. `min_depth` is an optional
+        Returns a GroundingResult with grounded=True only when there are zero
+        gaps across the entire transitive closure of the submitted concepts
+        (see GroundingResult). `min_depth` is an optional, root-scoped
         integrator override that can only raise the floor, never lower it.
+
+        Side effects: this call updates per-primitive grounding metrics in the
+        graph (best-effort; failures are logged, never raised) and, when the
+        VRE instance was created with persist_traces=True (the default),
+        appends a JSONL trace to ~/.vre/traces/. Because metrics are written
+        back to the graph, check() requires write access to the backend even
+        for a read-only-looking grounding query. Pass persist_traces=False to
+        disable trace files; there is no separate toggle for the metrics
+        write-back in this version.
         """
         result = self._stamp_identity(self._engine.ground(concepts, min_depth=min_depth))
         self._metrics.update_grounding(result)
