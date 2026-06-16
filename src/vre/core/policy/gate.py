@@ -7,6 +7,7 @@ PolicyGate — overlays code-resident policy placements onto an epistemic trace.
 
 import logging
 
+from vre.core.errors import GraphIntegrityError
 from vre.core.models import EpistemicResponse, RelationType, format_depth_label
 from vre.core.policy.callback import (
     GroundingContext,
@@ -96,7 +97,20 @@ class PolicyGate:
                 for relatum in depth.relata:
                     if relatum.relation_type != RelationType.APPLIES_TO:
                         continue
-                    target_name = id_to_name.get(relatum.target_id, str(relatum.target_id))
+                    if relatum.target_id not in id_to_name:
+                        # The engine guarantees every surviving relatum points
+                        # inside the returned set; an unresolvable target means an
+                        # internally inconsistent trace. Fail loud and closed
+                        # rather than fall back to str(uuid), which would never
+                        # match a placement and so silently disarm the gate
+                        # (#94 Finding C2).
+                        raise GraphIntegrityError(
+                            f"APPLIES_TO relatum on {primitive.name!r} @ "
+                            f"{format_depth_label(depth.level)} points to target "
+                            f"{relatum.target_id}, absent from the trace's primitives; "
+                            f"the trace is internally inconsistent."
+                        )
+                    target_name = id_to_name[relatum.target_id]
                     for placement in self._registry.placements_for(
                         primitive.name, target_name, depth.level
                     ):
