@@ -67,27 +67,39 @@ class Neo4jRepository(Repository):
         """Close the underlying Neo4j driver and release all connections."""
         self._driver.close()
 
+    @staticmethod
+    def _create_constraint(tx: Any, ddl: LiteralString) -> None:
+        """Run one schema DDL statement inside a managed write transaction."""
+        tx.run(ddl)
+
     def _ensure_constraints(self) -> None:
         logger.debug("Ensuring uniqueness constraints on Primitive")
+        # Each constraint is its own managed write (#108): managed so a stale
+        # pooled connection retries rather than failing hard, and one-per-
+        # transaction because Neo4j does not permit schema statements to share
+        # a transaction the way data statements can. CREATE ... IF NOT EXISTS is
+        # idempotent, so a transient retry re-runs the statement harmlessly.
         try:
             with self._driver.session(database=self._database) as session:
-                session.run(
+                session.execute_write(
+                    self._create_constraint,
                     cast(
                         LiteralString,
                         "CREATE CONSTRAINT primitive_id_unique IF NOT EXISTS "
                         "FOR (p:Primitive) REQUIRE p.id IS UNIQUE",
-                    )
+                    ),
                 )
                 # Case-insensitive name uniqueness. Neo4j has no collation and
                 # no functional/expression constraints, so the only way to a
                 # DB-level guarantee is to constrain the materialized fold key
                 # (Primitive.name_lower), written by save_primitive (#78).
-                session.run(
+                session.execute_write(
+                    self._create_constraint,
                     cast(
                         LiteralString,
                         "CREATE CONSTRAINT primitive_name_lower_unique IF NOT EXISTS "
                         "FOR (p:Primitive) REQUIRE p.name_lower IS UNIQUE",
-                    )
+                    ),
                 )
         except Neo4jError as exc:
             logger.error("Failed to ensure Neo4j constraints: %s", exc)
@@ -380,17 +392,21 @@ class Neo4jRepository(Repository):
     def update_metrics(self, primitive_id: UUID, metrics: PrimitiveMetrics) -> None:
         """Update only the metrics JSON on an existing primitive node."""
         metrics_json = json.dumps(metrics.model_dump(mode="json"))
+
+        def _tx(tx: Any) -> None:
+            tx.run(
+                cast(
+                    LiteralString,
+                    "MATCH (p:Primitive {id: $id}) "
+                    "SET p.metrics_json = $metrics_json",
+                ),
+                id=str(primitive_id),
+                metrics_json=metrics_json,
+            )
+
         try:
             with self._driver.session(database=self._database) as session:
-                session.run(
-                    cast(
-                        LiteralString,
-                        "MATCH (p:Primitive {id: $id}) "
-                        "SET p.metrics_json = $metrics_json",
-                    ),
-                    id=str(primitive_id),
-                    metrics_json=metrics_json,
-                )
+                session.execute_write(_tx)
         except Neo4jError as exc:
             logger.error("Failed to update metrics for primitive %s: %s", primitive_id, exc)
             raise PersistenceError(f"Failed to update metrics for '{primitive_id}': {exc}") from exc
@@ -404,22 +420,29 @@ class Neo4jRepository(Repository):
                 "MATCH (p:Primitive) WHERE p.id IN $ids "
                 "RETURN p.id AS id, p.metrics_json AS metrics_json",
             )
+
+            def _tx(tx: Any) -> dict[UUID, PrimitiveMetrics | None]:
+                # Consume the result inside the managed read (#108): the row
+                # stream is bound to the transaction and is gone once it closes.
+                out: dict[UUID, PrimitiveMetrics | None] = {}
+                for record in tx.run(cypher, ids=[str(pid) for pid in primitive_ids]):
+                    pid = UUID(record["id"])
+                    raw = record["metrics_json"]
+                    if raw:
+                        try:
+                            parsed = self._parse_json_field(raw)
+                            out[pid] = PrimitiveMetrics.model_validate(parsed)
+                        except Exception as exc:
+                            raise HydrationError(
+                                f"Failed to hydrate metrics for primitive '{pid}': {exc}"
+                            ) from exc
+                    else:
+                        out[pid] = None
+                return out
+
             try:
                 with self._driver.session(database=self._database) as session:
-                    records = session.run(cypher, ids=[str(pid) for pid in primitive_ids])
-                    for record in records:
-                        pid = UUID(record["id"])
-                        raw = record["metrics_json"]
-                        if raw:
-                            try:
-                                parsed = self._parse_json_field(raw)
-                                result[pid] = PrimitiveMetrics.model_validate(parsed)
-                            except Exception as exc:
-                                raise HydrationError(
-                                    f"Failed to hydrate metrics for primitive '{pid}': {exc}"
-                                ) from exc
-                        else:
-                            result[pid] = None
+                    result = session.execute_read(_tx)
             except HydrationError:
                 raise
             except Neo4jError as exc:
@@ -440,22 +463,35 @@ class Neo4jRepository(Repository):
             "MATCH (p:Primitive {id: u.id}) "
             "SET p.metrics_json = u.metrics_json",
         )
+
+        def _tx(tx: Any) -> None:
+            tx.run(cypher, updates=params)
+
         try:
             with self._driver.session(database=self._database) as session:
-                session.run(cypher, updates=params)
+                session.execute_write(_tx)
         except Neo4jError as exc:
             raise PersistenceError(f"Failed to batch-update metrics: {exc}") from exc
 
     def list_names(self) -> list[str]:
         """Return the names of all primitives in the graph, sorted alphabetically."""
-        try:
-            with self._driver.session(database=self._database) as session:
-                result = session.run(
+
+        def _tx(tx: Any) -> list[str]:
+            # The list comprehension drains the result inside the managed
+            # read (#108) — the stream cannot outlive the transaction.
+            return [
+                record["name"]
+                for record in tx.run(
                     cast(LiteralString, "MATCH (p:Primitive) RETURN p.name AS name ORDER BY p.name")
                 )
-                return [record["name"] for record in result]
+            ]
+
+        try:
+            with self._driver.session(database=self._database) as session:
+                names = session.execute_read(_tx)
         except Neo4jError as exc:
             raise GraphError(f"Failed to list primitive names: {exc}") from exc
+        return names
 
     def find_by_id(self, id: UUID) -> Primitive | None:
         """Look up a primitive by its UUID, returning None if not found."""
@@ -481,17 +517,21 @@ class Neo4jRepository(Repository):
             """,
         )
 
+        def _tx(tx: Any) -> Primitive | None:
+            record = tx.run(cypher, id=str(id)).single()
+            if record is None or record["id"] is None:
+                logger.debug("Primitive not found by id=%s", id)
+                found = None
+            else:
+                found = self._hydrate_primitive(
+                    self._record_to_node_data(record),
+                    self._record_to_relationships(record),
+                )
+            return found
+
         try:
             with self._driver.session(database=self._database) as session:
-                record = session.run(cypher, id=str(id)).single()
-                if record is None or record["id"] is None:
-                    logger.debug("Primitive not found by id=%s", id)
-                    primitive = None
-                else:
-                    primitive = self._hydrate_primitive(
-                        self._record_to_node_data(record),
-                        self._record_to_relationships(record),
-                    )
+                primitive = session.execute_read(_tx)
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
@@ -524,27 +564,33 @@ class Neo4jRepository(Repository):
             """,
         )
 
+        def _tx(tx: Any) -> Primitive | None:
+            # Materialize rather than .single(): a no-match returns 0 rows
+            # (-> None), but a duplicate must fail LOUD rather than return an
+            # arbitrary first row (#96). Note .single(strict=True) is wrong
+            # here — it would also raise on the 0-row not-found case. The
+            # GraphError below is not a Neo4jError, so the managed read does
+            # not retry it — the integrity violation propagates immediately.
+            records = list(tx.run(cypher, name_lower=Primitive.fold_name(name)))
+            if len(records) > 1:
+                raise GraphError(
+                    f"Multiple primitives ({len(records)}) share the "
+                    f"case-insensitive name '{name}' — graph integrity violation"
+                )
+            record = records[0] if records else None
+            if record is None or record["id"] is None:
+                logger.debug("Primitive not found by name=%r", name)
+                found = None
+            else:
+                found = self._hydrate_primitive(
+                    self._record_to_node_data(record),
+                    self._record_to_relationships(record),
+                )
+            return found
+
         try:
             with self._driver.session(database=self._database) as session:
-                # Materialize rather than .single(): a no-match returns 0 rows
-                # (-> None), but a duplicate must fail LOUD rather than return an
-                # arbitrary first row (#96). Note .single(strict=True) is wrong
-                # here — it would also raise on the 0-row not-found case.
-                records = list(session.run(cypher, name_lower=Primitive.fold_name(name)))
-                if len(records) > 1:
-                    raise GraphError(
-                        f"Multiple primitives ({len(records)}) share the "
-                        f"case-insensitive name '{name}' — graph integrity violation"
-                    )
-                record = records[0] if records else None
-                if record is None or record["id"] is None:
-                    logger.debug("Primitive not found by name=%r", name)
-                    primitive = None
-                else:
-                    primitive = self._hydrate_primitive(
-                        self._record_to_node_data(record),
-                        self._record_to_relationships(record),
-                    )
+                primitive = session.execute_read(_tx)
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
@@ -554,32 +600,42 @@ class Neo4jRepository(Repository):
 
     def delete_primitive(self, id: UUID) -> bool:
         """Delete the primitive with the given UUID and all its relationships. Returns True if deleted."""
+
+        def _tx(tx: Any) -> bool:
+            record = tx.run(
+                cast(
+                    LiteralString,
+                    "MATCH (p:Primitive {id: $id}) DETACH DELETE p RETURN count(p) AS deleted",
+                ),
+                id=str(id),
+            ).single()
+            return record is not None and record["deleted"] > 0
+
         try:
             with self._driver.session(database=self._database) as session:
-                result = session.run(
-                    cast(
-                        LiteralString,
-                        "MATCH (p:Primitive {id: $id}) DETACH DELETE p RETURN count(p) AS deleted",
-                    ),
-                    id=str(id),
-                ).single()
-                return result is not None and result["deleted"] > 0
+                deleted = session.execute_write(_tx)
         except Neo4jError as exc:
             raise PersistenceError(f"Failed to delete primitive '{id}': {exc}") from exc
+        return deleted
 
     def clear(self) -> int:
         """Delete every Primitive node and its relationships. Returns the count deleted."""
+
+        def _tx(tx: Any) -> int:
+            record = tx.run(
+                cast(
+                    LiteralString,
+                    "MATCH (p:Primitive) DETACH DELETE p RETURN count(p) AS deleted",
+                ),
+            ).single()
+            return record["deleted"] if record else 0
+
         try:
             with self._driver.session(database=self._database) as session:
-                result = session.run(
-                    cast(
-                        LiteralString,
-                        "MATCH (p:Primitive) DETACH DELETE p RETURN count(p) AS deleted",
-                    ),
-                ).single()
-                return result["deleted"] if result else 0
+                count = session.execute_write(_tx)
         except Neo4jError as exc:
             raise PersistenceError(f"Failed to clear graph: {exc}") from exc
+        return count
 
     def resolve_subgraph(
         self,
@@ -625,60 +681,64 @@ class Neo4jRepository(Repository):
             """,
         )
 
+        def _tx(tx: Any) -> ResolvedSubgraph:
+            record = tx.run(
+                cypher,
+                names=lowered,
+                transitive_types=_TRANSITIVE_RELS,
+            ).single()
+
+            if record is None:
+                resolved = ResolvedSubgraph(roots=[], nodes=[], edges=[])
+            else:
+                raw_roots = record["roots"]
+                raw_nodes = record["nodes"]
+                raw_edges = record["edges"]
+
+                edges_by_source: dict[str, list[dict[str, Any]]] = {}
+                for e in raw_edges:
+                    sid = e["source_id"]
+                    edges_by_source.setdefault(sid, []).append({
+                        "rel_type": e["rel_type"],
+                        "target_id": e["target_id"],
+                        "rel_props": {
+                            "source_depth": e["source_depth"],
+                            "target_depth": e["target_depth"],
+                            "metadata_json": e.get("metadata_json", "{}"),
+                            "provenance_json": e.get("provenance_json"),
+                        },
+                    })
+
+                roots = [
+                    self._hydrate_primitive(r, edges_by_source.get(r["id"], []))
+                    for r in raw_roots
+                ]
+                nodes = [
+                    self._hydrate_primitive(n, edges_by_source.get(n["id"], []))
+                    for n in raw_nodes
+                ]
+
+                edges = [
+                    EpistemicStep(
+                        source_id=UUID(e["source_id"]),
+                        target_id=UUID(e["target_id"]),
+                        relation_type=RelationType(e["rel_type"]),
+                        source_depth=DepthLevel(e["source_depth"]),
+                        target_depth=DepthLevel(e["target_depth"]),
+                    )
+                    for e in raw_edges
+                ]
+
+                logger.debug(
+                    "Subgraph resolved: %d roots, %d nodes, %d edges",
+                    len(roots), len(nodes), len(edges),
+                )
+                resolved = ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+            return resolved
+
         try:
             with self._driver.session(database=self._database) as session:
-                record = session.run(
-                    cypher,
-                    names=lowered,
-                    transitive_types=_TRANSITIVE_RELS,
-                ).single()
-
-                if record is None:
-                    subgraph = ResolvedSubgraph(roots=[], nodes=[], edges=[])
-                else:
-                    raw_roots = record["roots"]
-                    raw_nodes = record["nodes"]
-                    raw_edges = record["edges"]
-
-                    edges_by_source: dict[str, list[dict[str, Any]]] = {}
-                    for e in raw_edges:
-                        sid = e["source_id"]
-                        edges_by_source.setdefault(sid, []).append({
-                            "rel_type": e["rel_type"],
-                            "target_id": e["target_id"],
-                            "rel_props": {
-                                "source_depth": e["source_depth"],
-                                "target_depth": e["target_depth"],
-                                "metadata_json": e.get("metadata_json", "{}"),
-                                "provenance_json": e.get("provenance_json"),
-                            },
-                        })
-
-                    roots = [
-                        self._hydrate_primitive(r, edges_by_source.get(r["id"], []))
-                        for r in raw_roots
-                    ]
-                    nodes = [
-                        self._hydrate_primitive(n, edges_by_source.get(n["id"], []))
-                        for n in raw_nodes
-                    ]
-
-                    edges = [
-                        EpistemicStep(
-                            source_id=UUID(e["source_id"]),
-                            target_id=UUID(e["target_id"]),
-                            relation_type=RelationType(e["rel_type"]),
-                            source_depth=DepthLevel(e["source_depth"]),
-                            target_depth=DepthLevel(e["target_depth"]),
-                        )
-                        for e in raw_edges
-                    ]
-
-                    logger.debug(
-                        "Subgraph resolved: %d roots, %d nodes, %d edges",
-                        len(roots), len(nodes), len(edges),
-                    )
-                    subgraph = ResolvedSubgraph(roots=roots, nodes=nodes, edges=edges)
+                subgraph = session.execute_read(_tx)
         except (GraphError, HydrationError):
             raise
         except Neo4jError as exc:
