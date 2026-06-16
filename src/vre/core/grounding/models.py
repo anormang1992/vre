@@ -110,9 +110,25 @@ class GroundingResult(BaseModel):
     """
     Result of a VRE grounding check.
 
-    `grounded` is True only when all concepts are grounded with no gaps.
+    `grounded` is True only when there are zero gaps across the *entire
+    transitive closure* of the submitted concepts, not just the query roots.
+    Grounding follows the transitive relata (REQUIRES, DEPENDS_ON,
+    CONSTRAINED_BY) out from the roots, and a gap on any node reached that way
+    fails the whole result. This is closure-strict by design: to be justified
+    in acting on A, the prerequisites A depends on must themselves be grounded.
+
+    The blocking rule is about *modeled* ignorance, not all ignorance. A
+    gated-but-ungrounded edge is a recorded known-unknown ("there is more about
+    this concept beyond your depth, and it matters"), and it blocks. An edge
+    that was never modeled is an unknown-unknown; it is invisible to grounding
+    and does not block, which is what keeps a partial graph actionable and lets
+    learning-through-failure fill it in later.
+
     Unknown concepts pass through as their original names and produce
-    ExistenceGaps, causing `grounded` to be False.
+    ExistenceGaps, causing `grounded` to be False. An integrator's `min_depth`
+    floor is root-scoped: it raises the required depth on the queried roots
+    only, while the depth each transitively reached node must reach is set by
+    the edge annotations in the graph.
 
     """
 

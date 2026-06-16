@@ -1,7 +1,7 @@
 # Authoring a Seeder
 
 This package is where contributors author **domain seed scripts** — modules
-that upsert a connected set of primitives into a VRE Neo4j graph. Each module
+that upsert a connected set of primitives into a VRE graph. Each module
 is a self-contained domain (filesystem, HTTP, billing, etc.) that an
 integrator can install standalone or alongside others.
 
@@ -137,11 +137,13 @@ sits on the edges.
 
 You don't need to abstract a primitive preemptively. A first-author
 seeder can give a primitive a domain-specific description if no sharing
-is in view. The convention kicks in when sharing happens — at that
+is in view. The convention kicks in when sharing happens. At that
 moment, lift the domain-specific properties to relata metadata so the
-primitive can host both framings cleanly. The interactive merge flow
-(see `--interactive` on seed scripts) supports this when two seeders
-collide on the same name.
+primitive can host both framings cleanly. There is no automated merge
+tool: when two seeders declare the same name, the second to run replaces
+the first (see *Idempotency contract* below), so reconciling two domains'
+framings of a shared primitive is a manual authoring step, best caught in
+review when the seeder is added.
 
 ## Edge directionality across domains
 
@@ -172,13 +174,13 @@ and picks up `file`'s local neighborhood (`path`, `permission`,
 to understand files to work with them. The DAG produces clean,
 direction-aware traversal without any explicit scoping logic.
 
-This is also why merge review matters. If someone authors an edge from
+This is also why review matters. If someone authors an edge from
 `file` back into `repository` (or any general primitive into a
-specialized one), the interactive merge buffer surfaces the
-bidirectional connection and the reviewer catches it: "`file`
-shouldn't know about repositories — that's backwards." The convention
-is what enforces the clean DAG; the merge buffer is what makes
-violations visible.
+specialized one), a reviewer reading the seeder is what catches the
+bidirectional connection: "`file` shouldn't know about repositories,
+that's backwards." The convention is what enforces the clean DAG; human
+review of new and changed seeders is what makes violations visible,
+since nothing in the tooling checks edge direction for you.
 
 Restated as a principle:
 
@@ -204,9 +206,11 @@ Restated as a principle:
 
 ## What NOT to include
 
-- **`Policy(...)` objects.** Operational policy (confirmation prompts,
-  cardinality triggers, callbacks) belongs to the application that uses
-  the graph, not to the seed.
+- **Policy declarations.** Operational policy (confirmation prompts,
+  cardinality triggers, callbacks) is code-resident — declared in the
+  application via `@policy_callback` / `register_policy` and never
+  persisted to the graph. A seeder ships knowledge, not policy; there is
+  no graph-resident policy for a seed to carry.
 - **Integrator-specific metadata.** Anything tied to a particular harness,
   agent framework, or runtime should not appear in seeded relata.
 - **Ephemeral or runtime state.** Metrics, learned candidates, session
@@ -231,7 +235,8 @@ Run: python seeders/seed_<domain>.py
 """
 import argparse
 
-from vre.core.backends import Neo4jRepository, Repository
+from scripts import add_backend_args, make_repository
+from vre.core.backends import Repository
 from vre.core.models import (
     Depth, DepthLevel, Primitive, Provenance, ProvenanceSource,
     Relatum, RelationType,
@@ -328,16 +333,10 @@ def main(repository: Repository) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="<domain> domain seeder")
-    parser.add_argument("--neo4j-uri", default="neo4j://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="password")
+    add_backend_args(parser)
     args = parser.parse_args()
 
-    repo = Neo4jRepository(
-        uri=args.neo4j_uri,
-        user=args.neo4j_user,
-        password=args.neo4j_password,
-    )
+    repo = make_repository(args)
     main(repository=repo)
 ```
 
@@ -350,6 +349,6 @@ mutate one and re-upsert. See the post-creation block at the bottom of
 
 ## Verifying a new seeder
 
-1. Run the seeder against a local Neo4j and confirm no exceptions.
-2. Re-run it. You should see `INFO  vre.core.graph  Upserting '<name>': overwriting existing primitive (id=...)` for every primitive — no duplicates created.
+1. Run the seeder (defaults to the bundled SQLite backend; add `--backend neo4j` to target a local Neo4j) and confirm no exceptions.
+2. Re-run it. You should see `INFO  vre.core.backends.repository  Upserting '<name>': overwriting existing primitive (id=...)` for every primitive — no duplicates created.
 3. Use the grounding engine in a small script (or REPL) to query a representative concept from your domain. Inspect the resulting gaps and verify they match your authored shape — both clean passes and the gaps you intentionally left.

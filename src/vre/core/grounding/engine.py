@@ -355,8 +355,16 @@ class GroundingEngine:
         Concepts are matched case-insensitively against graph names by the
         repository; unknown concepts surface as ExistenceGaps in the query
         result. Normalization or synonymy of input is the integrator's
-        concern, never the engine's. Returns a GroundingResult with
-        grounded=True only when all concepts are grounded with no gaps.
+        concern, never the engine's.
+
+        Returns a GroundingResult with grounded=True only when there are zero
+        gaps across the entire transitive closure of the submitted concepts,
+        not only the query roots: prerequisite knowledge reached through
+        transitive relata must itself be grounded for the result to pass.
+        `min_depth` is root-scoped and can only raise the floor, never lower
+        it; the depth required of transitively reached nodes is set by the
+        graph's edge annotations. See GroundingResult for the modeled-versus-
+        unmodeled ignorance distinction this enforces.
         """
         if not concepts:
             logger.debug("Ground called with empty concepts")
