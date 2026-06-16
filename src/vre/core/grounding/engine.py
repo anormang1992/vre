@@ -20,6 +20,7 @@ import logging
 from uuid import UUID
 
 from vre.core.backends import Repository
+from vre.core.errors import GraphIntegrityError
 from vre.core.grounding.models import GroundingResult
 from vre.core.models import (
     DepthGap,
@@ -105,6 +106,32 @@ class GroundingEngine:
         return all_roots, transients
 
     @staticmethod
+    def _validate_edge_endpoints(
+        edges: list[EpistemicStep],
+        id_to_prim: dict[UUID, Primitive],
+    ) -> None:
+        """
+        Fail loud if any resolved edge references a node absent from the set.
+
+        A conformant Repository returns edges only between nodes it also
+        returns. A dangling endpoint is a backend-contract violation, not a
+        depth gap, so it is surfaced as GraphIntegrityError rather than being
+        silently dropped (source side) or passed through as grounded (target
+        side). This keeps both sides of the same violation consistent and
+        fail-closed (#94 Finding C1). Running here, before any edge is
+        partitioned or interpreted, lets every downstream step index
+        id_to_prim directly instead of guarding each lookup.
+        """
+        for edge in edges:
+            for role, node_id in (("source", edge.source_id), ("target", edge.target_id)):
+                if node_id not in id_to_prim:
+                    raise GraphIntegrityError(
+                        f"Resolved {edge.relation_type.value} edge references a "
+                        f"{role} node {node_id} absent from the resolved subgraph; "
+                        f"the backend returned an edge whose {role} it did not return."
+                    )
+
+    @staticmethod
     def _partition_edges_by_source_depth(
         edges: list[EpistemicStep],
         id_to_prim: dict[UUID, Primitive],
@@ -114,14 +141,14 @@ class GroundingEngine:
 
         An edge is visible when the source node's contiguous max depth >= the
         edge's source_depth. Otherwise, the edge is gated — the source isn't
-        grounded deeply enough to see the relationship.
+        grounded deeply enough to see the relationship. Endpoints are
+        pre-validated by _validate_edge_endpoints, so the source lookup is a
+        direct index.
         """
         visible: list[EpistemicStep] = []
         gated: list[EpistemicStep] = []
         for edge in edges:
-            src = id_to_prim.get(edge.source_id)
-            if src is None:
-                continue
+            src = id_to_prim[edge.source_id]
             src_contiguous = src.contiguous_max_depth
             if src_contiguous is not None and src_contiguous >= edge.source_depth:
                 visible.append(edge)
@@ -141,6 +168,11 @@ class GroundingEngine:
     ) -> list[DepthGap | ExistenceGap | RelationalGap]:
         """
         Detect existence, depth, and relational gaps across the resolved subgraph.
+
+        The visible and gated edge lists are pre-restricted to the justified
+        frontier (source on a fully-visible path from a root), so no gap is ever
+        emitted about a node the agent cannot yet reach (#94). Edge endpoints are
+        pre-validated, so every id_to_prim lookup is a direct index.
         """
         gaps: list[DepthGap | ExistenceGap | RelationalGap] = []
         id_to_prim = {n.id: n for n in all_nodes}
@@ -158,8 +190,8 @@ class GroundingEngine:
 
         # (a) Gated edges → DepthGap on source primitive
         for edge in gated_edges:
-            src = id_to_prim.get(edge.source_id)
-            if src is None or src.id in transient_ids:
+            src = id_to_prim[edge.source_id]
+            if src.id in transient_ids:
                 continue
             src_contiguous = src.contiguous_max_depth
             existing = depth_gap_map.get(src.id)
@@ -178,22 +210,18 @@ class GroundingEngine:
                         depth_gap_map[node.id] = (min_depth, contiguous)
 
         for nid, (req, curr) in depth_gap_map.items():
-            prim = id_to_prim.get(nid)
-            if prim is not None:
-                gaps.append(DepthGap(
-                    primitive=prim,
-                    required_depth=req,
-                    current_depth=curr,
-                ))
+            gaps.append(DepthGap(
+                primitive=id_to_prim[nid],
+                required_depth=req,
+                current_depth=curr,
+            ))
 
         # Phase 3 — Relatum-depth relational gaps (visible edges only)
         relatum_depth_pairs: dict[tuple[UUID, UUID], DepthLevel] = {}
         for edge in visible_edges:
             if edge.target_id in transient_ids:
                 continue
-            tgt_prim = id_to_prim.get(edge.target_id)
-            if tgt_prim is None:
-                continue
+            tgt_prim = id_to_prim[edge.target_id]
             tgt_contiguous = tgt_prim.contiguous_max_depth
             if tgt_contiguous is not None and tgt_contiguous >= edge.target_depth:
                 continue
@@ -202,10 +230,8 @@ class GroundingEngine:
             if existing is None or edge.target_depth > existing:
                 relatum_depth_pairs[pair] = edge.target_depth
         for (src_id, tgt_id), max_req in relatum_depth_pairs.items():
-            src_prim = id_to_prim.get(src_id)
-            tgt_prim = id_to_prim.get(tgt_id)
-            if src_prim is None or tgt_prim is None:
-                continue
+            src_prim = id_to_prim[src_id]
+            tgt_prim = id_to_prim[tgt_id]
             curr = tgt_prim.contiguous_max_depth
             gaps.append(RelationalGap(
                 source=src_prim,
@@ -239,32 +265,68 @@ class GroundingEngine:
         return visited
 
     @staticmethod
-    def _filter_depths(all_nodes: list[Primitive]) -> list[Primitive]:
+    def _reachable_via_visible(
+        root_ids: set[UUID],
+        visible_edges: list[EpistemicStep],
+    ) -> set[UUID]:
         """
-        Return copies of all_nodes with relata filtered to targets present in the collected set.
+        Directed reachability from the query roots over visible edges only.
 
-        Uses model_copy(deep=True) to skip Pydantic re-validation while still
-        producing fully detached instances — downstream consumers (metrics
-        updates, tracing) can treat the result as independent of the source.
+        Returns every node id on a fully-visible directed path from some root
+        (roots included). This is the justified frontier: a node reached only
+        through a gated edge is excluded, so it never enters the response. The
+        direction matters — undirected reachability would keep more nodes than a
+        depth-aware closure in the Repository would, whereas this directed set is
+        exactly what such a closure returns, so #87 can later push the same
+        boundary into the query layer as a behavior-preserving no-op (#94).
         """
-        collected_ids = {n.id for n in all_nodes}
-        return [
-            p.model_copy(
-                update={
-                    "depths": [
-                        d.model_copy(
-                            update={
-                                "relata": [r for r in d.relata if r.target_id in collected_ids],
-                            },
-                            deep=True,
-                        )
-                        for d in p.depths
-                    ],
-                },
-                deep=True,
-            )
-            for p in all_nodes
-        ]
+        adjacency: dict[UUID, list[UUID]] = {}
+        for edge in visible_edges:
+            adjacency.setdefault(edge.source_id, []).append(edge.target_id)
+        reachable: set[UUID] = set(root_ids)
+        stack: list[UUID] = list(root_ids)
+        while stack:
+            current = stack.pop()
+            for nxt in adjacency.get(current, ()):
+                if nxt not in reachable:
+                    reachable.add(nxt)
+                    stack.append(nxt)
+        return reachable
+
+    @staticmethod
+    def _filter_depths(nodes: list[Primitive]) -> list[Primitive]:
+        """
+        Copy each node down to its justified epistemic envelope.
+
+        Two cuts, both honoring "the trace surfaces only what is grounded":
+          - depth content above the node's contiguous_max_depth is dropped, so a
+            node grounded to D1 never ships the properties or relata of a D3 it
+            cannot justify (#94 Finding D1);
+          - on the surviving depths, relata whose target was pruned from the
+            response are dropped, so a relatum never points outside the returned
+            set.
+
+        Returns fresh primitive and depth shells with deep-copied properties; the
+        surviving Relatum objects are referenced, not re-copied, so this is not a
+        deep clone of the relata graph. Downstream consumers (metrics, tracing)
+        treat the trace as read-only. (#87 owns the copy strategy; this states
+        what holds today rather than the prior "fully detached" claim, which was
+        false — #94 Finding D2.)
+        """
+        collected_ids = {n.id for n in nodes}
+        filtered: list[Primitive] = []
+        for p in nodes:
+            cmax = p.contiguous_max_depth
+            kept_depths = [] if cmax is None else [
+                d.model_copy(
+                    update={"relata": [r for r in d.relata if r.target_id in collected_ids]},
+                    deep=True,
+                )
+                for d in p.depths
+                if d.level <= cmax
+            ]
+            filtered.append(p.model_copy(update={"depths": kept_depths}, deep=True))
+        return filtered
 
     def query(
         self,
@@ -304,26 +366,40 @@ class GroundingEngine:
             )
 
             id_to_prim = {n.id: n for n in all_nodes}
+            # Fail loud on a backend that returns an edge dangling outside its own
+            # node set, before any edge is partitioned or interpreted (#94 C1).
+            self._validate_edge_endpoints(subgraph.edges, id_to_prim)
+
             visible_edges, gated_edges = self._partition_edges_by_source_depth(
                 subgraph.edges, id_to_prim,
             )
 
+            # The justified frontier: nodes on a fully-visible directed path from
+            # a root. A node reached only through a gated edge is not grounded
+            # enough to be surfaced, so it never enters the response, its gaps, or
+            # the pathway (#94 Findings A + D1). Edges are likewise restricted to
+            # those whose source is on the frontier, so no gap is emitted about a
+            # node the agent cannot yet reach.
+            frontier_ids = self._reachable_via_visible(root_ids, visible_edges)
+            frontier_visible = [e for e in visible_edges if e.source_id in frontier_ids]
+            frontier_gated = [e for e in gated_edges if e.source_id in frontier_ids]
+
             gaps: list[DepthGap | ExistenceGap | RelationalGap | ReachabilityGap] = self._detect_gaps(
                 all_nodes,
-                visible_edges,
-                gated_edges,
+                frontier_visible,
+                frontier_gated,
                 root_ids,
                 transient_ids,
                 min_depth=min_depth,
             )
 
             # Undirected connectivity check across all non-transient roots
-            # using only visible edges. Anchor on the root with the largest
-            # reachable component so truly isolated nodes get reported.
+            # using only frontier-visible edges. Anchor on the root with the
+            # largest reachable component so truly isolated nodes get reported.
             non_transient_roots = [r for r in roots if r.id not in transient_ids]
             if len(non_transient_roots) > 1:
                 neighbors: dict[UUID, set[UUID]] = {}
-                for edge in visible_edges:
+                for edge in frontier_visible:
                     neighbors.setdefault(edge.source_id, set()).add(edge.target_id)
                     neighbors.setdefault(edge.target_id, set()).add(edge.source_id)
                 anchor = max(
@@ -336,11 +412,12 @@ class GroundingEngine:
                         logger.warning("Reachability gap: %r is isolated from other query roots", root.name)
                         gaps.append(ReachabilityGap(primitive=root))
 
-            filtered = self._filter_depths(all_nodes)
+            surviving = [n for n in all_nodes if n.id in frontier_ids]
+            filtered = self._filter_depths(surviving)
 
             response = EpistemicResponse(
                 query=EpistemicQuery(concept_ids=[r.id for r in roots]),
-                result=EpistemicResult(primitives=filtered, gaps=gaps, pathway=visible_edges),
+                result=EpistemicResult(primitives=filtered, gaps=gaps, pathway=frontier_visible),
             )
         return response
 

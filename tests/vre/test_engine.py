@@ -7,7 +7,10 @@ Uses a StubRepository to avoid Neo4j dependency.
 from collections import deque
 from uuid import UUID, uuid4
 
+import pytest
+
 from vre.core.backends import Repository
+from vre.core.errors import GraphIntegrityError
 from vre.core.grounding import GroundingEngine
 from vre.core.models import (
     Depth,
@@ -671,7 +674,9 @@ class TestSourceDepthGating:
 
     def test_gated_edges_excluded_from_pathway(self) -> None:
         """
-        Gated edges do not appear in the response pathway.
+        Gated edges do not appear in the pathway, and the queried roots are
+        preserved in primitives even when connected only by a gated edge
+        (#94: a queried root is never pruned).
         """
         delete_p, file_p = self._gated_delete_and_file()
         engine = GroundingEngine(StubRepository([delete_p, file_p]))
@@ -679,6 +684,221 @@ class TestSourceDepthGating:
         resp = engine.query(["delete", "file"])
 
         assert len(resp.result.pathway) == 0
+        assert {p.name for p in resp.result.primitives} == {"delete", "file"}
+
+
+class TestJustifiedEnvelope:
+    """The response surfaces only grounded content (#94 Findings A + D1)."""
+
+    @staticmethod
+    def _delete_constrained_by_permission(constraint_target_depth: DepthLevel):
+        """delete (D0,D1,D3) with a CONSTRAINED_BY @ D3 edge to a full permission."""
+        permission = _make_primitive("permission", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+            _depth(DepthLevel.CONSTRAINTS),
+        ])
+        delete = _make_primitive("delete", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS, [
+                _relatum(permission.id, RelationType.CONSTRAINED_BY, constraint_target_depth),
+            ]),
+        ])
+        return delete, permission
+
+    def test_gated_reached_nonroot_node_pruned_from_primitives(self) -> None:
+        """
+        A non-root node reached only through a gated edge never enters
+        result.primitives. The block is surfaced on the source (which the agent
+        can see), never as a gap that names the hidden target.
+        """
+        delete, permission = self._delete_constrained_by_permission(DepthLevel.CONSTRAINTS)
+        engine = GroundingEngine(StubRepository([delete, permission]))
+
+        resp = engine.query(["delete"])
+
+        assert {p.name for p in resp.result.primitives} == {"delete"}
+        depth_gaps = [g for g in resp.result.gaps if g.kind == "DEPTH"]
+        assert len(depth_gaps) == 1
+        assert depth_gaps[0].primitive.name == "delete"
+        assert depth_gaps[0].required_depth == DepthLevel.CONSTRAINTS
+        assert all(g.primitive.name != "permission" for g in resp.result.gaps)
+
+    def test_gated_reached_node_makes_result_ungrounded(self) -> None:
+        """The same case grounds False — the action is blocked, the target unseen."""
+        delete, permission = self._delete_constrained_by_permission(DepthLevel.IDENTITY)
+        engine = GroundingEngine(StubRepository([delete, permission]))
+
+        result = engine.ground(["delete"])
+
+        assert result.grounded is False
+        assert "permission" not in {p.name for p in result.trace.result.primitives}
+
+    def test_multihop_gated_chain_emits_only_frontier_gap(self) -> None:
+        """
+        a --gated--> b --gated--> c, querying a alone. Only the frontier gap
+        (on a) is emitted; b and c are pruned and neither is named by any gap,
+        so the agent never learns about structure it cannot yet reach.
+        """
+        c = _make_primitive("c", [_depth(DepthLevel.EXISTENCE), _depth(DepthLevel.IDENTITY)])
+        b = _make_primitive("b", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS, [
+                _relatum(c.id, RelationType.REQUIRES, DepthLevel.IDENTITY),
+            ]),
+        ])
+        a = _make_primitive("a", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS, [
+                _relatum(b.id, RelationType.REQUIRES, DepthLevel.IDENTITY),
+            ]),
+        ])
+        engine = GroundingEngine(StubRepository([a, b, c]))
+
+        resp = engine.query(["a"])
+
+        assert {p.name for p in resp.result.primitives} == {"a"}
+        assert len(resp.result.gaps) == 1
+        gap = resp.result.gaps[0]
+        assert gap.kind == "DEPTH"
+        assert gap.primitive.name == "a"
+
+    def test_visible_reached_nonroot_node_survives(self) -> None:
+        """A non-root node reached through a *visible* edge stays in the result."""
+        b = _make_primitive("b", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        a = _make_primitive("a", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CAPABILITIES, [
+                _relatum(b.id, RelationType.REQUIRES, DepthLevel.CAPABILITIES),
+            ]),
+        ])
+        engine = GroundingEngine(StubRepository([a, b]))
+
+        resp = engine.query(["a"])
+
+        assert {p.name for p in resp.result.primitives} == {"a", "b"}
+
+    def test_noncontiguous_depth_content_stripped_from_trace(self) -> None:
+        """
+        {D0, D1, D3} grounds green to D1, and the D3 content is absent from the
+        trace — nothing above contiguous_max_depth surfaces (#94 Finding D1).
+        """
+        widget = _make_primitive("widget", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY),
+            _depth(DepthLevel.CONSTRAINTS),  # D3 with D2 missing → above contiguous max
+        ])
+        engine = GroundingEngine(StubRepository([widget]))
+
+        resp = engine.query(["widget"])
+
+        assert len(resp.result.gaps) == 0
+        levels = {d.level for d in resp.result.primitives[0].depths}
+        assert levels == {DepthLevel.EXISTENCE, DepthLevel.IDENTITY}
+
+
+class _DanglingEdgeRepository(StubRepository):
+    """Returns one edge with an endpoint absent from the node set (#94 C1)."""
+
+    def __init__(self, dangle: str) -> None:
+        self._a = _make_primitive("a", [_depth(DepthLevel.EXISTENCE), _depth(DepthLevel.IDENTITY)])
+        super().__init__([self._a])
+        self._dangle = dangle
+
+    def resolve_subgraph(self, names: list[str]) -> ResolvedSubgraph:
+        ghost = uuid4()
+        src, tgt = (self._a.id, ghost) if self._dangle == "target" else (ghost, self._a.id)
+        edge = EpistemicStep(
+            source_id=src,
+            target_id=tgt,
+            relation_type=RelationType.REQUIRES,
+            source_depth=DepthLevel.IDENTITY,
+            target_depth=DepthLevel.IDENTITY,
+        )
+        return ResolvedSubgraph(roots=[self._a], nodes=[self._a], edges=[edge])
+
+
+class TestBackendIntegrity:
+    """A non-conformant backend's dangling edge fails loud, both sides (#94 C1)."""
+
+    @pytest.mark.parametrize("dangle", ["target", "source"])
+    def test_dangling_edge_endpoint_raises(self, dangle: str) -> None:
+        engine = GroundingEngine(_DanglingEdgeRepository(dangle))
+        with pytest.raises(GraphIntegrityError):
+            engine.query(["a"])
+
+
+class _UpstreamLinkRepository(StubRepository):
+    """
+    Two query roots (a, b) whose only link is an *upstream* node x with visible
+    edges x->a and x->b. No visible path runs from either root to x, so x is off
+    the justified frontier. The real backends never return such a node (their
+    closure is forward-only, from roots along outgoing edges), so a hand-rolled
+    repository is the only way to exercise the engine's frontier-restricted
+    reachability check (#94).
+    """
+
+    def __init__(self) -> None:
+        self._a = _make_primitive("a", [_depth(DepthLevel.EXISTENCE), _depth(DepthLevel.IDENTITY)])
+        self._b = _make_primitive("b", [_depth(DepthLevel.EXISTENCE), _depth(DepthLevel.IDENTITY)])
+        # x is grounded to D2, so its D1 edges are visible (D2 >= D1).
+        self._x = _make_primitive("x", [
+            _depth(DepthLevel.EXISTENCE),
+            _depth(DepthLevel.IDENTITY, [
+                _relatum(self._a.id, RelationType.REQUIRES, DepthLevel.IDENTITY),
+                _relatum(self._b.id, RelationType.REQUIRES, DepthLevel.IDENTITY),
+            ]),
+            _depth(DepthLevel.CAPABILITIES),
+        ])
+        super().__init__([self._a, self._b, self._x])
+
+    def resolve_subgraph(self, names: list[str]) -> ResolvedSubgraph:
+        edges = [
+            EpistemicStep(
+                source_id=self._x.id,
+                target_id=target.id,
+                relation_type=RelationType.REQUIRES,
+                source_depth=DepthLevel.IDENTITY,
+                target_depth=DepthLevel.IDENTITY,
+            )
+            for target in (self._a, self._b)
+        ]
+        return ResolvedSubgraph(
+            roots=[self._a, self._b], nodes=[self._a, self._b, self._x], edges=edges,
+        )
+
+
+class TestFrontierReachability:
+    """The reachability check runs over frontier-visible edges, not raw visible
+    edges, so it stays consistent with the envelope actually returned (#94)."""
+
+    def test_roots_linked_only_through_offfrontier_node_are_disconnected(self) -> None:
+        """
+        When two roots' only link is an upstream node pruned from the response,
+        the roots are surfaced as isolated from each other. Reporting them as
+        connected would cite a node the trace never returns.
+        """
+        engine = GroundingEngine(_UpstreamLinkRepository())
+
+        resp = engine.query(["a", "b"])
+
+        # The upstream linking node never enters the response...
+        assert {p.name for p in resp.result.primitives} == {"a", "b"}
+        # ...so the only gap is the reachability gap on one of the two roots,
+        # and nothing names the pruned node.
+        assert len(resp.result.gaps) == 1
+        gap = resp.result.gaps[0]
+        assert gap.kind == "REACHABILITY"
+        assert gap.primitive.name in {"a", "b"}
 
 
 # ---------------------------------------------------------------------------

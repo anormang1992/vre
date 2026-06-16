@@ -2,6 +2,11 @@
 Unit tests for Policy models and PolicyGate (registry-based, code-resident policies).
 """
 
+from uuid import uuid4
+
+import pytest
+
+from vre.core.errors import GraphIntegrityError
 from vre.core.models import (
     Depth,
     DepthLevel,
@@ -146,6 +151,26 @@ def test_no_placements_proceed():
     """An APPLIES_TO edge with no registered placement → no violations."""
     violations = PolicyGate(PolicyRegistry()).evaluate(_trace("create"), Cardinality.SINGLE)
     assert len(violations) == 0
+
+
+def test_unresolvable_applies_to_target_raises_graph_integrity_error():
+    """
+    A trace whose APPLIES_TO relatum points outside its own primitives is
+    internally inconsistent; the gate fails loud rather than falling back to
+    str(uuid), which would never match a placement and so silently disarm the
+    gate (#94 Finding C2).
+    """
+    relatum = Relatum(relation_type=RelationType.APPLIES_TO, target_id=uuid4(),
+                      target_depth=TGT_DEPTH, provenance=_PROV)
+    source = Primitive(name="delete",
+                       depths=[Depth(level=SRC_DEPTH, relata=[relatum], provenance=_PROV)],
+                       provenance=_PROV)
+    # Source present, target absent → inconsistent trace.
+    response = EpistemicResponse(query=EpistemicQuery(concept_ids=[source.id]),
+                                 result=EpistemicResult(primitives=[source]))
+    reg = _registry(_cb_pass, source="delete", name="C2")  # non-empty so the trace walk runs
+    with pytest.raises(GraphIntegrityError):
+        PolicyGate(reg).evaluate(response, Cardinality.SINGLE, tool_call=ToolCallContext(tool_name="t"))
 
 
 def test_non_applies_to_relata_ignored():
