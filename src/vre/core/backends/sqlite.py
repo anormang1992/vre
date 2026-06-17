@@ -44,7 +44,11 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from vre.core.backends.repository import Repository
+from vre.core.backends.repository import (
+    CURRENT_SCHEMA_VERSION,
+    Repository,
+    reconcile_schema_version,
+)
 from vre.core.errors import (
     CyclicRelationshipError,
     HydrationError,
@@ -120,6 +124,11 @@ class SQLiteRepository(Repository):
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.executescript(_SCHEMA)
+        disk = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if disk == 0:  # fresh database, or a pre-#116 unstamped store
+            self._conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
+        else:
+            reconcile_schema_version(disk)
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -469,6 +478,9 @@ class SQLiteRepository(Repository):
     def clear(self) -> int:
         """Delete every primitive. Relata are cascade-deleted by the FK constraint."""
         try:
+            # The schema-version marker lives in the DB header (PRAGMA user_version),
+            # not the primitives table, so clearing graph data leaves it intact —
+            # intentional: the version describes the file format, not the data.
             cursor = self._conn.execute("DELETE FROM primitives")
             return cursor.rowcount
         except sqlite3.Error as exc:

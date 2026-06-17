@@ -13,6 +13,15 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ### Added
 
+- `schema_version` persisted-format marker (`CURRENT_SCHEMA_VERSION = 1`, the
+  single source of truth in `vre.core.backends.repository`). Both backends stamp
+  it on a fresh store — SQLite via `PRAGMA user_version`, Neo4j via a
+  DB-enforced-singleton `:VREMeta` node — and verify it on connect, raising the
+  new `SchemaVersionError` (a `VREError`, exported from `vre` and `vre.core`)
+  when a store was written by a newer VRE than this build can read. This is
+  forward-compatibility insurance so future format changes (e.g. stable relata
+  identity, #90) are cleanly migratable rather than shape-sniffed; no migration
+  logic ships yet. (#116)
 - `ProvenanceError` (a `VREError`, exported from `vre` and `vre.core`):
   `Primitive`/`Depth`/`Relatum.validate_provenance()` — which both backends call
   before any save — raises this typed error instead of a bare `ValueError` when

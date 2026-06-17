@@ -14,12 +14,14 @@ through the single ``Primitive.fold_name`` (NFC + casefold) definition.
 Neo4j params skip cleanly when ``VRE_TEST_NEO4J_URI`` is unset (see conftest).
 """
 
+import os
 import unicodedata
 from uuid import uuid4
 
 import pytest
 
-from vre.core.errors import GraphError, PersistenceError
+from vre.core.backends.repository import CURRENT_SCHEMA_VERSION
+from vre.core.errors import GraphError, PersistenceError, SchemaVersionError
 from vre.core.models import Depth, DepthLevel, Primitive, Provenance, ProvenanceSource
 
 # e + U+0301 (combining acute). Built via chr() so the code point is explicit in
@@ -138,3 +140,57 @@ def test_find_by_name_fails_loud_on_duplicate(neo4j_repository) -> None:
     # Restore the invariant for subsequent tests: drop the dupes, re-add constraint.
     repo.clear()
     repo._ensure_constraints()
+
+
+@pytest.mark.requires_neo4j
+def test_schema_version_seeded_on_fresh_store(neo4j_repository) -> None:
+    repo = neo4j_repository
+    with repo._driver.session(database=repo._database) as session:
+        record = session.run(
+            "MATCH (m:VREMeta) RETURN m.schema_version AS v, count(m) AS n"
+        ).single()
+    assert record["v"] == 1
+    assert record["n"] == 1  # exactly one VREMeta node (singleton)
+
+
+@pytest.mark.requires_neo4j
+def test_schema_version_survives_clear(neo4j_repository) -> None:
+    repo = neo4j_repository
+    repo.save_primitive(_make_primitive("alpha"))
+    repo.clear()
+    # The marker describes the file format, not the data: clear() removes only
+    # :Primitive nodes, so the lone :VREMeta node must remain stamped.
+    with repo._driver.session(database=repo._database) as session:
+        record = session.run(
+            "MATCH (m:VREMeta) RETURN m.schema_version AS v, count(m) AS n"
+        ).single()
+    assert record["v"] == 1
+    assert record["n"] == 1
+
+
+@pytest.mark.requires_neo4j
+def test_schema_version_newer_fails_loud(neo4j_repository) -> None:
+    # Lazy import (not module top level) so this test module still collects when
+    # the optional neo4j driver is absent — the neo4j_repository fixture has
+    # already skipped in that case. Mirrors conftest._make_neo4j_repo.
+    from vre.core.backends.neo4j import Neo4jRepository
+
+    repo = neo4j_repository
+    # Simulate a store written by a newer VRE.
+    with repo._driver.session(database=repo._database) as session:
+        session.run("MATCH (m:VREMeta) SET m.schema_version = 99")
+    try:
+        uri = os.environ["VRE_TEST_NEO4J_URI"]
+        user = os.environ.get("VRE_TEST_NEO4J_USER", "neo4j")
+        password = os.environ["VRE_TEST_NEO4J_PASSWORD"]
+        database = os.environ.get("VRE_TEST_NEO4J_DATABASE", "neo4j")
+        with pytest.raises(SchemaVersionError):
+            Neo4jRepository(uri, user, password, database=database)
+    finally:
+        # CRITICAL: the marker survives clear(), so a leftover 99 would poison
+        # every subsequent Neo4j test (their connect would raise/skip). Restore it.
+        with repo._driver.session(database=repo._database) as session:
+            session.run(
+                "MATCH (m:VREMeta) SET m.schema_version = $v",
+                v=CURRENT_SCHEMA_VERSION,
+            )

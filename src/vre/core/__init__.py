@@ -11,6 +11,7 @@ from vre.core.errors import (
     HydrationError,
     PersistenceError,
     ProvenanceError,
+    SchemaVersionError,
     VREError,
 )
 from vre.core.models import (
@@ -31,6 +32,7 @@ __all__ = [
     "ProvenanceError",
     "ProvenanceSource",
     "Repository",
+    "SchemaVersionError",
     "TRANSITIVE_RELATION_TYPES",
     "VREError",
 ]
