@@ -5,12 +5,18 @@ description = "Volute Reasoning Engine — decorator-based epistemic enforcement
 authors = [
     {name = "Andrew Greene",email = "anormang@gmail.com"}
 ]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
     "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/anormang1992/vre"
+Repository = "https://github.com/anormang1992/vre"
+Issues = "https://github.com/anormang1992/vre/issues"
+Changelog = "https://github.com/anormang1992/vre/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 neo4j = ["neo4j>=5.0,<7.0"]
