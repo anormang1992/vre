@@ -10,6 +10,8 @@ from uuid import UUID
 import pytest
 
 from vre.core.backends import Repository
+from vre.core.backends.repository import CURRENT_SCHEMA_VERSION, reconcile_schema_version
+from vre.core.errors import SchemaVersionError
 from vre.core.models import (
     Depth,
     DepthLevel,
@@ -98,3 +100,27 @@ def test_upsert_does_not_log_when_new(caplog: pytest.LogCaptureFixture) -> None:
         repo.upsert_primitive(incoming)
 
     assert not any("Upserting" in r.message for r in caplog.records)
+
+
+class TestReconcileSchemaVersion:
+    """Pure three-case comparator from repository.py — no DB involved."""
+
+    def test_equal_version_passes(self) -> None:
+        # disk == current: returns None, raises nothing.
+        assert reconcile_schema_version(CURRENT_SCHEMA_VERSION) is None
+
+    def test_newer_disk_version_fails_loud(self) -> None:
+        with pytest.raises(SchemaVersionError):
+            reconcile_schema_version(CURRENT_SCHEMA_VERSION + 1)
+
+    def test_older_disk_version_fails_loud(self) -> None:
+        # disk < current with no migration logic wired: must fail loud rather
+        # than silently load an old-format store under new-format assumptions.
+        # `current` is injected so the case is reachable while CURRENT is 1.
+        with pytest.raises(SchemaVersionError):
+            reconcile_schema_version(disk=1, current=2)
+
+    def test_constant_is_one(self) -> None:
+        # Pins the current format. Bump this (and the assertion) only when the
+        # persisted format actually changes.
+        assert CURRENT_SCHEMA_VERSION == 1

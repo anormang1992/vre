@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Self
 from uuid import UUID
 
+from vre.core.errors import SchemaVersionError
 from vre.core.models import (
     Primitive,
     PrimitiveMetrics,
@@ -21,6 +22,32 @@ from vre.core.models import (
 
 
 logger = logging.getLogger(__name__)
+
+
+CURRENT_SCHEMA_VERSION = 1  # bump in the SAME commit that changes the persisted format
+
+
+def reconcile_schema_version(disk: int, current: int = CURRENT_SCHEMA_VERSION) -> None:
+    """Compare an on-disk schema version against the version this build expects.
+
+    Only `disk == current` proceeds. `disk > current` means the store was written
+    by a newer VRE than this build can safely read. `disk < current` is the future
+    migration hook: it is unreachable at v1 (the only sub-1 disk value is the
+    fresh/unstamped sentinel, which each backend handles as a seed before this
+    function is called), and it fails loud rather than silently load an old-format
+    store under new-format assumptions — when migration logic lands, it replaces
+    this raise. Both directions raise `SchemaVersionError`.
+    """
+    if disk > current:
+        raise SchemaVersionError(
+            f"On-disk schema version {disk} is newer than this build of VRE "
+            f"supports ({current}). Upgrade VRE to read this graph."
+        )
+    if disk < current:
+        raise SchemaVersionError(
+            f"On-disk schema version {disk} predates this build of VRE "
+            f"({current}) and no migration path is implemented yet."
+        )
 
 
 class Repository(ABC):

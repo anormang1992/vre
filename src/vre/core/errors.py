@@ -76,3 +76,14 @@ class RegistryError(VREError):
 
 class PolicyPlacementError(VREError):
     """A declared policy references an APPLIES_TO edge absent from the graph."""
+
+
+class SchemaVersionError(VREError):
+    """The persisted schema version is newer than this build of VRE can read.
+
+    The on-disk marker records the format the data was written in; the code's
+    CURRENT_SCHEMA_VERSION records what this build knows how to read. When the
+    disk value is the larger of the two, the store was written by a newer VRE
+    and cannot be safely read through this build's assumptions — so we refuse
+    loudly rather than risk silent corruption.
+    """

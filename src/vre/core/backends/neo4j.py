@@ -17,7 +17,11 @@ from uuid import UUID
 from neo4j import GraphDatabase
 from neo4j.exceptions import ConstraintError, Neo4jError
 
-from vre.core.backends.repository import Repository
+from vre.core.backends.repository import (
+    CURRENT_SCHEMA_VERSION,
+    Repository,
+    reconcile_schema_version,
+)
 from vre.core.errors import (
     CyclicRelationshipError,
     GraphError,
@@ -61,7 +65,15 @@ class Neo4jRepository(Repository):
             notifications_disabled_categories=["UNRECOGNIZED"],
         )
         self._database = database
-        self._ensure_constraints()
+        # If connect-time verification fails (e.g. a schema version newer than
+        # this build, or a constraint error), close the driver we just opened
+        # before propagating — a failed construction must not leak a connection.
+        try:
+            self._ensure_constraints()
+            self._ensure_schema_version()
+        except Exception:
+            self._driver.close()
+            raise
 
     def close(self) -> None:
         """Close the underlying Neo4j driver and release all connections."""
@@ -73,7 +85,7 @@ class Neo4jRepository(Repository):
         tx.run(ddl)
 
     def _ensure_constraints(self) -> None:
-        logger.debug("Ensuring uniqueness constraints on Primitive")
+        logger.debug("Ensuring uniqueness constraints on Primitive and VREMeta")
         # Each constraint is its own managed write (#108): managed so a stale
         # pooled connection retries rather than failing hard, and one-per-
         # transaction because Neo4j does not permit schema statements to share
@@ -101,9 +113,53 @@ class Neo4jRepository(Repository):
                         "FOR (p:Primitive) REQUIRE p.name_lower IS UNIQUE",
                     ),
                 )
+                # Singleton marker for the persisted schema version (#116). Neo4j
+                # cannot constrain "at most one node of a label" directly, but a
+                # uniqueness constraint on the always-true `singleton` property
+                # caps :VREMeta at one node — a second insert with singleton=true
+                # violates uniqueness. This is the DB-level enforcement of the
+                # single-marker invariant, mirroring primitive_name_lower_unique.
+                session.execute_write(
+                    self._create_constraint,
+                    cast(
+                        LiteralString,
+                        "CREATE CONSTRAINT vremeta_singleton IF NOT EXISTS "
+                        "FOR (m:VREMeta) REQUIRE m.singleton IS UNIQUE",
+                    ),
+                )
         except Neo4jError as exc:
             logger.error("Failed to ensure Neo4j constraints: %s", exc)
             raise GraphError(f"Failed to ensure constraints: {exc}") from exc
+
+    def _ensure_schema_version(self) -> None:
+        """Seed the schema-version marker on a fresh store; verify it otherwise.
+
+        One managed write: MERGE creates the singleton :VREMeta node and stamps
+        CURRENT_SCHEMA_VERSION only when absent (fresh store, or a pre-#116 graph
+        with no marker), then returns the stored value. reconcile_schema_version
+        proceeds when it matches and fails loud when the store is newer than this
+        build supports.
+        """
+
+        def _tx(tx: Any) -> int:
+            record = tx.run(
+                cast(
+                    LiteralString,
+                    "MERGE (m:VREMeta {singleton: true}) "
+                    "ON CREATE SET m.schema_version = $current "
+                    "RETURN m.schema_version AS v",
+                ),
+                current=CURRENT_SCHEMA_VERSION,
+            ).single()
+            return record["v"]
+
+        try:
+            with self._driver.session(database=self._database) as session:
+                disk = session.execute_write(_tx)
+        except Neo4jError as exc:
+            logger.error("Failed to ensure Neo4j schema version: %s", exc)
+            raise GraphError(f"Failed to ensure schema version: {exc}") from exc
+        reconcile_schema_version(disk)
 
     # ------------------------------------------------------------------
     # Serialization helpers
@@ -622,6 +678,9 @@ class Neo4jRepository(Repository):
         """Delete every Primitive node and its relationships. Returns the count deleted."""
 
         def _tx(tx: Any) -> int:
+            # Only :Primitive nodes are removed; the :VREMeta marker is left
+            # intact — intentional: the version describes the file format, not
+            # the data, so clearing the graph must not unstamp it.
             record = tx.run(
                 cast(
                     LiteralString,

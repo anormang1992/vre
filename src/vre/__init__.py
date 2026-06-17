@@ -30,6 +30,7 @@ from vre.core.errors import (
     PolicyPlacementError,
     ProvenanceError,
     RegistryError,
+    SchemaVersionError,
     VREError,
 )
 from vre.core.backends import Repository, SQLiteRepository
@@ -89,6 +90,7 @@ __all__ = [
     "PolicyPlacementError",
     "ProvenanceError",
     "RegistryError",
+    "SchemaVersionError",
     "VREError",
     "Neo4jRepository",
     "Repository",

@@ -5,10 +5,13 @@
 Comprehensive test suite for SQLiteRepository.
 """
 
+import pathlib
+import sqlite3
+
 import pytest
 
 from vre.core.backends.sqlite import SQLiteRepository
-from vre.core.errors import CyclicRelationshipError
+from vre.core.errors import CyclicRelationshipError, SchemaVersionError
 from vre.core.grounding import GroundingEngine
 from vre.core.models import (
     Depth,
@@ -182,14 +185,53 @@ class TestSQLiteLifecycle:
         repo.close()
 
     def test_file_based_db(self, tmp_path: object) -> None:
-        import pathlib
-
         db_path = pathlib.Path(str(tmp_path)) / "sub" / "test.db"
         with SQLiteRepository(db_path) as repo:
             repo.save_primitive(_make_primitive("alpha"))
         # Reopen to verify persistence
         with SQLiteRepository(db_path) as repo:
             assert repo.find_by_name("alpha") is not None
+
+    def test_schema_version_seeded_on_fresh_store(self) -> None:
+        repo = SQLiteRepository(":memory:")
+        try:
+            version = repo._conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == 1
+        finally:
+            repo.close()
+
+    def test_schema_version_persists_across_reopen(self, tmp_path: object) -> None:
+        db_path = pathlib.Path(str(tmp_path)) / "versioned.db"
+        SQLiteRepository(db_path).close()          # fresh: seeds version 1
+        repo = SQLiteRepository(db_path)           # reopen: must NOT raise
+        try:
+            version = repo._conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == 1
+        finally:
+            repo.close()
+
+    def test_newer_schema_version_fails_loud(self, tmp_path: object) -> None:
+        db_path = pathlib.Path(str(tmp_path)) / "future.db"
+        SQLiteRepository(db_path).close()          # seed version 1
+        # Simulate a store written by a newer VRE.
+        raw = sqlite3.connect(str(db_path))
+        raw.execute("PRAGMA user_version = 99")
+        raw.close()
+        with pytest.raises(SchemaVersionError):
+            SQLiteRepository(db_path)
+
+    def test_schema_version_survives_clear(self, tmp_path: object) -> None:
+        db_path = pathlib.Path(str(tmp_path)) / "cleared.db"
+        repo = SQLiteRepository(db_path)
+        try:
+            repo.save_primitive(_make_primitive("alpha"))
+            repo.clear()
+            # The marker describes the file format, not the data, so clearing
+            # the graph must leave it stamped.
+            version = repo._conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == 1
+        finally:
+            repo.close()
 
 
 # ------------------------------------------------------------------
