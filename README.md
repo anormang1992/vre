@@ -5,17 +5,14 @@
 
 ### Stability
 
-VRE is pre-1.0 and under active development. The **public API** is everything
-exported from the top-level `vre` package and `vre.core` — the `VRE` class, the
-`vre_guard` decorator, the repository backends, and the structured result and
-gap models they return. Anything reached through a private submodule path or a
-leading-underscore name is internal and may change without notice. While the
-project is pre-1.0, **minor version bumps may introduce breaking changes** to
-the public API; each is recorded in the [CHANGELOG](CHANGELOG.md). From v1.0.0
-onward the project follows [semantic versioning](https://semver.org/spec/v2.0.0.html):
-breaking changes to the public API land only in major releases, preceded by a
-deprecation period with runtime warnings. A stable v1.0.0 release is expected
-soon.
+As of **v1.0.0**, VRE is stable. The **public API** is everything exported from
+the top-level `vre` package and `vre.core` — the `VRE` class, the `vre_guard`
+decorator, the repository backends, and the structured result and gap models they
+return. Anything reached through a private submodule path or a leading-underscore
+name is internal and may change without notice. The project follows [semantic
+versioning](https://semver.org/spec/v2.0.0.html): breaking changes to the public
+API land only in major releases and are preceded by a deprecation period with
+runtime warnings. Every change is recorded in the [CHANGELOG](CHANGELOG.md).
 
 **Epistemic enforcement for autonomous agents.**
 
