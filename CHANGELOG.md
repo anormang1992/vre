@@ -4,12 +4,15 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-While the project is pre-1.0, minor version bumps may introduce breaking changes.
+As of v1.0.0 the public API is stable: breaking changes land only in major
+releases and are preceded by a deprecation period.
 
 Sections for released versions are backfilled from tagged GitHub releases and
 summarize major changes, refactors, and breaking changes — not every commit.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-06-17
 
 ### Added
 
@@ -317,7 +320,8 @@ Initial PyPI release, bundling the early epistemic engine and tooling.
 
 - Initial public scaffold: the core epistemic model and project README.
 
-[Unreleased]: https://github.com/anormang1992/vre/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/anormang1992/vre/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/anormang1992/vre/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/anormang1992/vre/compare/v0.8.0...v0.9.1
 [0.8.0]: https://github.com/anormang1992/vre/compare/v0.6.0...v0.8.0
 [0.6.0]: https://github.com/anormang1992/vre/compare/v0.4.3...v0.6.0
