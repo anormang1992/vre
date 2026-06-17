@@ -13,6 +13,20 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ### Added
 
+- `py.typed` marker (PEP 561). The package is fully typed (Pydantic throughout)
+  but that was invisible to downstream `mypy`/`pyright` without the marker; it now
+  ships in both the wheel and sdist, so integrators get VRE's types when they
+  depend on it. (#105)
+- `[project.urls]` in package metadata (Homepage, Repository, Issues, Changelog),
+  so the PyPI page links back to the repo, issue tracker, and changelog instead of
+  having no project links at all. (#105)
+- A **Stability** section in the README stating the public-API surface (everything
+  exported from `vre` and `vre.core`), what semver means while pre-1.0 (minor bumps
+  may break), and the post-1.0 deprecation contract. (#105)
+- The package license is now declared as an SPDX expression (`license =
+  "Apache-2.0"`) rather than the deprecated table form, so the wheel carries a
+  `License-Expression` field (Metadata 2.4) and the `LICENSE` file is recorded as
+  a `License-File`. (#105)
 - `schema_version` persisted-format marker (`CURRENT_SCHEMA_VERSION = 1`, the
   single source of truth in `vre.core.backends.repository`). Both backends stamp
   it on a fresh store — SQLite via `PRAGMA user_version`, Neo4j via a
@@ -168,6 +182,8 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ### Fixed
 
+- README install commands for the Neo4j extra are now quoted (`pip install
+  'vre[neo4j]'`); unquoted, `zsh` globs the brackets and the install fails. (#105)
 - Neo4j `find_by_name` no longer resolves a duplicate-name graph silently and
   nondeterministically. It materializes matches and raises `GraphError` when more
   than one primitive shares a folded name, instead of `.single()` returning an

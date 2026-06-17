@@ -3,9 +3,19 @@
 
 # VRE — Volute Reasoning Engine
 
-### Note
-This library is still in active development and is subject to breaking changes.
-However, a stable v1.0.0 release is expected soon.
+### Stability
+
+VRE is pre-1.0 and under active development. The **public API** is everything
+exported from the top-level `vre` package and `vre.core` — the `VRE` class, the
+`vre_guard` decorator, the repository backends, and the structured result and
+gap models they return. Anything reached through a private submodule path or a
+leading-underscore name is internal and may change without notice. While the
+project is pre-1.0, **minor version bumps may introduce breaking changes** to
+the public API; each is recorded in the [CHANGELOG](CHANGELOG.md). From v1.0.0
+onward the project follows [semantic versioning](https://semver.org/spec/v2.0.0.html):
+breaking changes to the public API land only in major releases, preceded by a
+deprecation period with runtime warnings. A stable v1.0.0 release is expected
+soon.
 
 **Epistemic enforcement for autonomous agents.**
 
@@ -207,7 +217,7 @@ The database defaults to `~/.vre/graph.db` and is created automatically on first
 For production deployments or larger graphs, an optional **Neo4j backend** is available:
 
 ```bash
-pip install vre[neo4j]
+pip install 'vre[neo4j]'
 ```
 
 ### Infrastructure
@@ -847,7 +857,7 @@ grounding history, and affect the agent's confidence in related concepts.
 | Concern            | Technology                                    |
 |--------------------|-----------------------------------------------|
 | Language           | Python 3.12+                                  |
-| Epistemic graph    | SQLite (default) or Neo4j (`pip install vre[neo4j]`) |
+| Epistemic graph    | SQLite (default) or Neo4j (`pip install 'vre[neo4j]'`) |
 | Concept resolution | Exact, case-insensitive name match (no NLP)   |
 | Data models        | Pydantic v2                                   |
 | Package management | Poetry                                        |
