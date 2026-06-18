@@ -79,30 +79,43 @@ class GroundingEngine:
     ) -> tuple[list[Primitive], list[Primitive]]:
         """
         Identify root primitives for the query based on the input names.
+
+        A concept appearing more than once in one query — repeated verbatim or
+        differing only by case — collapses to a single root. Folded-name dedup
+        runs over the raw input, so one concept yields one root id (and, when
+        absent from the graph, one synthetic placeholder and one ExistenceGap)
+        regardless of how many times or in what casing it appears. First
+        occurrence wins, so order is preserved and the result is deterministic
+        (#130).
         """
         by_name: dict[str, Primitive] = {Primitive.fold_name(r.name): r for r in resolved_roots}
         all_roots: list[Primitive] = []
         transients: list[Primitive] = []
+        seen: set[str] = set()
         for name in names:
-            matched = by_name.get(Primitive.fold_name(name))
-            if matched:
+            fold = Primitive.fold_name(name)
+            if fold in seen:
+                continue
+            seen.add(fold)
+            matched = by_name.get(fold)
+            if matched is not None:
                 all_roots.append(matched)
-            else:
-                # The concept is not in the graph. We manufacture a transient
-                # placeholder to anchor the traversal and the ExistenceGap. It
-                # carries no knowledge (depths=[]) and is never persisted, but it
-                # came from somewhere — the engine, surfacing the *absence* of the
-                # concept — so its provenance is SYNTHETIC, not a forged human one.
-                t = Primitive(
-                    name=name,
-                    depths=[],
-                    provenance=Provenance(
-                        source=ProvenanceSource.SYNTHETIC,
-                        detail=f"transient placeholder for concept '{name}' absent from the graph",
-                    ),
-                )
-                all_roots.append(t)
-                transients.append(t)
+                continue
+            # The concept is not in the graph. We manufacture a transient
+            # placeholder to anchor the traversal and the ExistenceGap. It
+            # carries no knowledge (depths=[]) and is never persisted, but it
+            # came from somewhere — the engine, surfacing the *absence* of the
+            # concept — so its provenance is SYNTHETIC, not a forged human one.
+            transient = Primitive(
+                name=name,
+                depths=[],
+                provenance=Provenance(
+                    source=ProvenanceSource.SYNTHETIC,
+                    detail=f"transient placeholder for concept '{name}' absent from the graph",
+                ),
+            )
+            transients.append(transient)
+            all_roots.append(transient)
         return all_roots, transients
 
     @staticmethod
