@@ -42,6 +42,7 @@ except ImportError:
 from vre.core.grounding import GroundingEngine, GroundingResult
 from vre.core.models import (
     DepthLevel,
+    Primitive,
     PrimitiveMetrics,
     Provenance,
     ProvenanceSource,
@@ -196,7 +197,7 @@ class VRE:
             result.agent_id = self._identity.agent_id
         return result
 
-    def _has_applies_to_edge(self, source, target_id: UUID, source_depth: DepthLevel) -> bool:
+    def _has_applies_to_edge(self, source: Primitive, target_id: UUID, source_depth: DepthLevel) -> bool:
         """
         Whether `source` has an APPLIES_TO relatum to `target_id` at `source_depth`.
         """

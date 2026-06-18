@@ -170,6 +170,9 @@ class Relatum(BaseModel):
         """
         Raise ProvenanceError if provenance is missing.
         """
+        # Not dead code: `provenance` is required at construction, but Pydantic
+        # does not re-validate on assignment, so it can be nulled or spoofed
+        # afterward. This is the fail-closed backstop the backends run before any write.
         if self.provenance is None:
             raise ProvenanceError(
                 f"{context}relatum {self.relation_type.value} → "
@@ -209,6 +212,9 @@ class Depth(BaseModel):
         """
         Raise ProvenanceError if provenance is missing on this depth or any of its relata.
         """
+        # Not dead code: `provenance` is required at construction, but Pydantic
+        # does not re-validate on assignment, so it can be nulled or spoofed
+        # afterward. This is the fail-closed backstop the backends run before any write.
         if self.provenance is None:
             raise ProvenanceError(
                 f"{context}depth D{self.level.value} ({self.level.name}) "
@@ -284,6 +290,9 @@ class Primitive(BaseModel):
         """
         Raise ProvenanceError if provenance is missing on this primitive, any depth, or any relatum.
         """
+        # Not dead code: `provenance` is required at construction, but Pydantic
+        # does not re-validate on assignment, so it can be nulled or spoofed
+        # afterward. This is the fail-closed backstop the backends run before any write.
         if self.provenance is None:
             raise ProvenanceError(
                 f"Primitive '{self.name}' is missing provenance"
