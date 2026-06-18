@@ -12,6 +12,8 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-18
+
 ### Fixed
 
 - A concept appearing more than once in a single grounding query — repeated
@@ -343,7 +345,8 @@ Initial PyPI release, bundling the early epistemic engine and tooling.
 
 - Initial public scaffold: the core epistemic model and project README.
 
-[Unreleased]: https://github.com/anormang1992/vre/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/anormang1992/vre/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/anormang1992/vre/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/anormang1992/vre/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/anormang1992/vre/compare/v0.8.0...v0.9.1
 [0.8.0]: https://github.com/anormang1992/vre/compare/v0.6.0...v0.8.0
