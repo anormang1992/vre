@@ -290,6 +290,33 @@ class TestFlatQuery:
         assert gap.primitive.provenance.source == ProvenanceSource.SYNTHETIC
         assert "frobnicate" in gap.primitive.provenance.detail
 
+    def test_repeated_unknown_concept_dedupes_to_one_transient(self) -> None:
+        """A repeated or case-variant unknown concept resolves to a single
+        transient placeholder — one synthetic id, one ExistenceGap, one trace
+        primitive, one query root id — not one per occurrence (#130)."""
+        engine = GroundingEngine(StubRepository([]))
+
+        for concepts in (["widget", "widget"], ["Widget", "widget"]):
+            resp = engine.query(concepts)
+
+            existence_gaps = [g for g in resp.result.gaps if g.kind == "EXISTENCE"]
+            assert len(existence_gaps) == 1
+            assert len({g.primitive.id for g in existence_gaps}) == 1
+            widgets = [p for p in resp.result.primitives if p.name_lower == "widget"]
+            assert len(widgets) == 1
+            assert resp.query.concept_ids == [existence_gaps[0].primitive.id]
+
+    def test_repeated_known_concept_dedupes_concept_ids(self) -> None:
+        """A repeated or case-variant known concept collapses to a single query
+        root id. Folded-name dedup runs over the raw input, so concept_ids never
+        carries duplicates for known concepts either (#130)."""
+        file_p = _make_primitive("file", [_depth(DepthLevel.EXISTENCE)])
+        engine = GroundingEngine(StubRepository([file_p]))
+
+        for concepts in (["file", "file"], ["File", "file"]):
+            resp = engine.query(concepts)
+            assert resp.query.concept_ids == [file_p.id]
+
     def test_connected_concepts_grounded(self) -> None:
         """Two concepts connected by an edge → no ReachabilityGap."""
         file_p = _make_primitive("file", [

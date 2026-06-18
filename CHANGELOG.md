@@ -14,6 +14,18 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ### Fixed
 
+- A concept appearing more than once in a single grounding query — repeated
+  verbatim or differing only by case — now collapses to a single root.
+  `_identify_roots` dedupes by folded name over the raw input, so one concept
+  yields one query root id regardless of how many times or in what casing it
+  appears. For an absent concept this also means one synthetic placeholder and
+  one `ExistenceGap` instead of one per occurrence. Previously the engine
+  manufactured a fresh transient (and `ExistenceGap`) per occurrence of an
+  unknown concept, and `query.concept_ids` carried a duplicate id per
+  occurrence for both known and unknown concepts. `grounded` was always correct
+  (`False`); this only stops inflating gap counts, trace primitives, and
+  `concept_ids` for callers that count, dedupe, or render them. (#130)
+
 - The existence-learning path no longer bypasses the vacuity floor (#80). An
   `ExistenceCandidate` whose D1 carried empty `properties` was accepted and
   persisted, manufacturing a vacuous identity that does not ground — the quiet
