@@ -41,8 +41,8 @@ class ProvenanceError(VREError):
     """Knowledge being persisted is missing required provenance.
 
     Provenance is required on every primitive, depth, and relatum at the
-    persistence boundary (CLAUDE.md §7.2). Raised by validate_provenance,
-    which the backends invoke before any save.
+    persistence boundary. Raised by validate_provenance, which the backends
+    invoke before any save.
     """
 
 

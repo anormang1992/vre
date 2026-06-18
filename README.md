@@ -622,9 +622,9 @@ existing connected node *back* to the orphan is just as valid as one originating
 
 ### Provenance
 
-`learn_gap` accepts an optional `source: ProvenanceSource` parameter (default `LEARNED`). The integrator decides
-how to stamp persisted knowledge based on its own loop semantics — `LEARNED` for agent-proposed fills approved at
-the persistence boundary, `AUTHORED` for content a human drafted directly. Both are human-attested by construction;
+Knowledge persisted through `learn_gap` is always stamped `LEARNED`: by construction it originates from an
+agent-proposed candidate that a human approved at the persistence boundary, so there is no way to forge `AUTHORED`
+provenance here — true from-scratch authoring goes through the repository directly. Both are human-attested;
 provenance is genealogy, not a trust gradient. The graph remembers not just what it knows, but how it came to know it.
 
 ### Reachability Prerequisites
@@ -846,6 +846,22 @@ its graph from a community of peers instead of authoring every concept from scra
 A new class of memory that stores not just information but the agent's epistemic relationship to that information.
 Memories are indexed by concept and depth, decay or are reinforced based on usage and
 grounding history, and affect the agent's confidence in related concepts.
+
+### Hero Demo
+
+A single agent-driven showcase that replaces the retired `examples/` directory — one real agent that grounds, plans,
+hits a knowledge gap, learns through failure, and only then acts, demonstrating epistemic honesty end to end rather
+than describing it. No framework dependency: a thin `Driver` protocol over whatever LLM the reader has, so the demo
+teaches VRE rather than a particular agent stack. The narrative follows VRE's own binding gradient — static knowledge,
+chosen policy, and live extraction layered in proportion to blast radius.
+
+### Authoring & Linting CLI
+
+An interactive graph console for building and auditing domain knowledge — seeding primitives and depths, linting a
+graph for vacuity holes and orphaned policy placements, and generating new domains. Knowledge packs ship the concepts
+and depths but *no placed edges*: knowledge is published, policy is chosen by the integrator. Suggested edges travel
+with a pack as counsel the operator can review and place deliberately, never as silent defaults — keeping graph
+structure, and therefore policy, an explicit authoring act.
 
 ---
 
