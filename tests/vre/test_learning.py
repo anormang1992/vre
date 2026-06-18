@@ -350,6 +350,24 @@ class TestPersistExistence:
             engine.learn_gap(gap, filled)
         assert repo.saved == []
 
+    def test_rejects_empty_d1_properties(self):
+        # An existence fill must carry content (#80): an empty D1 does not
+        # ground, so accepting it would persist a vacuous identity — exactly
+        # what the depth-fill gate refuses. The unmodified template seeds an
+        # empty D1, so this is the realistic path, not a contrived input.
+        repo = StubRepository()
+        engine = LearningEngine(repo)
+        gap = ExistenceGap(primitive=_primitive("Copy"))
+
+        filled = ExistenceCandidate(
+            name="Copy",
+            d1=ProposedDepth(level=DepthLevel.IDENTITY, properties={}),
+        )
+
+        with pytest.raises(CandidateValidationError, match="must carry content"):
+            engine.learn_gap(gap, filled)
+        assert repo.saved == []
+
 
 class TestPersistDepth:
     def test_merges_new_depth_into_existing(self):

@@ -242,6 +242,21 @@ class LearningEngine:
                 f"already resolved; nothing to learn"
             )
 
+        # Validate the agent-proposed D1 through the same gate the depth path uses,
+        # modeling the auto-generated D0 as the present floor (accepting an
+        # existence gap *is* the D0 confirmation). Routing both paths through one
+        # validator single-sources the vacuity floor (#80) and contiguity rules, so
+        # the existence path cannot drift from the depth path — which is exactly how
+        # an empty D1 slipped through before. D1 is non-None and IDENTITY here:
+        # learn_gap runs validate_for_gap before any persist.
+        _validate_depth_fill(
+            [candidate.d1],
+            DepthLevel.EXISTENCE,
+            DepthLevel.IDENTITY,
+            {DepthLevel.EXISTENCE},
+            f"ExistenceCandidate for '{candidate.name}'",
+        )
+
         d0 = Depth(
             level=DepthLevel.EXISTENCE,
             properties={"exists": True},
@@ -309,7 +324,9 @@ class LearningEngine:
         live_current = existing.contiguous_max_depth
         _raise_if_resolved(existing.name, live_current, required_depth)
         _validate_depth_fill(
-            new_depths, live_current, required_depth,
+            new_depths,
+            live_current,
+            required_depth,
             existing.grounding_levels,
             f"{label} for '{existing.name}'",
         )

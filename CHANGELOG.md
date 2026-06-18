@@ -12,6 +12,17 @@ summarize major changes, refactors, and breaking changes — not every commit.
 
 ## [Unreleased]
 
+### Fixed
+
+- The existence-learning path no longer bypasses the vacuity floor (#80). An
+  `ExistenceCandidate` whose D1 carried empty `properties` was accepted and
+  persisted, manufacturing a vacuous identity that does not ground — the quiet
+  degradation VRE exists to prevent. The proposed D1 now flows through the same
+  `_validate_depth_fill` gate the depth-fill path uses (with the auto-generated D0
+  modeled as the present floor), so the vacuity floor and contiguity rules are
+  single-sourced across both learning paths and the existence path can no longer
+  drift from the depth path. (#129)
+
 ## [1.0.0] - 2026-06-17
 
 ### Added
